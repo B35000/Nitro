@@ -7,9 +7,9 @@ const disk = require('diskusage');
 var bigInt = require("big-integer");
 
 const app = express();
-const PORT = 3000;
+const PORT = 3000; // <----- please change this to whichever port number you wish to use
 app.use(cors());
-app.use(express.json({ limit: "20gb" }));
+app.use(express.json({ limit: "10gb" }));
 
 //npm install express web3 crypto-js
 //npm install pm2@latest -g
@@ -23,6 +23,7 @@ app.use(express.json({ limit: "20gb" }));
 //or node server.js if youre debugging
 
 
+/* data object containing all the E5 data. */
 var data = {
   'key':'',
   'custom_gateway':'',
@@ -38,7 +39,8 @@ var data = {
   'target_account_e5':'',
   'target_storage_purchase_recipient_account':0,
   'last_checked_storage_block':0,
-  'storage_data':{}
+  'storage_data':{},
+  'storage_boot_time':0
 }
 
 const E5_CONTRACT_ABI = [
@@ -3813,7 +3815,7 @@ const H52_CONTRACT_ABI = [
 
 
 
-
+/* object containing all the event data for all the E5s */
 var event_data = {
   'E25':{
     'E5':{
@@ -3839,16 +3841,19 @@ var event_data = {
     },
   },
 }
+/* object containing all the ipfs hash data */
 var hash_data = {'e':'test'}
+/* object containing pointers to the ipfs data stored in files */
 var cold_storage_hash_pointers = {}
+/* object containing all the data types for all the objects tracked in the node */
 var object_types = {}
-var start_up_time = Date.now()
-var hash_count = 0
-var load_count = 0
-var app_key = ``
+var start_up_time = Date.now()/* start up time */
+var hash_count = 0/* number of ipfs hashes being tracked */
+var load_count = 0/* number of ipfs hashes loaded by the node */
+var app_key = ``/* app key */
 
 
-
+/* AES encrypts passed data with specified key, returns encrypted data. */
 function decrypt_storage_data(data, key){
   try{
     var bytes  = CryptoJS.AES.decrypt(data, key);
@@ -3860,11 +3865,13 @@ function decrypt_storage_data(data, key){
   }
 }
 
+/* decrypts AES encrypted data with the specified key, returns original data */
 function encrypt_storage_data(data, key){
   var ciphertext = CryptoJS.AES.encrypt(data, key).toString();
   return ciphertext
 }
 
+/* generates a random string with a specified length */
 function makeid(length) {
   let result = '';
   const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -3877,6 +3884,7 @@ function makeid(length) {
   return result;
 }
 
+/* adds a new e5 event object that will contain all the events emitted for a new specified e5 */
 function add_new_e5_to_event_data(e5){
   event_data[e5] = {
     'E5':{
@@ -3906,7 +3914,7 @@ function add_new_e5_to_event_data(e5){
 
 
 
-
+/* fetches the data from an ipfs node that was uploaded via infura api */
 async function fetch_object_data_from_infura(ecid_obj, count){
   var cid = ecid_obj['cid']
   if(hash_data[cid] != null) return;
@@ -3936,6 +3944,7 @@ async function fetch_object_data_from_infura(ecid_obj, count){
   }
 }
 
+/* fetches the data from an ipfs node that was uploaded via (now discontinued) nft storage api */
 async function fetch_objects_data_from_nft_storage (ecid_obj, count){
   var cid = ecid_obj['cid']
   if(hash_data[cid] != null) return;
@@ -3964,6 +3973,7 @@ async function fetch_objects_data_from_nft_storage (ecid_obj, count){
   }
 }
 
+/* returns a link to a specified cid if custom gateway is specified, default gateway otherwise */
 function get_selected_gateway_if_custom_set(cid, default_gateway){
   if(data['custom_gateway'] != ''){
     var my_gateway = `${data['custom_gateway']}`
@@ -3976,7 +3986,7 @@ function get_selected_gateway_if_custom_set(cid, default_gateway){
 
 
 
-
+/* deconstructs a 'ecid' link, which is a custom link used inside of E5 */
 function get_ecid_obj(ecid){
   if(!ecid.includes('.')){
     return {'cid':ecid, 'internal_id':'', 'option':'in'}
@@ -3996,6 +4006,7 @@ function get_ecid_obj(ecid){
   return {'cid':id, 'internal_id':internal_id, 'option':option}
 }
 
+/* starts the fetching of data stored in multiple ipfs cid links */
 async function load_hash_data(cids){
   var ecids = []
   var included_ecids = []
@@ -4023,7 +4034,7 @@ async function load_hash_data(cids){
 
 
 
-
+/* loads all the events emitted for a specified contract and event type, for a tracked period of time. */
 async function load_past_events(contract, event, e5, web3, contract_name){
   var latest = Number(await web3.eth.getBlockNumber())
   var starting_block = data[e5]['current_block'][contract+event] == null ? data[e5]['first_block'] : data[e5]['current_block'][contract+event]
@@ -4104,6 +4115,7 @@ async function load_past_events(contract, event, e5, web3, contract_name){
   
 }
 
+/* starts the loading of all the events stored in all the E5 smart contracts for a specified E5 */
 async function set_up_listeners(e5) {
   const web3 = new Web3(data[e5]['web3']);
   const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
@@ -4160,6 +4172,7 @@ async function set_up_listeners(e5) {
   load_past_events(h52_contract, 'power', e5, web3, 'H52')
 }
 
+/* starts the loading of all the E5 event data if the app key is defined */
 function load_events_for_all_e5s(){
   if(app_key == null || app_key == '') return;
 
@@ -4174,7 +4187,7 @@ function load_events_for_all_e5s(){
 
 
 
-
+/* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
   var obj = {'data':data, 'event_data':event_data, 'hash_data':hash_data, 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers}
   const write_data = encrypt_storage_data(JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v), data['key']);
@@ -4206,6 +4219,7 @@ async function store_back_up_of_data(){
   return {success: success, backup_name: backup_name}
 }
 
+/* restores backed up data of the node. */
 async function restore_backed_up_data_from_storage(file_name, key){
   var name = file_name.endsWith('.txt') ? file_name : `${file_name}.txt`
   console.log(name);
@@ -4247,7 +4261,7 @@ async function restore_backed_up_data_from_storage(file_name, key){
 
 
 
-
+/* returns all the objects (posts, jobs, contracts etc) stored in this node for a specified target type */
 async function get_all_objects(target_type){
   var all_objects = []
   var all_object_positions = {}
@@ -4302,6 +4316,7 @@ async function get_all_objects(target_type){
   return all_objects
 }
 
+/* filters objects by a specified set of tags */
 async function search_for_object_ids_by_tags(tags, target_type){
   var all_objects = await get_all_objects(target_type)
 
@@ -4338,6 +4353,7 @@ async function search_for_object_ids_by_tags(tags, target_type){
   return ids;
 }
 
+/* filters objects by a specified title */
 async function search_for_object_ids_by_title(title, target_type){
   var all_objects = await get_all_objects(target_type)
   var filtered_objects = [];
@@ -4371,7 +4387,7 @@ async function search_for_object_ids_by_title(title, target_type){
 
 
 
-
+/* returns the subscription payment information for a specified account */
 async function get_subscription_payment_information(e5, signature_data, subscription, signature){
   const web3 = new Web3(data[e5]['web3']);
   try{
@@ -4391,6 +4407,7 @@ async function get_subscription_payment_information(e5, signature_data, subscrip
   }
 }
 
+/* returns the E5 contracts linked to the specified E5 from a specified E5 address */
 async function get_e5_contracts_from_address(provider, e5_address, first_block){
   const web3 = new Web3(provider);
   try{
@@ -4404,6 +4421,7 @@ async function get_e5_contracts_from_address(provider, e5_address, first_block){
   }
 }
 
+/* tests if a supplied provider is a valid web3 provider */
 async function test_provider(provider, e5, E5_address, first_block){
   const web3 = new Web3(provider);
   const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, E5_address);
@@ -4415,6 +4433,7 @@ async function test_provider(provider, e5, E5_address, first_block){
   return false
 }
 
+/* tests if a supplied gateway is a valid gateway */
 async function test_gateway(new_provider){
   var cid = 'bafkreigapfe43wknpmflvp234k7fuijmv4fxbyjaybhcgc37pscsschi4u'
   var my_gateway = `${new_provider}`
@@ -4435,7 +4454,7 @@ async function test_gateway(new_provider){
 
 
 
-
+/* filters events for a specified E5 and event id, with various filters */
 function filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter){
   var focused_events = event_data[requested_e5][requested_contract][requested_event_id]
   const check_event = (eventt) => {
@@ -4468,6 +4487,7 @@ function filter_events(requested_e5, requested_contract, requested_event_id, fil
   return filtered_events
 }
 
+/* stores all the ipfs data in files. */
 function store_hashes_in_file_storage_if_memory_full(){
   var keys = Object.keys(hash_data)
   if(keys.length >= 125){
@@ -4492,6 +4512,7 @@ function store_hashes_in_file_storage_if_memory_full(){
   }
 }
 
+/* fetches data stored in memory or file storage for specified ipfs hashes */
 async function fetch_hashes_from_file_storage_or_memory(hashes){
   var hash_data_objects = {}
   var file_name_function_memory = {}
@@ -4531,29 +4552,29 @@ async function fetch_hashes_from_file_storage_or_memory(hashes){
   return hash_data_objects
 }
 
-async function get_maximum_available_disk_space(){
-  var isloading = true
-  var available_space = 0
-  disk.check('/', function(err, info) {
-    if(err){
-      console.log(err)
-    }else{
-      const freeInPercentage = info.free / info.total;
-      const usedInPercentage = info.available / info.total;
-      available_space = info.free / (1024 * 1024)
-    }
-    isloading = false
-  });
-  while (isloading == true) {
-    if (isloading == false) break
-    await new Promise(resolve => setTimeout(resolve, 700))
-  }
-  return available_space
-}
+// async function get_maximum_available_disk_space(){
+//   var isloading = true
+//   var available_space = 0
+//   disk.check('/', function(err, info) {
+//     if(err){
+//       console.log(err)
+//     }else{
+//       const freeInPercentage = info.free / info.total;
+//       const usedInPercentage = info.available / info.total;
+//       available_space = info.free / (1024 * 1024)
+//     }
+//     isloading = false
+//   });
+//   while (isloading == true) {
+//     if (isloading == false) break
+//     await new Promise(resolve => setTimeout(resolve, 700))
+//   }
+//   return available_space
+// }
 
 
 
-
+/* returns an accounts available storage in megabytes from their signature */
 async function fetch_accounts_available_storage(signature_data, signature){
   const e5 = data['target_account_e5']
   const web3 = new Web3(data[e5]['web3']);
@@ -4564,21 +4585,30 @@ async function fetch_accounts_available_storage(signature_data, signature){
     var address_account = accounts[0]
 
     var payment_data = data['storage_data'][address_account.toString()]
-    if(payment_data == null) return bigInt(0);
-    return {available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: address_account}
+    if(payment_data == null) return { available_space: 0.0, account: address_account };
+    return { available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: address_account }
   }catch(e){
     console.log(e)
-    return bigInt(0)
+    return { available_space: 0.0, account: 0 }
   }
 }
 
+/* checks for new storage payments and updates how much storage space their account has in the node */
 async function update_storage_payment_information(){
   const e5 = data['target_account_e5']
+  const storage_boot_time = data['storage_boot_time']
+  if(e5 == '') return;
   var target_storage_purchase_recipient_account = data['target_storage_purchase_recipient_account']
   var last_checked_storage_block = data['last_checked_storage_block']
 
   var from_filter = {p:'p6'/* block_number */, value:last_checked_storage_block}
   var events = filter_events(e5, 'H52', 'e1'/* transfer */, {p3/* receiver */:target_storage_purchase_recipient_account}, from_filter)
+
+  const check_event = (eventt) => {
+    return parseInt(eventt.returnValues.p5/* timestamp */) > parseInt(storage_boot_time)
+  }
+
+  events = events.filter(check_event)
 
   if(events.length > 0){
     //the tracked account received some payments
@@ -4605,7 +4635,8 @@ async function update_storage_payment_information(){
         var amount = bigInt(price_per_megabyte[p]['amount'])
 
         var paid_amount_for_exchange = payment_data[account_payment][exchange]
-        var space_units_acquired = bigInt(paid_amount_for_exchange).divide(amount)
+        var final_amount = bigInt(amount).equals(0) ? bigInt(1) : bigInt(amount)
+        var space_units_acquired = bigInt(paid_amount_for_exchange).divide(final_amount)
         if(final_space_units > space_units_acquired || final_space_units == -1){
           final_space_units = space_units_acquired
         }
@@ -4621,7 +4652,7 @@ async function update_storage_payment_information(){
         acquired_space = data['max_buyable_capacity']
       }
       if(data['storage_data'][account] == null){
-        data['storage_data'][account] = {'audio_files':0, 'video_files':0, 'acquired_space':parseFloat(acquired_space), 'utilized_space':bigInt(0)}
+        data['storage_data'][account] = {'audio_files':0, 'video_files':0, 'acquired_space':parseFloat(acquired_space), 'utilized_space':0.0}
       }else{
         data['storage_data'][account]['acquired_space'] = parseFloat(data['storage_data'][account]['acquired_space']+acquired_space)
       }
@@ -4632,6 +4663,7 @@ async function update_storage_payment_information(){
   data['last_checked_storage_block'] = await web3.eth.getBlockNumber()
 }
 
+/* returns a big int value from a number and its specified depth */
 function get_actual_number(number, depth){
   var p = (bigInt(depth).times(72)).toString().toLocaleString('fullwide', {useGrouping:false})
   var depth_vaule = bigInt(('1e'+p))
@@ -4642,7 +4674,7 @@ function get_actual_number(number, depth){
 
 
 
-
+/* returns an array of binaries from their respective file base64encoded datas */
 function get_file_binaries(audio_file_datas){
   var binary_array = []
   for(var i=0; i<audio_file_datas.length; i++){
@@ -4654,6 +4686,7 @@ function get_file_binaries(audio_file_datas){
   return binary_array
 }
 
+/* returns the total storage space set to be taken up by an array of binaries in megabytes */
 function get_length_of_binary_files_in_mbs(binary_array){
   var length = 0
   for(var i=0; i<binary_array.length; i++){
@@ -4663,6 +4696,7 @@ function get_length_of_binary_files_in_mbs(binary_array){
   return length / (1024 * 1024)
 }
 
+/* stores multiple binary files in file storage */
 async function store_files_in_storage(binaries, file_type){
   var file_names = []
   var successful = true;
@@ -4698,18 +4732,21 @@ async function store_files_in_storage(binaries, file_type){
   return file_names;
 }
 
-function makeid(length) {
-    let result = '';
-    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const charactersLength = characters.length;
-    let counter = 0;
-    while (counter < length) {
-      result += characters.charAt(Math.floor(Math.random() * charactersLength));
-      counter += 1;
-    }
-    return result;
+
+
+
+
+/* returns the mimetype for a specified set of file extensions */
+function get_final_content_type(content_type){
+  var obj = {'mp4':'video/mp4', 'mp3':'audio/mpeg', 'jpeg':'image/jpeg', 'jpg':'image/jpeg', 'png':'image/png', 'pdf':'application/pdf'}
+  return obj[content_type]
 }
 
+/* formats a number by adding commas every three digits */
+function number_with_commas(x) {
+    if(x == null) x = '';
+    return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
 
 
 
@@ -4719,6 +4756,7 @@ function makeid(length) {
 //curl https://localhost:3000/marco
 //https://<your-public-ip>:3000/event?eventName=YourEventName
 
+/* endpoint for returning E5 event data tracked by the node */
 app.get('/events', (req, res) => {
   const arg_string = req.query.arg_string;
   try{
@@ -4747,6 +4785,7 @@ app.get('/events', (req, res) => {
   }
 });//ok
 
+/* endpoint for returning E5 hash data stored in ipfs */
 app.get('/data', async (req, res) => {
   const arg_string = req.query.arg_string;
   try{
@@ -4762,6 +4801,7 @@ app.get('/data', async (req, res) => {
   }
 });//ok
 
+/* endpoint for filtering tracked E5 objects by specified tags */
 app.get('/tags', async (req, res) => {
   const arg_string = req.query.arg_string;
   // console.log(`arg string: ${arg_string}`);
@@ -4779,6 +4819,7 @@ app.get('/tags', async (req, res) => {
   }
 });//ok
 
+/* endpoint for filtering tracked E5 objects by specified a title */
 app.get('/title', async (req, res) => {
   const arg_string = req.query.arg_string;
   // console.log(`arg string: ${arg_string}`);
@@ -4796,6 +4837,7 @@ app.get('/title', async (req, res) => {
   }
 });//ok
 
+/* admin endpoint for restoring the node to a backed up version */
 app.post('/restore', async (req, res) => {
   try{
     const file_name = req.query.file_name;
@@ -4826,9 +4868,24 @@ app.post('/restore', async (req, res) => {
   }
 });//ok
 
+/* enpoint for checking if node is online */
 app.get('/marco', (req, res) => {
   var ipfs_hashes = load_count
-  var obj = {'ipfs_hashes':`${ipfs_hashes} out of ${hash_count}`, 'tracked_E5s':data['e'], success:false}
+  var storage_accounts_length = Object.keys(data['storage_data']).length
+  var booted = app_key != '' && app_key != null
+  var obj = {
+    'ipfs_hashes':`${number_with_commas(ipfs_hashes)} out of ${number_with_commas(hash_count)}`, 
+    'tracked_E5s':data['e'],//
+    'storage_accounts':storage_accounts_length,// 
+    'target_storage_purchase_recipient_account':data['target_storage_purchase_recipient_account'],// 
+    'max_buyable_capacity':data['max_buyable_capacity'],//
+    'target_account_e5':data['target_account_e5'],//
+    'price_per_megabyte':data['price_per_megabyte'],
+    'start_up_time':start_up_time,//
+    'booted':booted,//
+    success:true
+  }
+  
   if(Date.now() - parseInt(start_up_time) < (5 * 60 * 1000)){
     obj['backup-key'] = data['key']
   }
@@ -4836,6 +4893,7 @@ app.get('/marco', (req, res) => {
   res.send(string_obj);
 });//ok
 
+/* enpoint for updating the node's provider for a specified E5 */
 app.post('/update_provider', async (req, res) => {
   try{
     const new_provider = req.query.new_provider;
@@ -4874,6 +4932,7 @@ app.post('/update_provider', async (req, res) => {
   }
 });//ok
 
+/* endpoint for updating the node's gateway provider for E5 data. */
 app.post('/update_content_gateway', async (req, res) => {
   try{
     const new_provider = req.query.new_provider;
@@ -4910,6 +4969,7 @@ app.post('/update_content_gateway', async (req, res) => {
   }
 });//ok
 
+/* admin endpoint for booting a new E5 to be tracked by the node */
 app.post('/new_e5', async (req, res) => {
   const arg_string = req.query.arg_string;
   console.log(`arg string: ${arg_string}`);
@@ -4983,6 +5043,7 @@ app.post('/new_e5', async (req, res) => {
   }
 });//ok
 
+/* admin endpoint for removing tracked data for a specified E5 */
 app.post('/delete_e5', (req, res) => {
   try{
     const e5 = req.query.e5;
@@ -5011,6 +5072,7 @@ app.post('/delete_e5', (req, res) => {
   }
 });//ok
 
+/* endpoint for checking the subscription payment information for a specified account */
 app.get('/subscription', async (req, res) => {
   const subscription = req.query.object_id;
   const e5 = req.query.e5
@@ -5046,6 +5108,7 @@ app.get('/subscription', async (req, res) => {
 
 });//ok
 
+/* admin endpoint for manually backing up your nodes data */
 app.post('/backup', async (req, res) => {
   try{
     const backup_key = req.query.backup_key;
@@ -5067,6 +5130,7 @@ app.post('/backup', async (req, res) => {
   }
 });//ok
 
+/* admin endpoint for updating the iteration value for a specified E5 and its corresponding chain */
 app.post('/update_iteration', (req, res) => {
   try{
     const new_iteration = req.query.new_iteration;
@@ -5103,6 +5167,7 @@ app.post('/update_iteration', (req, res) => {
   }
 });//ok
 
+/* admin endpoint for booting the entire node with the required app_key */
 app.post('/boot', (req, res) => {
   try{
     const key = req.query.app_key;
@@ -5125,9 +5190,10 @@ app.post('/boot', (req, res) => {
   }
 });//ok
 
+/* admin endpoint for booting the node's storage services for paid users */
 app.post('/boot_storage', async (req, res) => {
   const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account} = req.body;
-  var available_space = await get_maximum_available_disk_space()
+  // var available_space = await get_maximum_available_disk_space()
   
   if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account)){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -5141,7 +5207,7 @@ app.post('/boot_storage', async (req, res) => {
   //   res.send(JSON.stringify({ message: 'You dont have enough disk space for that specified max_capacity', success:false }));
   //   return;
   // }
-  else if(data['file_data_capacity'] !== 0){
+  else if(data['max_buyable_capacity'] !== 0){
     res.send(JSON.stringify({ message: 'Storage already booted in node.', success:false }));
     return;
   }
@@ -5155,11 +5221,13 @@ app.post('/boot_storage', async (req, res) => {
     data['price_per_megabyte'] = price_per_megabyte
     data['target_account_e5'] = target_account_e5
     data['target_storage_purchase_recipient_account'] = target_storage_purchase_recipient_account
-   
-    res.send(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity}, payments recipient account ${target_storage_purchase_recipient_account} of E5 ${target_account_e5}`, success:true }));
-  }
-});
+    data['storage_boot_time'] = Date.now();
 
+    res.send(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs, payments recipient account ${target_storage_purchase_recipient_account} of E5 ${target_account_e5}`, success:true }));
+  }
+});//ok
+
+/* admin endpoint for reconfiguring the storage settings for the node's storage services */
 app.post('/reconfigure_storage', async (req, res) => {
   const { backup_key, key, value, e5 } = req.body; // Extract arguments from req.body
   
@@ -5186,11 +5254,12 @@ app.post('/reconfigure_storage', async (req, res) => {
     }
     res.send(JSON.stringify({ message: `node reconfigured with the specified parameter '${key}' to the speicified value`, success:true }));
   }
-});
+});//ok
 
+/* endpoint for storing files in the storage service for the node */
 app.post('/store_files', async (req, res) => {
   const { signature_data, signature, file_datas, file_type } = req.body;
-  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_datas == null || (file_type != 'mp4' && file_type != 'mp3')){
+  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_datas == null || (file_type != 'mp4' && file_type != 'mp3' && file_type != 'png' && file_type != 'jpeg' && file_type != 'jpg' && file_type != 'pdf')){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
@@ -5206,7 +5275,7 @@ app.post('/store_files', async (req, res) => {
     var storage_data = await fetch_accounts_available_storage(signature_data, signature)
     var binaries = get_file_binaries(file_datas)
     var space_utilized = get_length_of_binary_files_in_mbs(binaries)
-    
+    console.log('storage_data', storage_data)
     if(storage_data.available_space < space_utilized){
       res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
       return;
@@ -5222,7 +5291,77 @@ app.post('/store_files', async (req, res) => {
       
     }
   }
-});
+});//ok
+
+/* endpoint for obtaining the storage space utilized by an account */
+app.get('/account_storage_data/:account', (req, res) => {
+  const { account } = req.params;
+  if(account == '' || account == null){
+    res.send(JSON.stringify({ message: 'Please specify an account', success:false }));
+    return;
+  }else{
+    var payment_data = data['storage_data'][account.toString()]
+    if(payment_data == null){
+      res.send(JSON.stringify({ message: 'That account does not exist in this node.', success:false }));
+      return;
+    }else{
+      res.send(JSON.stringify({ message: 'Account found.', account: payment_data, success:true }));
+    }
+  }
+});//ok
+
+/* endpoint for streaming a file stored in the node. */
+app.get('/stream_file/:file/:content_type', (req, res) => {
+  const { file, content_type } = req.params;
+  const final_content_type = get_final_content_type(content_type)
+  if(file == '' || file == null || content_type == '' || content_type == null){
+    res.send(JSON.stringify({ message: 'Please specify a file to stream and content type', success:false }));
+    return;
+  }
+  else if(final_content_type == null){
+    res.send(JSON.stringify({ message: 'Please specify a valid content type', success:false }));
+    return;
+  }
+  else{
+    const filePath = `./storage_data/${file}`
+    const stats = fs.statSync(filePath);
+    const fileSize = stats.size;
+    const range = req.headers.range;
+    
+    if (range) {
+      const [start, end] = range
+        .replace(/bytes=/, '')
+        .split('-')
+        .map(Number);
+      
+      const chunkStart = start || 0;
+      const chunkEnd = end || fileSize - 1;
+
+      const stream = fs.createReadStream(filePath, {
+        start: chunkStart,
+        end: chunkEnd,
+      });
+
+      res.writeHead(206, {
+        'Content-Range': `bytes ${chunkStart}-${chunkEnd}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkEnd - chunkStart + 1,
+        'Content-Type': final_content_type,
+      });
+
+      stream.pipe(res);
+    }
+    else{
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': final_content_type,
+      });
+      fs.createReadStream(filePath).pipe(res);
+    }
+
+  }
+});//ok
+
 
 
 
@@ -5237,14 +5376,14 @@ app.post('/store_files', async (req, res) => {
 // Start server
 app.listen(PORT, () => {
   start_up_time = Date.now()
-  var key = makeid(32)
+  var key = 'eeeee'+makeid(32)+'eeeee'
   data['key'] = key
   console.log('')
   console.log('------------------------e----------------------------')
   console.log(key)
   console.log('------------------------e----------------------------')
   console.log('')
-  console.log(`Back-ups for the server's data are encrypted and stored periodically. Make sure to keep that key safe incase you need to reboot the server with a backup file. The key will be available in the /marco endpoint for the next five minutes.`)
+  console.log(`Back-ups for the node's data are encrypted and stored periodically. Make sure to keep that nitro key safe incase you need to reboot the node with a backup file. The nitro key will be available in the /marco endpoint for the next five minutes.`)
   console.log('')
   console.log(`Server running at http://localhost:${PORT}`);
   console.log('')

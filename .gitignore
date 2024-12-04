@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+/hash_data
+/storage_data
 /.pnp
 .pnp.js
 
