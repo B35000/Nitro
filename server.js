@@ -31,7 +31,7 @@ var data = {
   'E25': {
     'addresses':['0xF3895fe95f423A4EBDdD16232274091a320c5284', '0x839C6155383D4a62E31d4d8B5a6c172E6B71979c', '0xD338118A55B5245b9C9F6d5f03BF9d9eA32c5850', '0xec24050b8E3d64c8be3cFE9a40A59060Cb35e57C', '0xFA85d977875092CA69d010d4EFAc5B0E333ce61E', '0x7dcc9570c2e6df2860a518eEE46fA90E13ef6276', '0x0Bb15F960Dbb856f3Eb33DaE6Cc57248a11a4728'],
     'web3':'https://etc.etcdesktop.com',
-    'first_block':19151130, 'current_block':{}, 'iteration':400_000
+    'first_block':19151130, 'current_block':{}, 'iteration':400_000,
   },
   // 'file_data_capacity':0,
   'max_buyable_capacity':0,
@@ -40,7 +40,11 @@ var data = {
   'target_storage_purchase_recipient_account':0,
   'last_checked_storage_block':0,
   'storage_data':{},
-  'storage_boot_time':0
+  'storage_boot_time':0,
+  'metrics':{
+    'total_files_stored':0,
+    'total_space_utilized':0.0
+  }
 }
 
 const E5_CONTRACT_ABI = [
@@ -4037,7 +4041,7 @@ async function load_hash_data(cids){
 /* loads all the events emitted for a specified contract and event type, for a tracked period of time. */
 async function load_past_events(contract, event, e5, web3, contract_name){
   var latest = Number(await web3.eth.getBlockNumber())
-  var starting_block = data[e5]['current_block'][contract+event] == null ? data[e5]['first_block'] : data[e5]['current_block'][contract+event]
+  var starting_block = data[e5]['current_block'][contract_name+event] == null ? data[e5]['first_block'] : data[e5]['current_block'][contract_name+event]
 
   var iteration = data[e5]['iteration']
   var events = []
@@ -4065,7 +4069,7 @@ async function load_past_events(contract, event, e5, web3, contract_name){
   });
 
   event_data[e5][contract_name][event] = event_data[e5][contract_name][event].concat(events)
-  data[e5]['current_block'][contract+event] = latest
+  data[e5]['current_block'][contract_name+event] = latest
 
   if(events.length > 0){
     if(contract_name == 'E52' && event == 'e4'/* Data */){
@@ -4220,7 +4224,7 @@ async function store_back_up_of_data(){
 }
 
 /* restores backed up data of the node. */
-async function restore_backed_up_data_from_storage(file_name, key){
+async function restore_backed_up_data_from_storage(file_name, key, backup_key, should_restore_key){
   var name = file_name.endsWith('.txt') ? file_name : `${file_name}.txt`
   console.log(name);
   var success = true;
@@ -4244,6 +4248,10 @@ async function restore_backed_up_data_from_storage(file_name, key){
       object_types = obj['object_types']
       cold_storage_hash_pointers = obj['cold_storage_hash_pointers']
       console.log('successfully loaded back-up data')
+
+      if(should_restore_key != null && should_restore_key == true){
+        data['key'] = backup_key
+      }
     }
     isloading = false
   });
@@ -4372,6 +4380,20 @@ async function search_for_object_ids_by_title(title, target_type){
         return true
       }
     }
+
+    if(target_type == 20/* 20(video_object) */){
+      //its a video being searched, check the videos in it
+      var videos = object['data']['videos']
+      var filtered_videos = videos.filter(function (object) {
+        var video_title = object['video_title'] == null ? '' : object['video_title']
+        var video_composer = object['video_composer'] == null ? '' : object['video_composer']
+        return (video_title.toLowerCase().includes(title.toLowerCase()) || video_composer.toLowerCase().includes(title.toLowerCase()))
+      });
+      if(filtered_videos.length > 0){
+        return true
+      }
+    }
+
     return (match)
   });
 
@@ -4596,19 +4618,30 @@ async function fetch_accounts_available_storage(signature_data, signature){
 /* checks for new storage payments and updates how much storage space their account has in the node */
 async function update_storage_payment_information(){
   const e5 = data['target_account_e5']
-  const storage_boot_time = data['storage_boot_time']
+  const storage_boot_time = parseInt(data['storage_boot_time'])
   if(e5 == '') return;
   var target_storage_purchase_recipient_account = data['target_storage_purchase_recipient_account']
   var last_checked_storage_block = data['last_checked_storage_block']
-
-  var from_filter = {p:'p6'/* block_number */, value:last_checked_storage_block}
+  // console.log('last_checked_storage_block', last_checked_storage_block)
+  
+  var from_filter = {'p':'p6'/* block_number */, 'value': last_checked_storage_block}
   var events = filter_events(e5, 'H52', 'e1'/* transfer */, {p3/* receiver */:target_storage_purchase_recipient_account}, from_filter)
 
+  var purchase_events = filter_events(e5, 'E52', 'e4'/* data */, {p1/* target_id */:23, p5/* int_data */: target_storage_purchase_recipient_account}, {})
+
   const check_event = (eventt) => {
-    return parseInt(eventt.returnValues.p5/* timestamp */) > parseInt(storage_boot_time)
+    return (parseInt(eventt.returnValues.p5/* timestamp */) > parseInt(storage_boot_time))
+  }
+
+  const check_purchase_event = (eventt) => {
+    return (parseInt(eventt.returnValues.p6/* timestamp */) > parseInt(storage_boot_time))
   }
 
   events = events.filter(check_event)
+  purchase_events = purchase_events.filter(check_purchase_event)
+
+
+
 
   if(events.length > 0){
     //the tracked account received some payments
@@ -4618,12 +4651,32 @@ async function update_storage_payment_information(){
       var exchange_id = event.returnValues.p1.toString()/* exchange_id */
       var amount = event.returnValues.p4/* amount */
       var depth = event.returnValues.p7/* depth */
-      var sized_amount = get_actual_number(amount.toString().toLocaleString('fullwide', {useGrouping:false}), depth.toString().toLocaleString('fullwide', {useGrouping:false}))
-      var sender = event.returnValues.p2.toString()/* sender */
+      var event_block = event.returnValues.p6/* block_number */
 
-      if(payment_data[sender] == null) payment_data[sender] = {}
-      if(payment_data[sender][exchange_id] == null) payment_data[sender][exchange_id] = bigInt(0)
-      payment_data[sender][exchange_id] = bigInt(payment_data[sender][exchange_id]).plus(sized_amount)
+      const individual_block_filter = (eventt) => {
+        return parseInt(eventt.returnValues.p7/* block_number */) == parseInt(event_block)
+      }
+
+      var data_events = purchase_events.filter(individual_block_filter)
+      
+      if(data_events.length > 0){
+        var data_event = data_events[0]
+        if(data_event.returnValues.p4/* string_data */ == 'storage'){
+          var sized_amount = get_actual_number(amount.toString().toLocaleString('fullwide', {useGrouping:false}), depth.toString().toLocaleString('fullwide', {useGrouping:false}))
+          var sender = event.returnValues.p2.toString()/* sender */
+
+          if(payment_data[sender] == null) payment_data[sender] = {}
+          if(payment_data[sender][exchange_id] == null) payment_data[sender][exchange_id] = bigInt(0)
+          payment_data[sender][exchange_id] = bigInt(payment_data[sender][exchange_id]).plus(sized_amount)
+          // console.log(`added ${sized_amount} for exchange: ${exchange_id} for sender: ${sender}`)
+        }else{
+          // console.log('event string not `storage`')
+        }
+      }
+      else{
+        // console.log('no purchase events recorded')
+      }
+      
     }
 
     var price_per_megabyte = data['price_per_megabyte']
@@ -4637,12 +4690,17 @@ async function update_storage_payment_information(){
         var paid_amount_for_exchange = payment_data[account_payment][exchange]
         var final_amount = bigInt(amount).equals(0) ? bigInt(1) : bigInt(amount)
         var space_units_acquired = bigInt(paid_amount_for_exchange).divide(final_amount)
+        
         if(final_space_units > space_units_acquired || final_space_units == -1){
           final_space_units = space_units_acquired
+          // console.log(`space unit of ${space_units_acquired} set`)
+        }else{
+          // console.log(`space unit of ${space_units_acquired} not set`)
         }
       }
       if(final_space_units > 0){
         accounts_space_units[account_payment] = final_space_units
+        // console.log(`final space units of ${final_space_units} set to account ${account_payment}`)
       }
     }
 
@@ -4652,15 +4710,17 @@ async function update_storage_payment_information(){
         acquired_space = data['max_buyable_capacity']
       }
       if(data['storage_data'][account] == null){
-        data['storage_data'][account] = {'audio_files':0, 'video_files':0, 'acquired_space':parseFloat(acquired_space), 'utilized_space':0.0}
+        data['storage_data'][account] = {'files':0, 'acquired_space':parseFloat(acquired_space), 'utilized_space':0.0}
       }else{
         data['storage_data'][account]['acquired_space'] = parseFloat(data['storage_data'][account]['acquired_space']+acquired_space)
       }
+      // console.log(`updated storage space for account ${account} to ${data['storage_data'][account]['acquired_space']} mbs`)
     }
+  }else{
+    // console.log('no storage payments so far.')
   }
 
-  const web3 = new Web3(data[e5]['web3']);
-  data['last_checked_storage_block'] = await web3.eth.getBlockNumber()
+  data['last_checked_storage_block'] = (data[e5]['current_block']['H52'+'e1'])
 }
 
 /* returns a big int value from a number and its specified depth */
@@ -4748,13 +4808,21 @@ function number_with_commas(x) {
     return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+async function get_e5_chain_time(e5){
+  var provider = data[e5]['web3']
+  var E5_address = data[e5]['addresses'][0]
+  const web3 = new Web3(provider);
+  const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, E5_address);
+  var chain_time = await e5_contract.methods.f147(2/* get_block_timestamp */).call((error, result) => {});
+  return chain_time
+}
+
 
 
 
 
 //2qwSNu9OCy93Z6LsnNVNpVZc5M7Opdw9
 //curl https://localhost:3000/marco
-//https://<your-public-ip>:3000/event?eventName=YourEventName
 
 /* endpoint for returning E5 event data tracked by the node */
 app.get('/events', (req, res) => {
@@ -4843,6 +4911,7 @@ app.post('/restore', async (req, res) => {
     const file_name = req.query.file_name;
     const backup_key = req.query.backup_key;
     const data_key = req.query.data_key
+    const should_restore_key = req.query.should_restore_key
     if(file_name == null || file_name == '' || backup_key == null || backup_key == '' || data_key == null || data_key == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
       return;
@@ -4852,13 +4921,13 @@ app.post('/restore', async (req, res) => {
       res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
       return;
     }
-    const success = await restore_backed_up_data_from_storage(file_name, data_key)
+    const success = await restore_backed_up_data_from_storage(file_name, data_key, backup_key, should_restore_key)
     if(success == true){
-      var obj = {'data':`Back up of ${file_name} successful.`, success:true}
+      var obj = {message:`Backup restoration of ${file_name} successful.`, success:true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       res.send(string_obj);
     }else{
-      var obj = {'data':`Back up of ${file_name} unsuccessful. Please ensure the file was not corrupted and the back up key is valid`, success:false}
+      var obj = {message:`Backup restoration of ${file_name} unsuccessful. Please ensure the file was not corrupted and the back up key is valid`, success:false}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       res.send(string_obj);
     }
@@ -4866,13 +4935,22 @@ app.post('/restore', async (req, res) => {
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});//ok
+});//ok ------
 
 /* enpoint for checking if node is online */
 app.get('/marco', (req, res) => {
   var ipfs_hashes = load_count
   var storage_accounts_length = Object.keys(data['storage_data']).length
   var booted = app_key != '' && app_key != null
+  var e5_data = {}
+  data['e'].forEach(e5 => {
+    e5_data[e5] = data[e5]
+  });
+  
+  var dir = './backup_data/'
+  var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
+  var files_obj = {'data':files}
+  var encrypted_files_obj = encrypt_storage_data(JSON.stringify(files_obj), data['key'])
   var obj = {
     'ipfs_hashes':`${number_with_commas(ipfs_hashes)} out of ${number_with_commas(hash_count)}`, 
     'tracked_E5s':data['e'],//
@@ -4883,6 +4961,11 @@ app.get('/marco', (req, res) => {
     'price_per_megabyte':data['price_per_megabyte'],
     'start_up_time':start_up_time,//
     'booted':booted,//
+    'total_files_stored':data['metrics']['total_files_stored'],
+    'total_space_utilized':data['metrics']['total_space_utilized'],
+    'e5_data':e5_data,
+    'custom_gateway':data['custom_gateway'],
+    'encrypted_files_obj':encrypted_files_obj,
     success:true
   }
   
@@ -4922,7 +5005,7 @@ app.post('/update_provider', async (req, res) => {
       return;
     }else{
       data[e5]['web3'] = new_provider
-      var obj = {'data':`Web3 provider for ${e5} updated to '${new_provider}' successfully.`, success:true}
+      var obj = {message:`Web3 provider for ${e5} updated to '${new_provider}' successfully.`, success:true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       res.send(string_obj);
     }
@@ -4930,7 +5013,7 @@ app.post('/update_provider', async (req, res) => {
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});//ok
+});//ok -------
 
 /* endpoint for updating the node's gateway provider for E5 data. */
 app.post('/update_content_gateway', async (req, res) => {
@@ -4959,7 +5042,7 @@ app.post('/update_content_gateway', async (req, res) => {
       return;
     }else{
       data['custom_gateway'] = new_provider
-      var obj = {'data':`Custom gateway updated to '${new_provider}' successfully.`, success:true}
+      var obj = {message:`Custom gateway updated to '${new_provider}' successfully.`, success:true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       res.send(string_obj);
     }
@@ -4967,7 +5050,7 @@ app.post('/update_content_gateway', async (req, res) => {
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});//ok
+});//ok ----
 
 /* admin endpoint for booting a new E5 to be tracked by the node */
 app.post('/new_e5', async (req, res) => {
@@ -4977,10 +5060,10 @@ app.post('/new_e5', async (req, res) => {
     var arg_obj = JSON.parse(arg_string)
     const e5 = arg_obj.e5;
     const backup_key = arg_obj.backup_key;
-    const e5_address = arg_obj.e5_address
-    const web3 = arg_obj.web3
-    const first_block = arg_obj.first_block
-    const iteration = arg_obj.iteration
+    const e5_address = arg_obj.e5_address;
+    const web3 = arg_obj.web3;
+    const first_block = arg_obj.first_block;
+    const iteration = arg_obj.iteration;
 
     if(e5 == null || e5 == '' || backup_key == null || backup_key == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -5034,14 +5117,14 @@ app.post('/new_e5', async (req, res) => {
     add_new_e5_to_event_data(e5)
     data['e'].push(e5)
 
-    var obj = {'data':`The new E5 '${e5}' has been added to the node successfully.`, success:true}
+    var obj = {message:`The new E5 '${e5}' has been added to the node successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     res.send(string_obj);
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});//ok
+});//ok ----
 
 /* admin endpoint for removing tracked data for a specified E5 */
 app.post('/delete_e5', (req, res) => {
@@ -5058,19 +5141,24 @@ app.post('/delete_e5', (req, res) => {
       return;
     }
 
+    if(e5 == 'E25'){
+      res.send(JSON.stringify({ message: `You can't delete E25` , success: false}));
+      return;
+    }
+
     var index = data['e'].indexOf(e5)
     data['e'].splice(index, 1)
     data[e5] = null
     event_data[e5] = null
 
-    var obj = {'data':`The E5 '${e5}' has been removed from the node successfully.`, success:true}
+    var obj = {message:`The E5 '${e5}' has been removed from the node successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     res.send(string_obj);
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});//ok
+});//ok ----
 
 /* endpoint for checking the subscription payment information for a specified account */
 app.get('/subscription', async (req, res) => {
@@ -5118,7 +5206,7 @@ app.post('/backup', async (req, res) => {
     }
     var success_obj = await store_back_up_of_data()
     if(success_obj.success == true){
-      var obj = {'data':`Data backed up successfully.`, 'backup_file_name':success_obj.backup_name, success:true}
+      var obj = {message:`Data backed up successfully.`, 'backup_file_name':success_obj.backup_name, success:true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       res.send(string_obj);
     }else{
@@ -5128,7 +5216,7 @@ app.post('/backup', async (req, res) => {
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});//ok
+});//ok ------
 
 /* admin endpoint for updating the iteration value for a specified E5 and its corresponding chain */
 app.post('/update_iteration', (req, res) => {
@@ -5158,14 +5246,14 @@ app.post('/update_iteration', (req, res) => {
     }
 
     data[e5]['iteration'] = new_iteration
-    var obj = {'data':`Iteration for ${e5} updated to '${new_iteration}' successfully.`, success:true}
+    var obj = {message:`Iteration for ${e5} updated to '${new_iteration}' successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     res.send(string_obj);
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});//ok
+});//ok ------
 
 /* admin endpoint for booting the entire node with the required app_key */
 app.post('/boot', (req, res) => {
@@ -5181,14 +5269,14 @@ app.post('/boot', (req, res) => {
       return;
     }
     app_key = key
-    var obj = {'data':`Node booted successfully.`, success:true}
+    var obj = {message:`Node booted successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     res.send(string_obj);
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});//ok
+});//ok ------
 
 /* admin endpoint for booting the node's storage services for paid users */
 app.post('/boot_storage', async (req, res) => {
@@ -5207,12 +5295,12 @@ app.post('/boot_storage', async (req, res) => {
   //   res.send(JSON.stringify({ message: 'You dont have enough disk space for that specified max_capacity', success:false }));
   //   return;
   // }
-  else if(data['max_buyable_capacity'] !== 0){
+  else if(data['max_buyable_capacity'] !== 0 || data['target_account_e5'] !== ''){
     res.send(JSON.stringify({ message: 'Storage already booted in node.', success:false }));
     return;
   }
   else if(!data['e'].includes(target_account_e5)){
-    res.send(JSON.stringify({ message: `That E5 is not being tracked.`, success:false }));
+    res.send(JSON.stringify({ message: `That E5 is not being watched.`, success:false }));
     return;
   }
   else{
@@ -5221,11 +5309,11 @@ app.post('/boot_storage', async (req, res) => {
     data['price_per_megabyte'] = price_per_megabyte
     data['target_account_e5'] = target_account_e5
     data['target_storage_purchase_recipient_account'] = target_storage_purchase_recipient_account
-    data['storage_boot_time'] = Date.now();
+    data['storage_boot_time'] = await get_e5_chain_time(target_account_e5)
 
     res.send(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs, payments recipient account ${target_storage_purchase_recipient_account} of E5 ${target_account_e5}`, success:true }));
   }
-});//ok
+});//ok -------
 
 /* admin endpoint for reconfiguring the storage settings for the node's storage services */
 app.post('/reconfigure_storage', async (req, res) => {
@@ -5254,7 +5342,7 @@ app.post('/reconfigure_storage', async (req, res) => {
     }
     res.send(JSON.stringify({ message: `node reconfigured with the specified parameter '${key}' to the speicified value`, success:true }));
   }
-});//ok
+});//ok -----
 
 /* endpoint for storing files in the storage service for the node */
 app.post('/store_files', async (req, res) => {
@@ -5281,6 +5369,9 @@ app.post('/store_files', async (req, res) => {
       return;
     }else{
       data['storage_data'][storage_data.account.toString()]['utilized_space'] += space_utilized
+      data['storage_data'][storage_data.account.toString()]['files'] ++;
+      data['metrics']['total_files_stored']++
+      data['metrics']['total_space_utilized']+= space_utilized
       var success = await store_files_in_storage(binaries, file_type)
       
       if(success == null){
@@ -5311,7 +5402,7 @@ app.get('/account_storage_data/:account', (req, res) => {
 });//ok
 
 /* endpoint for streaming a file stored in the node. */
-app.get('/stream_file/:file/:content_type', (req, res) => {
+app.get('/stream_file/:content_type/:file', (req, res) => {
   const { file, content_type } = req.params;
   const final_content_type = get_final_content_type(content_type)
   if(file == '' || file == null || content_type == '' || content_type == null){
@@ -5385,7 +5476,6 @@ app.listen(PORT, () => {
   console.log('')
   console.log(`Back-ups for the node's data are encrypted and stored periodically. Make sure to keep that nitro key safe incase you need to reboot the node with a backup file. The nitro key will be available in the /marco endpoint for the next five minutes.`)
   console.log('')
-  console.log(`Server running at http://localhost:${PORT}`);
   console.log('')
   console.log('')
 
@@ -5396,10 +5486,7 @@ app.listen(PORT, () => {
 setInterval(load_events_for_all_e5s, 120*1000);
 setInterval(store_back_up_of_data, 24*60*60*1000);
 setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
-setInterval(update_storage_payment_information, 2*60*1000);
+setInterval(update_storage_payment_information, 1*60*1000);
 
 load_events_for_all_e5s()
-
-
-
 
