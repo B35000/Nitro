@@ -1,13 +1,31 @@
+// Copyright (c) 2023 Bry Onyoni
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT. IN NO EVENT
+// SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+// OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+// FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+// IN THE SOFTWARE.
 const { Web3 } = require('web3');
 const express = require('express');
 var CryptoJS = require("crypto-js");
+const crypto = require('crypto'); 
 const cors = require('cors');
 const fs = require("fs");
-const disk = require('diskusage');
 var bigInt = require("big-integer");
+var https = require('https');
 
 const app = express();
-const PORT = 3000; // <----- please change this to whichever port number you wish to use
 app.use(cors());
 app.use(express.json({ limit: "10gb" }));
 
@@ -15,10 +33,15 @@ app.use(express.json({ limit: "10gb" }));
 //npm install pm2@latest -g
 //npm install diskusage
 //npm installl big-integer
+//npm install crypto
 
 //pm2 start server.js
 //pm2 ls
 //pm2 stop all | 0
+
+//client-cert.pem  contract-listener  package-lock.json
+//client-key.pem   hash_data          package.json
+//client.csr
 
 //or node server.js if youre debugging
 
@@ -44,7 +67,9 @@ var data = {
   'metrics':{
     'total_files_stored':0,
     'total_space_utilized':0.0
-  }
+  },
+  'unlimited_basic_storage':false,
+  'nitro_link_data':{},
 }
 
 const E5_CONTRACT_ABI = [
@@ -3844,6 +3869,29 @@ var event_data = {
       'e1':[], 'e2':[], 'e3':[], 'e5':[], 'power':[],
     },
   },
+  'E35':{
+    'E5':{
+      'e1':[], 'e2':[], 'e3':[], 'e4':[], 'e5':[], 'e6':[], 'e7':[],
+    },
+    'E52':{
+      'e1':[], 'e2':[], 'e3':[], 'e4':[], 'e5':[],
+    },
+    'F5':{
+      'e1':[], 'e2':[], 'e5':[], 'e4':[],
+    },
+    'G5':{
+      'e1':[], 'e2':[],
+    },
+    'G52':{
+      'e1':[], 'e2':[], 'e3':[], 'archive':[],
+    },
+    'H5':{
+      'e1':[], 'e2':[], 'e3':[]
+    },
+    'H52':{
+      'e1':[], 'e2':[], 'e3':[], 'e5':[], 'power':[],
+    },
+  },
 }
 /* object containing all the ipfs hash data */
 var hash_data = {'e':'test'}
@@ -3942,7 +3990,7 @@ async function fetch_object_data_from_infura(ecid_obj, count){
   } catch (error) {
     // console.log('Error fetching infura file: ', error)
     if(count < 5){
-      await new Promise(resolve => setTimeout(resolve, 4500))
+      await new Promise(resolve => setTimeout(resolve, 9500))
       await fetch_object_data_from_infura(ecid_obj, count+1)
     }
   }
@@ -3971,7 +4019,7 @@ async function fetch_objects_data_from_nft_storage (ecid_obj, count){
   } catch (error) {
     // console.log('Error fetching nft storage file: ', error)
     if(count < 5){
-      await new Promise(resolve => setTimeout(resolve, 4500))
+      await new Promise(resolve => setTimeout(resolve, 9500))
       await fetch_objects_data_from_nft_storage(ecid_obj, count+1)
     }
   }
@@ -3984,6 +4032,39 @@ function get_selected_gateway_if_custom_set(cid, default_gateway){
     return my_gateway.replace('cid', cid)
   }else{
     return default_gateway
+  }
+}
+
+async function fetch_data_from_nitro(cid, depth){
+  var split_cid_array = cid.split('-');
+  var e5_id = split_cid_array[0]
+  var nitro_cid = split_cid_array[1]
+
+  if(hash_data[nitro_cid] != null || cold_storage_hash_pointers[nitro_cid] != null) return;
+  var nitro_url = get_nitro_link_from_e5_id(e5_id)
+  if(nitro_url == null) return
+  const params = new URLSearchParams({
+    arg_string:JSON.stringify({hashes:[nitro_cid]}),
+  });
+  var request = `${nitro_url}/data?${params.toString()}`
+  try{
+    const response = await fetch(request);
+    if (!response.ok) {
+      console.log('datas',response)
+      throw new Error(`Failed to retrieve data. Status: ${response}`);
+    }
+    var data = await response.text();
+    var obj = JSON.parse(data);
+    var object_data = obj['data']
+    var cid_data = JSON.parse(object_data[nitro_cid])
+    
+    hash_data[nitro_cid] = cid_data
+    load_count++
+  }
+  catch(e){
+    if(depth < 3){
+      return await fetch_data_from_nitro(cid, depth+1)
+    }
   }
 }
 
@@ -4030,7 +4111,10 @@ async function load_hash_data(cids){
       else if(ecid_obj['option'] == 'nf'){
         await fetch_objects_data_from_nft_storage(ecid_obj, 0)
       }
-      await new Promise(resolve => setTimeout(resolve, 3000))
+      else if(ecid_obj['option'] == 'ni'){
+        await fetch_data_from_nitro(ecid_obj['cid'], 0)
+      }
+      await new Promise(resolve => setTimeout(resolve, 6000))
     }
   }
 }
@@ -4039,37 +4123,40 @@ async function load_hash_data(cids){
 
 
 /* loads all the events emitted for a specified contract and event type, for a tracked period of time. */
-async function load_past_events(contract, event, e5, web3, contract_name){
-  var latest = Number(await web3.eth.getBlockNumber())
-  var starting_block = data[e5]['current_block'][contract_name+event] == null ? data[e5]['first_block'] : data[e5]['current_block'][contract_name+event]
+async function load_past_events(contract, event, e5, web3, contract_name, latest){
+  try{
+    var starting_block = data[e5]['current_block'][contract_name+event] == null ? data[e5]['first_block'] : data[e5]['current_block'][contract_name+event]
 
-  var iteration = data[e5]['iteration']
-  var events = []
-  if(latest - starting_block < iteration){
-    events = await contract.getPastEvents(event, { fromBlock: starting_block, toBlock: latest }, (error, events) => {});
-  }else{
-    var pos = starting_block
-    while (pos < latest) {
-      var to = pos+iteration < latest ? pos+iteration : latest
-      var from = pos
-      events = events.concat(await contract.getPastEvents(event, { fromBlock: from, toBlock: to }, (error, events) => {}))
-      pos = to+1
+    var iteration = data[e5]['iteration']
+    var events = []
+    if(latest - starting_block < iteration){
+      events = await contract.getPastEvents(event, { fromBlock: starting_block, toBlock: latest }, (error, events) => {});
+    }else{
+      var pos = starting_block
+      while (pos < latest) {
+        var to = pos+iteration < latest ? pos+iteration : latest
+        var from = pos
+        events = events.concat(await contract.getPastEvents(event, { fromBlock: from, toBlock: to }, (error, events) => {}))
+        pos = to+1
+      }
     }
+
+    events.forEach(event => {
+      event.address = null
+      event.blockHash = null
+      event.blockNumber = null
+      event.data = null
+      event.raw = null
+      event.signature = null
+      event.topics = null
+      event.transactionHash = null
+    });
+
+    event_data[e5][contract_name][event] = event_data[e5][contract_name][event].concat(events)
+    data[e5]['current_block'][contract_name+event] = latest
+  }catch(e){
+    console.log(e)
   }
-
-  events.forEach(event => {
-    event.address = null
-    event.blockHash = null
-    event.blockNumber = null
-    event.data = null
-    event.raw = null
-    event.signature = null
-    event.topics = null
-    event.transactionHash = null
-  });
-
-  event_data[e5][contract_name][event] = event_data[e5][contract_name][event].concat(events)
-  data[e5]['current_block'][contract_name+event] = latest
 
   if(events.length > 0){
     if(contract_name == 'E52' && event == 'e4'/* Data */){
@@ -4081,7 +4168,7 @@ async function load_past_events(contract, event, e5, web3, contract_name){
         }
       }
       load_hash_data(ecids)
-      hash_count+=ecids.length
+      add_ecids(ecids)
     }
     else if(contract_name == 'E52' && event == 'e5'/* Metadata */){
       //new metadata events
@@ -4092,7 +4179,7 @@ async function load_past_events(contract, event, e5, web3, contract_name){
         }
       }
       load_hash_data(ecids)
-      hash_count+=ecids.length
+      add_ecids(ecids)
     }
     else if(contract_name == 'H52' && event == 'e5'/* Award */){
       //new award events
@@ -4103,9 +4190,8 @@ async function load_past_events(contract, event, e5, web3, contract_name){
         }
       }
       load_hash_data(ecids)
-      hash_count+=ecids.length
+      add_ecids(ecids)
     }
-
     if(contract_name == 'E5' && event == 'e1'/* MakeObject */){
       //record all the object types
       for(var i=0; i<events.length; i++){
@@ -4121,59 +4207,97 @@ async function load_past_events(contract, event, e5, web3, contract_name){
 
 /* starts the loading of all the events stored in all the E5 smart contracts for a specified E5 */
 async function set_up_listeners(e5) {
-  const web3 = new Web3(data[e5]['web3']);
-  const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
-  const e52_contract = new web3.eth.Contract(E52_CONTRACT_ABI, data[e5]['addresses'][1]);
-  const f5_contract = new web3.eth.Contract(F5_CONTRACT_ABI, data[e5]['addresses'][2]);
-  const g5_contract = new web3.eth.Contract(G5_CONTRACT_ABI, data[e5]['addresses'][3]);
-  const g52_contract = new web3.eth.Contract(G52_CONTRACT_ABI, data[e5]['addresses'][4]);
-  const h5_contract = new web3.eth.Contract(H5_CONTRACT_ABI, data[e5]['addresses'][5]);
-  const h52_contract = new web3.eth.Contract(H52_CONTRACT_ABI, data[e5]['addresses'][6]);
+  try{
+    const web3 = new Web3(data[e5]['web3']);
+    const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
+    const e52_contract = new web3.eth.Contract(E52_CONTRACT_ABI, data[e5]['addresses'][1]);
+    const f5_contract = new web3.eth.Contract(F5_CONTRACT_ABI, data[e5]['addresses'][2]);
+    const g5_contract = new web3.eth.Contract(G5_CONTRACT_ABI, data[e5]['addresses'][3]);
+    const g52_contract = new web3.eth.Contract(G52_CONTRACT_ABI, data[e5]['addresses'][4]);
+    const h5_contract = new web3.eth.Contract(H5_CONTRACT_ABI, data[e5]['addresses'][5]);
+    const h52_contract = new web3.eth.Contract(H52_CONTRACT_ABI, data[e5]['addresses'][6]);
+    const latest = Number(await web3.eth.getBlockNumber())
+    const t = 1000
+    //E5
+    load_past_events(e5_contract, 'e1', e5, web3, 'E5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e5_contract, 'e2', e5, web3, 'E5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e5_contract, 'e3', e5, web3, 'E5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e5_contract, 'e4', e5, web3, 'E5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e5_contract, 'e5', e5, web3, 'E5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e5_contract, 'e6', e5, web3, 'E5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e5_contract, 'e7', e5, web3, 'E5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    
 
-  //E5
-  load_past_events(e5_contract, 'e1', e5, web3, 'E5')
-  load_past_events(e5_contract, 'e2', e5, web3, 'E5')
-  load_past_events(e5_contract, 'e3', e5, web3, 'E5')
-  load_past_events(e5_contract, 'e4', e5, web3, 'E5')
-  load_past_events(e5_contract, 'e5', e5, web3, 'E5')
-  load_past_events(e5_contract, 'e6', e5, web3, 'E5')
-  load_past_events(e5_contract, 'e7', e5, web3, 'E5')
-  
+    //E52
+    load_past_events(e52_contract, 'e1', e5, web3, 'E52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e52_contract, 'e2', e5, web3, 'E52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e52_contract, 'e3', e5, web3, 'E52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e52_contract, 'e4', e5, web3, 'E52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(e52_contract, 'e5', e5, web3, 'E52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
 
-  //E52
-  load_past_events(e52_contract, 'e1', e5, web3, 'E52')
-  load_past_events(e52_contract, 'e2', e5, web3, 'E52')
-  load_past_events(e52_contract, 'e3', e5, web3, 'E52')
-  load_past_events(e52_contract, 'e4', e5, web3, 'E52')
-  load_past_events(e52_contract, 'e5', e5, web3, 'E52')
+    //F5
+    load_past_events(f5_contract, 'e1', e5, web3, 'F5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(f5_contract, 'e2', e5, web3, 'F5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(f5_contract, 'e5', e5, web3, 'F5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(f5_contract, 'e4', e5, web3, 'F5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
 
-  //F5
-  load_past_events(f5_contract, 'e1', e5, web3, 'F5')
-  load_past_events(f5_contract, 'e2', e5, web3, 'F5')
-  load_past_events(f5_contract, 'e5', e5, web3, 'F5')
-  load_past_events(f5_contract, 'e4', e5, web3, 'F5')
+    //G5
+    load_past_events(g5_contract, 'e1', e5, web3, 'G5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(g5_contract, 'e2', e5, web3, 'G5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
 
-  //G5
-  load_past_events(g5_contract, 'e1', e5, web3, 'G5')
-  load_past_events(g5_contract, 'e2', e5, web3, 'G5')
+    //G52
+    load_past_events(g52_contract, 'e1', e5, web3, 'G52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(g52_contract, 'e2', e5, web3, 'G52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(g52_contract, 'e3', e5, web3, 'G52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(g52_contract, 'archive', e5, web3, 'G52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
 
-  //G52
-  load_past_events(g52_contract, 'e1', e5, web3, 'G52')
-  load_past_events(g52_contract, 'e2', e5, web3, 'G52')
-  load_past_events(g52_contract, 'e3', e5, web3, 'G52')
-  load_past_events(g52_contract, 'archive', e5, web3, 'G52')
+    //H5
+    load_past_events(h5_contract, 'e1', e5, web3, 'H5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(h5_contract, 'e2', e5, web3, 'H5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(h5_contract, 'e3', e5, web3, 'H5', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
 
-  //H5
-  load_past_events(h5_contract, 'e1', e5, web3, 'H5')
-  load_past_events(h5_contract, 'e2', e5, web3, 'H5')
-  load_past_events(h5_contract, 'e3', e5, web3, 'H5')
+    //H52
+    load_past_events(h52_contract, 'e1', e5, web3, 'H52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(h52_contract, 'e2', e5, web3, 'H52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(h52_contract, 'e3', e5, web3, 'H52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(h52_contract, 'e5', e5, web3, 'H52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
+    load_past_events(h52_contract, 'power', e5, web3, 'H52', latest)
+    await new Promise(resolve => setTimeout(resolve, t))
 
-  //H52
-  load_past_events(h52_contract, 'e1', e5, web3, 'H52')
-  load_past_events(h52_contract, 'e2', e5, web3, 'H52')
-  load_past_events(h52_contract, 'e3', e5, web3, 'H52')
-  load_past_events(h52_contract, 'e5', e5, web3, 'H52')
-  load_past_events(h52_contract, 'power', e5, web3, 'H52')
+    //load nitro links
+    load_nitro_links(e5)
+  }catch(e){
+    console.log(e)
+  }
 }
 
 /* starts the loading of all the E5 event data if the app key is defined */
@@ -4181,9 +4305,23 @@ function load_events_for_all_e5s(){
   if(app_key == null || app_key == '') return;
 
   var e5s = data['e']
-  for(var i=0; i<e5s.length; i++){  
-    set_up_listeners(e5s[i])
+  for(var i=0; i<e5s.length; i++){ 
+    try{
+      set_up_listeners(e5s[i])
+    }catch(e){
+      console.log(e)
+    }
   }
+}
+
+function add_ecids(ecids){
+  var count = 0
+  ecids.forEach(ecid => {
+    if(ecid.includes('.') || ecid.startsWith('Qm')){
+      count++
+    }
+  });
+  hash_count+=count
 }
 
 
@@ -4445,14 +4583,19 @@ async function get_e5_contracts_from_address(provider, e5_address, first_block){
 
 /* tests if a supplied provider is a valid web3 provider */
 async function test_provider(provider, e5, E5_address, first_block){
-  const web3 = new Web3(provider);
-  const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, E5_address);
-  var contract_addresses_events = await e5_contract.getPastEvents('e7', { fromBlock: first_block, toBlock: first_block+50 }, (error, events) => {})
+  try{
+    const web3 = new Web3(provider);
+    const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, E5_address);
+    var contract_addresses_events = await e5_contract.getPastEvents('e7', { fromBlock: first_block, toBlock: first_block+50 }, (error, events) => {})
 
-  if(contract_addresses_events instanceof Array && contract_addresses_events.length > 0){
-    return true
+    if(contract_addresses_events instanceof Array && contract_addresses_events.length > 0){
+      return true
+    }
+    return false
+  }catch(e){
+    console.log(e)
+    return false
   }
-  return false
 }
 
 /* tests if a supplied gateway is a valid gateway */
@@ -4478,6 +4621,7 @@ async function test_gateway(new_provider){
 
 /* filters events for a specified E5 and event id, with various filters */
 function filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter){
+  // console.log('requested_e5: ', requested_e5)
   var focused_events = event_data[requested_e5][requested_contract][requested_event_id]
   const check_event = (eventt) => {
     var accepted = true
@@ -4493,7 +4637,7 @@ function filter_events(requested_e5, requested_contract, requested_event_id, fil
       }
     }
 
-    if(from_filter != null){
+    if(from_filter != null && from_filter['p'] != null && from_filter['value'] != null){
       var from_filter_p = from_filter['p']
       var from_filter_value = from_filter['value']
 
@@ -4505,8 +4649,16 @@ function filter_events(requested_e5, requested_contract, requested_event_id, fil
     return accepted
   }
 
-  var filtered_events = focused_events.filter(check_event)
-  return filtered_events
+  try{
+    var filtered_events = focused_events.filter(check_event)
+    return filtered_events
+  }
+  catch(e){
+    console.log(e)
+    return []
+  }
+  
+  
 }
 
 /* stores all the ipfs data in files. */
@@ -4594,13 +4746,40 @@ async function fetch_hashes_from_file_storage_or_memory(hashes){
 //   return available_space
 // }
 
+function round_down(number, round_down_value){
+  var n = (Math.floor(number / round_down_value)) * round_down_value
+  return n
+}
 
+async function get_round_down_value(web3, blockNumber){
+  try{
+    const currentBlock = await web3.eth.getBlock(blockNumber - 1);
+    const previousBlock = await web3.eth.getBlock(blockNumber - 2);
+    const miningTime = Number(currentBlock.timestamp - previousBlock.timestamp);
+    return Math.round(1 / (miningTime / 120))
+  }
+  catch(e){
+    console.log(e)
+    return 10
+  }
+}
 
 /* returns an accounts available storage in megabytes from their signature */
 async function fetch_accounts_available_storage(signature_data, signature){
   const e5 = data['target_account_e5']
   const web3 = new Web3(data[e5]['web3']);
   try{
+    var current_block_number = Number(await web3.eth.getBlockNumber())
+    var round_down_value = await get_round_down_value(web3, (current_block_number))
+    var round_down_block = round_down(current_block_number, round_down_value)
+    var current_block = await web3.eth.getBlock(round_down_block);
+    var block_hash = current_block.hash
+
+    if(block_hash.toString() !== signature_data.toString()){
+      console.log('block hash generated and signature received do not match')
+      return { available_space: 0.0, account: 0 }
+    } 
+
     var original_address = await web3.eth.accounts.recover(signature_data.toString(), signature)
     const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
     var accounts = await e5_contract.methods.f167([],[original_address], 2).call((error, result) => {});
@@ -4750,26 +4929,26 @@ function get_file_binaries(audio_file_datas){
 function get_length_of_binary_files_in_mbs(binary_array){
   var length = 0
   for(var i=0; i<binary_array.length; i++){
-    length += binary_array.length
+    length += binary_array[i].length
   }
 
   return length / (1024 * 1024)
 }
 
 /* stores multiple binary files in file storage */
-async function store_files_in_storage(binaries, file_type){
+async function store_files_in_storage(binaries, file_types, file_datas){
   var file_names = []
   var successful = true;
   for(var i=0; i<binaries.length; i++){
     var binaryData = binaries[i]
-    var file_name = makeid(32)
+    var file_name = await generate_hash(file_datas[i])
     
     var dir = './storage_data'
     if (!fs.existsSync(dir)){
       fs.mkdirSync(dir);
     }
     var isloading = true;
-    fs.writeFile(`storage_data/${file_name}.${file_type}`, binaryData, (error) => {
+    fs.writeFile(`storage_data/${file_name}.${file_types[i]}`, binaryData, (error) => {
       if (error) {
         console.log(e)
         successful = false
@@ -4798,7 +4977,7 @@ async function store_files_in_storage(binaries, file_type){
 
 /* returns the mimetype for a specified set of file extensions */
 function get_final_content_type(content_type){
-  var obj = {'mp4':'video/mp4', 'mp3':'audio/mpeg', 'jpeg':'image/jpeg', 'jpg':'image/jpeg', 'png':'image/png', 'pdf':'application/pdf'}
+  var obj = {'mp4':'video/mp4', 'mp3':'audio/mpeg', 'jpeg':'image/jpeg', 'jpg':'image/jpeg', 'png':'image/png', 'pdf':'application/pdf', 'zip':'application/zip'}
   return obj[content_type]
 }
 
@@ -4812,17 +4991,132 @@ async function get_e5_chain_time(e5){
   var provider = data[e5]['web3']
   var E5_address = data[e5]['addresses'][0]
   const web3 = new Web3(provider);
-  const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, E5_address);
-  var chain_time = await e5_contract.methods.f147(2/* get_block_timestamp */).call((error, result) => {});
-  return chain_time
+  try{
+    const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, E5_address);
+    var chain_time = await e5_contract.methods.f147(2/* get_block_timestamp */).call((error, result) => {});
+    return chain_time
+  }catch(e){
+    console.log(e)
+    return (Date.now()/1000)
+  }
+  
 }
 
 
 
 
 
-//2qwSNu9OCy93Z6LsnNVNpVZc5M7Opdw9
-//curl https://localhost:3000/marco
+
+async function generate_hash(data) {
+  // Encode the data as a Uint8Array
+  const encoder = new TextEncoder();
+  const encodedData = encoder.encode(data);
+
+  // Generate the hash using the SubtleCrypto API
+  const hashBuffer = await crypto.subtle.digest('SHA-256', encodedData);
+
+  // Convert the hash to a hexadecimal string
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const hashHex = hashArray.map(byte => byte.toString(16).padStart(2, '0')).join('');
+
+  return hashHex.substring(0, 64);
+}
+
+function get_length_of_string_files_in_mbs(string_array){
+  var length = 0
+
+  for(var i=0; i<string_array.length; i++){
+    var object_string_length = lengthInUtf8Bytes(string_array[i])
+    length += object_string_length
+  }
+
+  return length / (1024 * 1024)
+}
+
+function lengthInUtf8Bytes(str) {
+  var m = encodeURIComponent(str).match(/%[89ABab]/g);
+  return str.length + (m ? m.length : 0);
+}
+
+
+
+
+
+async function store_objects_in_node(file_datas){
+  var file_names = []
+  for(var i=0; i<file_datas.length; i++){
+    var object_string = file_datas[i]
+    var file_name = await generate_hash(object_string)
+    hash_data[file_name] = JSON.parse(object_string)
+    file_names.push(file_name)
+  }
+
+  return file_names
+}
+
+function is_all_file_type_ok(file_types){
+  var ok = true
+  file_types.forEach(file_type => {
+    if(file_type != 'mp4' && file_type != 'mp3' && file_type != 'png' && file_type != 'jpeg' && file_type != 'jpg' && file_type != 'pdf' && file_type != 'zip'){
+      ok = false
+    }
+  });
+  return ok
+}
+
+function load_nitro_links(e5){
+  var nitro_link_registry = filter_events(e5, 'E52', 'e4', {p3/* context */:400}, {})
+  var registered_nitro_links = {}
+  var registered_nitro_links_authors = {}
+  nitro_link_registry.forEach(event => {
+    var id = event.returnValues.p1/* target_id */
+    var data = event.returnValues.p4/* string_data */
+    var author = event.returnValues.p2/* sender_acc_id */
+    if(registered_nitro_links[(id+e5)] != null){
+      if(author.toString() == registered_nitro_links_authors[(id+e5)].toString()){
+        //link was reset by author
+        registered_nitro_links[(id+e5)] = data
+      }
+    }else{
+      registered_nitro_links[(id+e5)] = data
+      registered_nitro_links_authors[(id+e5)] = author
+    }
+  });
+  data['nitro_link_data'][e5] = registered_nitro_links
+}
+
+
+
+
+/* returns the url-link for a specified nitro object */
+function get_nitro_link_from_e5_id(e5_id){
+  var all_nitro_pointer_mappings = get_all_sorted_objects_mappings(data['nitro_link_data'])
+  return all_nitro_pointer_mappings[e5_id]
+}
+
+/* combines all the mappings for each E5 into one object */
+function  get_all_sorted_objects_mappings(object){
+  var all_objects = {}
+  for(var i=0; i<data['e'].length; i++){
+      var e5 = data['e'][i]
+      var e5_objects = object[e5]
+      var all_objects_clone = structuredClone(all_objects)
+      all_objects = { ...all_objects_clone, ...e5_objects}
+  }
+
+  return all_objects
+}
+
+
+
+
+
+
+
+
+app.get('/', (req, res) => {
+  res.send('Signaling server is running.');
+});
 
 /* endpoint for returning E5 event data tracked by the node */
 app.get('/events', (req, res) => {
@@ -4966,6 +5260,7 @@ app.get('/marco', (req, res) => {
     'e5_data':e5_data,
     'custom_gateway':data['custom_gateway'],
     'encrypted_files_obj':encrypted_files_obj,
+    'unlimited_basic_storage':data['unlimited_basic_storage'],
     success:true
   }
   
@@ -5168,7 +5463,7 @@ app.get('/subscription', async (req, res) => {
   const signature = req.query.signature
 
   try{
-    if(e5 == null || e5 == '' || subscription == null || data == null || data == '' || signature == null || signature == ''){
+    if(e5 == null || e5 == '' || subscription == null || signature_data == null || signature_data == '' || signature == null || signature == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
       return;
     }
@@ -5280,10 +5575,10 @@ app.post('/boot', (req, res) => {
 
 /* admin endpoint for booting the node's storage services for paid users */
 app.post('/boot_storage', async (req, res) => {
-  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account} = req.body;
+  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage } = req.body;
   // var available_space = await get_maximum_available_disk_space()
   
-  if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account)){
+  if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account) || unlimited_basic_storage == null){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
@@ -5310,6 +5605,7 @@ app.post('/boot_storage', async (req, res) => {
     data['target_account_e5'] = target_account_e5
     data['target_storage_purchase_recipient_account'] = target_storage_purchase_recipient_account
     data['storage_boot_time'] = await get_e5_chain_time(target_account_e5)
+    data['unlimited_basic_storage'] = unlimited_basic_storage
 
     res.send(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs, payments recipient account ${target_storage_purchase_recipient_account} of E5 ${target_account_e5}`, success:true }));
   }
@@ -5327,7 +5623,7 @@ app.post('/reconfigure_storage', async (req, res) => {
     res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
     return;
   }
-  else if(/* key !== 'file_data_capacity' && */ key !== 'max_buyable_capacity' && key !== 'price_per_megabyte' && key !== 'target_account_e5' && key !== 'target_storage_purchase_recipient_account'){
+  else if(/* key !== 'file_data_capacity' && */ key !== 'max_buyable_capacity' && key !== 'price_per_megabyte' && key !== 'target_account_e5' && key !== 'target_storage_purchase_recipient_account' && key !== 'unlimited_basic_storage'){
     res.send(JSON.stringify({ message: 'Invalid modify targets', success:false }));
     return;
   }
@@ -5346,8 +5642,8 @@ app.post('/reconfigure_storage', async (req, res) => {
 
 /* endpoint for storing files in the storage service for the node */
 app.post('/store_files', async (req, res) => {
-  const { signature_data, signature, file_datas, file_type } = req.body;
-  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_datas == null || (file_type != 'mp4' && file_type != 'mp3' && file_type != 'png' && file_type != 'jpeg' && file_type != 'jpg' && file_type != 'pdf')){
+  const { signature_data, signature, file_datas, file_types } = req.body;
+  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_datas == null || file_types == null || !is_all_file_type_ok(file_types)){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
@@ -5363,7 +5659,7 @@ app.post('/store_files', async (req, res) => {
     var storage_data = await fetch_accounts_available_storage(signature_data, signature)
     var binaries = get_file_binaries(file_datas)
     var space_utilized = get_length_of_binary_files_in_mbs(binaries)
-    console.log('storage_data', storage_data)
+    // console.log('storage_data', storage_data)
     if(storage_data.available_space < space_utilized){
       res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
       return;
@@ -5372,7 +5668,7 @@ app.post('/store_files', async (req, res) => {
       data['storage_data'][storage_data.account.toString()]['files'] ++;
       data['metrics']['total_files_stored']++
       data['metrics']['total_space_utilized']+= space_utilized
-      var success = await store_files_in_storage(binaries, file_type)
+      var success = await store_files_in_storage(binaries, file_types, file_datas)
       
       if(success == null){
         res.send(JSON.stringify({ message: 'Files stored Unsucessfully, internal server error', success:false }));
@@ -5414,7 +5710,7 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
     return;
   }
   else{
-    const filePath = `./storage_data/${file}`
+    const filePath = `storage_data/${file}`
     const stats = fs.statSync(filePath);
     const fileSize = stats.size;
     const range = req.headers.range;
@@ -5453,6 +5749,44 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
   }
 });//ok
 
+/* endpoint for storing basic E5 run data. */
+app.post('/store_data', async (req, res) => {
+  const { signature_data, signature, file_datas } = req.body;
+  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_datas == null){
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    return;
+  }
+  else if(file_datas.length == 0){
+    res.send(JSON.stringify({ message: 'You need to speicify some files to store', success:false }));
+    return;
+  }
+  else if(data['max_buyable_capacity'] == 0){
+    res.send(JSON.stringify({ message: 'Storage on this node is disabeld', success:false }));
+    return;
+  }
+  else{
+    var space_utilized = get_length_of_string_files_in_mbs(file_datas)
+    var success = null;
+    if(data['unlimited_basic_storage'] == true){
+      success = await store_objects_in_node(file_datas)
+    }else{
+      if(storage_data.available_space < space_utilized){
+        res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
+        return;
+      }else{
+        var storage_data = await fetch_accounts_available_storage(signature_data, signature)
+        data['storage_data'][storage_data.account.toString()]['utilized_space'] += space_utilized
+        data['metrics']['total_space_utilized']+= space_utilized
+        success = await store_objects_in_node(file_datas)
+      }
+    }
+    if(success == null){
+      res.send(JSON.stringify({ message: 'Files stored Unsucessfully, internal server error', success:false }));
+    }else{
+      res.send(JSON.stringify({ message: 'Files stored Successfully', files: success, success:true }));
+    }
+  }
+});//ok
 
 
 
@@ -5462,10 +5796,7 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
 
 
 
-
-
-// Start server
-app.listen(PORT, () => {
+const when_server_started = () => {
   start_up_time = Date.now()
   var key = 'eeeee'+makeid(32)+'eeeee'
   data['key'] = key
@@ -5479,14 +5810,30 @@ app.listen(PORT, () => {
   console.log('')
   console.log('')
 
-  
-});
+}
 
 
-setInterval(load_events_for_all_e5s, 120*1000);
+
+
+var options = {
+  key: fs.readFileSync('/home/ubuntu/client-key.pem'), 
+  cert: fs.readFileSync('/home/ubuntu/client-cert.pem')
+  // set the directory for the keys and cerificates your using here
+};
+
+
+
+
+const EXPRESS_PORT = 3000; // <----- change this to whichever port number you wish to use
+
+// Start server
+// app.listen(EXPRESS_PORT, when_server_started);
+https.createServer(options, app).listen(EXPRESS_PORT);
+
+setInterval(load_events_for_all_e5s, 2*60*1000);
 setInterval(store_back_up_of_data, 24*60*60*1000);
 setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
-setInterval(update_storage_payment_information, 1*60*1000);
+setInterval(update_storage_payment_information, 2*60*1000);
 
 load_events_for_all_e5s()
 
