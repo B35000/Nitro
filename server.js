@@ -1,4 +1,4 @@
-// Copyright (c) 2023 Bry Onyoni
+// Copyright (c) 2024 Bry Onyoni
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -19,7 +19,7 @@
 const { Web3 } = require('web3');
 const express = require('express');
 var CryptoJS = require("crypto-js");
-const crypto = require('crypto'); 
+const crypto = require('crypto');
 const cors = require('cors');
 const fs = require("fs");
 var bigInt = require("big-integer");
@@ -28,22 +28,6 @@ var https = require('https');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "10gb" }));
-
-//npm install express web3 crypto-js
-//npm install pm2@latest -g
-//npm install diskusage
-//npm installl big-integer
-//npm install crypto
-
-//pm2 start server.js
-//pm2 ls
-//pm2 stop all | 0
-
-//client-cert.pem  contract-listener  package-lock.json
-//client-key.pem   hash_data          package.json
-//client.csr
-
-//or node server.js if youre debugging
 
 
 /* data object containing all the E5 data. */
@@ -4332,7 +4316,7 @@ function add_ecids(ecids){
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
   var obj = {'data':data, 'event_data':event_data, 'hash_data':hash_data, 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers}
-  const write_data = encrypt_storage_data(JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v), data['key']);
+  const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
   var backup_name = ''
   var isloading = true;
@@ -4373,7 +4357,7 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       success = false
       return success;
     }
-    const decrypted_data = decrypt_storage_data(data.toString(), key)
+    const decrypted_data = (data.toString())
     // console.log('decrypted_data: ', decrypted_data)
     const obj = JSON.parse(decrypted_data);
     if(obj == data){
@@ -4388,7 +4372,7 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       console.log('successfully loaded back-up data')
 
       if(should_restore_key != null && should_restore_key == true){
-        data['key'] = backup_key
+        // data['key'] = backup_key
       }
     }
     isloading = false
@@ -5108,6 +5092,26 @@ function  get_all_sorted_objects_mappings(object){
 }
 
 
+function get_list_of_server_files_and_auto_backup(){
+  var dir = './backup_data/'
+  var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
+  if(files.length == 0) return
+  //Fri Jan 10 2025 20:57:42 GMT+0000 (Coordinated Universal Time).txt
+  var int_dates = []
+  var int_string_date_obj = {}
+  files.forEach(filename => {
+    var string_date = filename.replaceAll('.txt', '')
+    var date_in_mills = Date.parse(string_date)
+    int_dates.push(date_in_mills)
+    int_string_date_obj[date_in_mills] = filename
+  });
+
+  var largest = Math.max.apply(Math, int_dates);
+  var most_recent_backup = int_string_date_obj[largest]
+  const success = restore_backed_up_data_from_storage(most_recent_backup, '', '', false)
+}
+
+
 
 
 
@@ -5203,8 +5207,8 @@ app.get('/title', async (req, res) => {
 app.post('/restore', async (req, res) => {
   try{
     const file_name = req.query.file_name;
-    const backup_key = req.query.backup_key;
-    const data_key = req.query.data_key
+    const backup_key = req.query.backup_key;//the current key for the server
+    const data_key = req.query.data_key//the old key for the server
     const should_restore_key = req.query.should_restore_key
     if(file_name == null || file_name == '' || backup_key == null || backup_key == '' || data_key == null || data_key == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -5244,7 +5248,7 @@ app.get('/marco', (req, res) => {
   var dir = './backup_data/'
   var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
   var files_obj = {'data':files}
-  var encrypted_files_obj = encrypt_storage_data(JSON.stringify(files_obj), data['key'])
+  var encrypted_files_obj = JSON.stringify(files_obj)
   var obj = {
     'ipfs_hashes':`${number_with_commas(ipfs_hashes)} out of ${number_with_commas(hash_count)}`, 
     'tracked_E5s':data['e'],//
@@ -5264,9 +5268,9 @@ app.get('/marco', (req, res) => {
     success:true
   }
   
-  if(Date.now() - parseInt(start_up_time) < (5 * 60 * 1000)){
-    obj['backup-key'] = data['key']
-  }
+  // if(Date.now() - parseInt(start_up_time) < (5 * 60 * 1000)){
+  //   obj['backup-key'] = data['key']
+  // }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
   res.send(string_obj);
 });//ok
@@ -5810,25 +5814,42 @@ const when_server_started = () => {
   console.log('')
   console.log('')
 
+  get_list_of_server_files_and_auto_backup()
 }
 
 
 
 
 var options = {
-  key: fs.readFileSync('/home/ubuntu/client-key.pem'), 
-  cert: fs.readFileSync('/home/ubuntu/client-cert.pem')
+  key: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.xyz/privkey.pem'), 
+  cert: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.xyz/fullchain.pem')
   // set the directory for the keys and cerificates your using here
 };
 
 
+//npm install express web3 crypto-js
+//npm install pm2@latest -g
+//npm install diskusage
+//npm installl big-integer
+//npm install crypto
 
+//pm2 start server.js --no-daemon
+//pm2 ls
+//pm2 stop all | 0
 
-const EXPRESS_PORT = 3000; // <----- change this to whichever port number you wish to use
+//client-cert.pem  contract-listener  package-lock.json
+//client-key.pem   hash_data          package.json
+//client.csr
+
+//or node server.js if youre debugging
+//ps aux | grep node
+//kill [processID]
+
+const EXPRESS_PORT = 443; // <----- change this to whichever port number you wish to use
 
 // Start server
 // app.listen(EXPRESS_PORT, when_server_started);
-https.createServer(options, app).listen(EXPRESS_PORT);
+https.createServer(options, app).listen(EXPRESS_PORT, when_server_started);
 
 setInterval(load_events_for_all_e5s, 2*60*1000);
 setInterval(store_back_up_of_data, 24*60*60*1000);

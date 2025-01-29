@@ -33,7 +33,7 @@ var options = {
 };
 ```
 
-Once this is done, you can start the node by running `pm2 start server.js` if youre using [pm2](https://pm2.io) or `node server.js` if youre debugging.
+Once this is done, you can start the node by running `pm2 start server.js --no-daemon` if youre using [pm2](https://pm2.io) or `node server.js` if youre debugging.
 
 ### Managing the API
 
@@ -43,15 +43,7 @@ When the node is started, youll need to obtain the nodes backup key to set it up
 eeeeeqnoKLoYcdxdnxqvMafghrpeWQ19B4jTOeeeee
 ```
 
-You can obtain this by calling the `marco` enpoint on your browser or running a curl command on your terminal:
-
-```
-https://www.example.com/marco
-or
-curl https://www.example.com/marco
-```
-
-Keep in mind, for security purposes, it only returns the backup key in the first five minutes after starting up. So if youre unable to obtain the key in time, you may have to reset the node and start over.
+You can obtain this as the output when you start the server.
 
 ### Configuring the API
 
