@@ -24,6 +24,8 @@ const cors = require('cors');
 const fs = require("fs");
 var bigInt = require("big-integer");
 var https = require('https');
+const os = require("os");
+const checkDiskSpace = require("check-disk-space").default;
 
 const app = express();
 app.use(cors());
@@ -54,6 +56,7 @@ var data = {
   },
   'unlimited_basic_storage':false,
   'nitro_link_data':{},
+  'color_metrics':{}
 }
 
 const E5_CONTRACT_ABI = [
@@ -106,40 +109,18 @@ var event_data = {
       'e1':[], 'e2':[], 'e3':[], 'e5':[], 'power':[],
     },
   },
-  'E35':{
-    'E5':{
-      'e1':[], 'e2':[], 'e3':[], 'e4':[], 'e5':[], 'e6':[], 'e7':[],
-    },
-    'E52':{
-      'e1':[], 'e2':[], 'e3':[], 'e4':[], 'e5':[],
-    },
-    'F5':{
-      'e1':[], 'e2':[], 'e5':[], 'e4':[],
-    },
-    'G5':{
-      'e1':[], 'e2':[],
-    },
-    'G52':{
-      'e1':[], 'e2':[], 'e3':[], 'archive':[],
-    },
-    'H5':{
-      'e1':[], 'e2':[], 'e3':[]
-    },
-    'H52':{
-      'e1':[], 'e2':[], 'e3':[], 'e5':[], 'power':[],
-    },
-  },
 }
 /* object containing all the ipfs hash data */
 var hash_data = {'e':'test'}
 /* object containing pointers to the ipfs data stored in files */
 var cold_storage_hash_pointers = {}
+var cold_storage_event_files = []
 /* object containing all the data types for all the objects tracked in the node */
 var object_types = {}
 var start_up_time = Date.now()/* start up time */
 var hash_count = 0/* number of ipfs hashes being tracked */
 var load_count = 0/* number of ipfs hashes loaded by the node */
-var app_key = ``/* app key */
+var app_key = `mysupersecurepasswordthatdefinitelynooneknowsabout123`/* app key */
 
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
@@ -222,6 +203,7 @@ async function fetch_object_data_from_infura(ecid_obj, count){
     var data = await response.text();
     data = decrypt_storage_data(data, app_key)
     var parsed_data = JSON.parse(data);
+    update_color_metric(data)
     hash_data[cid] = parsed_data
     load_count++
   } catch (error) {
@@ -251,6 +233,7 @@ async function fetch_objects_data_from_nft_storage (ecid_obj, count){
     var data = await response.text();
     data = decrypt_storage_data(data, app_key)
     var parsed_data = JSON.parse(data);
+    update_color_metric(data)
     hash_data[cid] = parsed_data
     load_count++
   } catch (error) {
@@ -310,20 +293,24 @@ async function fetch_data_from_nitro(cid, depth){
 async function fetch_data_from_arweave(id){
   try{
     const decoded = Buffer.from(id, 'base64').toString();
-    // console.log(decoded)
     // var data = await arweave.transactions.getData(decoded, {decode: true, string: true})
     var return_data = await fetch(`https://arweave.net/${decoded}`)
     var data = await return_data.text()
-    // console.log('appdata', data)
     var decrypted_data = decrypt_storage_data(data)
-    // console.log('appdata', decrypted_data)
     var parsed_data = JSON.parse(decrypted_data)
-    // console.log('appdata', parsed_data)
+    update_color_metric(parsed_data)
     hash_data[cid] = parsed_data
     load_count++
   }catch(e){
     console.log(e)
   }
+}
+
+/* updates the metrics for traffic from each color */
+function update_color_metric(data){
+  var set_color = data['color'] == null ? 'g' : data['color']
+  if(data[set_color] == null) data[set_color] = 0
+  data[set_color]++
 }
 
 
@@ -403,14 +390,14 @@ async function load_past_events(contract, event, e5, web3, contract_name, latest
     }
 
     events.forEach(event => {
-      event.address = null
-      event.blockHash = null
-      event.blockNumber = null
-      event.data = null
-      event.raw = null
-      event.signature = null
-      event.topics = null
-      event.transactionHash = null
+      delete event.address
+      delete event.blockHash
+      delete event.blockNumber
+      delete event.data
+      delete event.raw
+      delete event.signature
+      delete event.topics
+      delete event.transactionHash
     });
 
     event_data[e5][contract_name][event] = event_data[e5][contract_name][event].concat(events)
@@ -575,6 +562,7 @@ function load_events_for_all_e5s(){
   }
 }
 
+/* calculates and records the number of ipfs hashes that have been recorded */
 function add_ecids(ecids){
   var count = 0
   ecids.forEach(ecid => {
@@ -592,7 +580,7 @@ function add_ecids(ecids){
 
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
-  var obj = {'data':data, 'event_data':event_data, 'hash_data':hash_data, 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers}
+  var obj = {'data':data, /* 'event_data':event_data, */ /* 'hash_data':hash_data, */ 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files}
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
   var backup_name = ''
@@ -642,10 +630,11 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       success = false
     }else{
       data = obj['data']
-      event_data = obj['event_data']
-      hash_data = obj['hash_data']
+      // event_data = obj['event_data']
+      // hash_data = obj['hash_data']
       object_types = obj['object_types']
       cold_storage_hash_pointers = obj['cold_storage_hash_pointers']
+      cold_storage_event_files = obj['cold_storage_event_files']
       console.log('successfully loaded back-up data')
 
       if(should_restore_key != null && should_restore_key == true){
@@ -679,7 +668,8 @@ async function get_all_objects(target_type){
   var focused_object_ids = []
   var focused_object_ids_e5s = []
   for(var i=0; i<e5s.length; i++){
-    var events = event_data[e5s[i]]['E52']['e5'/* Metadata */]
+    // var events = event_data[e5s[i]]['E52']['e5'/* Metadata */]
+    var events = fetch_event_data_for_specific_e5(e5s[i], 'E52', 'e5'/* Metadata */)
     for(var e=0; e<events.length; e++){
       var metadata_pointer = events[e].returnValues.p4/* metadata */
       var object_id = parseInt(events[e].returnValues.p1/* target_obj_id */)
@@ -881,9 +871,10 @@ async function test_gateway(new_provider){
 
 
 /* filters events for a specified E5 and event id, with various filters */
-function filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter){
-  // console.log('requested_e5: ', requested_e5)
-  var focused_events = event_data[requested_e5][requested_contract][requested_event_id]
+async function filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter){
+  if(event_data[requested_e5] == null) return []
+  // var focused_events = event_data[requested_e5][requested_contract][requested_event_id]
+  var focused_events = await fetch_event_data_for_specific_e5(requested_e5, requested_contract, requested_event_id)
   const check_event = (eventt) => {
     var accepted = true
     for (const key in filter) {
@@ -987,25 +978,30 @@ async function fetch_hashes_from_file_storage_or_memory(hashes){
   return hash_data_objects
 }
 
-// async function get_maximum_available_disk_space(){
-//   var isloading = true
-//   var available_space = 0
-//   disk.check('/', function(err, info) {
-//     if(err){
-//       console.log(err)
-//     }else{
-//       const freeInPercentage = info.free / info.total;
-//       const usedInPercentage = info.available / info.total;
-//       available_space = info.free / (1024 * 1024)
-//     }
-//     isloading = false
-//   });
-//   while (isloading == true) {
-//     if (isloading == false) break
-//     await new Promise(resolve => setTimeout(resolve, 700))
-//   }
-//   return available_space
-// }
+/* returns the amount of storage space available */
+async function get_maximum_available_disk_space(){
+  try {
+    const path = get_default_partition_name()
+    const diskSpace = await checkDiskSpace(path);
+    const free_space = Math.round(diskSpace.free / (1024 * 1024))
+    const total = Math.round(diskSpace.size / (1024 * 1024))
+    return {free: free_space, total: total}
+  } catch (error) {
+    console.log("Error fetching disk space:", error);
+    return {free: 0, total: 0}
+  }
+}
+
+/* returns the default partition name based on the os version thats in use */
+function get_default_partition_name(){
+  const platform = os.platform();
+  if (platform === "win32") {
+    return 'C:'
+  }
+  else {
+    return '/'
+  }
+}
 
 function round_down(number, round_down_value){
   var n = (Math.floor(number / round_down_value)) * round_down_value
@@ -1065,9 +1061,9 @@ async function update_storage_payment_information(){
   // console.log('last_checked_storage_block', last_checked_storage_block)
   
   var from_filter = {'p':'p6'/* block_number */, 'value': last_checked_storage_block}
-  var events = filter_events(e5, 'H52', 'e1'/* transfer */, {p3/* receiver */:target_storage_purchase_recipient_account}, from_filter)
+  var events = await filter_events(e5, 'H52', 'e1'/* transfer */, {p3/* receiver */:target_storage_purchase_recipient_account}, from_filter)
 
-  var purchase_events = filter_events(e5, 'E52', 'e4'/* data */, {p1/* target_id */:23, p5/* int_data */: target_storage_purchase_recipient_account}, {})
+  var purchase_events = await filter_events(e5, 'E52', 'e4'/* data */, {p1/* target_id */:23, p5/* int_data */: target_storage_purchase_recipient_account}, {})
 
   const check_event = (eventt) => {
     return (parseInt(eventt.returnValues.p5/* timestamp */) > parseInt(storage_boot_time))
@@ -1325,8 +1321,8 @@ function is_all_file_type_ok(file_types){
   return ok
 }
 
-function load_nitro_links(e5){
-  var nitro_link_registry = filter_events(e5, 'E52', 'e4', {p3/* context */:400}, {})
+async function load_nitro_links(e5){
+  var nitro_link_registry = await filter_events(e5, 'E52', 'e4', {p3/* context */:400}, {})
   var registered_nitro_links = {}
   var registered_nitro_links_authors = {}
   nitro_link_registry.forEach(event => {
@@ -1368,7 +1364,7 @@ function  get_all_sorted_objects_mappings(object){
   return all_objects
 }
 
-
+/* automatically restore the node to the most recent backup */
 function get_list_of_server_files_and_auto_backup(){
   var dir = './backup_data/'
   var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
@@ -1391,6 +1387,79 @@ function get_list_of_server_files_and_auto_backup(){
 
 
 
+/* checks if the event_data object is large enough to back up in storage and backs up if so */
+function backup_event_data_if_large_enough(){
+  if(get_object_size_in_mbs(event_data) > 64){
+    //store all the data in a file
+    const now = Date.now()
+    const write_data = JSON.stringify(event_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    var dir = './event_data'
+    if (!fs.existsSync(dir)){
+      fs.mkdirSync(dir);
+    }
+    fs.writeFile(`event_data/${now}.json`, write_data, (error) => {
+      if (error) {
+        console.log(error)
+      }else{
+        cold_storage_event_files.push(now)
+        const keys = Object.keys(event_data)
+        for(var i=0; i<keys.length; i++){
+          var e5 = keys[i]
+          add_new_e5_to_event_data(e5)
+        }
+        console.log("event_data written correctly");
+      }
+    });
+  }
+}
+
+/* fetches the data stored in storage for a specifid e5, contract and event_name */
+async function fetch_event_data_for_specific_e5(e5, contract, event_name){
+  var memory_data = event_data[e5] == null ? [] : event_data[e5][contract][event_name]
+  var final_data = []
+  for(var i=0; i<cold_storage_event_files.length; i++){
+    var data = await fetch_event_file_from_storage(cold_storage_event_files[i], e5, contract, event_name)
+    final_data = final_data.concat(data)
+  }
+  final_data = final_data.concat(memory_data)
+  return final_data
+}
+
+/* fetches the data stored in a event storage file */
+async function fetch_event_file_from_storage(file, e5, contract, event_name){
+  var is_loading_file = true
+  var cold_storage_obj = {}
+  fs.readFile(`event_data/${file}.json`, (error, data) => {
+    if (error) {
+      console.error(error);
+    }else{
+      cold_storage_obj = JSON.parse(data.toString())
+    }
+    is_loading_file = false
+  });
+  while (is_loading_file == true) {
+    if (is_loading_file == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+  if(cold_storage_obj[e5] != null){
+    if(cold_storage_obj[e5][contract] != null){
+      if(cold_storage_obj[e5][contract][event_name] != null){
+        return cold_storage_obj[e5][contract][event_name] 
+     }
+    }
+  }
+  return []
+}
+
+/* returns the size of an object in megabytes */
+function get_object_size_in_mbs(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)).length;
+  return (bytes / (1024 * 1024)).toFixed(2); // Convert bytes to MB
+}
+
+
+
+
 
 
 
@@ -1400,7 +1469,7 @@ app.get('/', (req, res) => {
 });
 
 /* endpoint for returning E5 event data tracked by the node */
-app.get('/events', (req, res) => {
+app.get('/events', async (req, res) => {
   const arg_string = req.query.arg_string;
   try{
     var arg_obj = JSON.parse(arg_string)
@@ -1414,7 +1483,7 @@ app.get('/events', (req, res) => {
       var filter = requests[i]['filter']
       var from_filter = requests[i]['from_filter']
 
-      var filtered_events = filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter)
+      var filtered_events = await filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter)
       filtered_events_array.push(filtered_events)
     }
     
@@ -1513,7 +1582,7 @@ app.post('/restore', async (req, res) => {
 });//ok ------
 
 /* enpoint for checking if node is online */
-app.get('/marco', (req, res) => {
+app.get('/marco', async (req, res) => {
   var ipfs_hashes = load_count
   var storage_accounts_length = Object.keys(data['storage_data']).length
   var booted = app_key != '' && app_key != null
@@ -1542,6 +1611,8 @@ app.get('/marco', (req, res) => {
     'custom_gateway':data['custom_gateway'],
     'encrypted_files_obj':encrypted_files_obj,
     'unlimited_basic_storage':data['unlimited_basic_storage'],
+    'color_metrics':data['color_metrics'],
+    'storage': await get_maximum_available_disk_space(),
     success:true
   }
   
@@ -1725,7 +1796,6 @@ app.post('/delete_e5', (req, res) => {
     var index = data['e'].indexOf(e5)
     data['e'].splice(index, 1)
     data[e5] = null
-    event_data[e5] = null
 
     var obj = {message:`The E5 '${e5}' has been removed from the node successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -2109,6 +2179,8 @@ var options = {
 //npm install diskusage
 //npm installl big-integer
 //npm install crypto
+//npm install os
+//npm install check-disk-space
 
 //pm2 start server.js --no-daemon
 //pm2 ls
@@ -2132,6 +2204,7 @@ setInterval(load_events_for_all_e5s, 2*60*1000);
 setInterval(store_back_up_of_data, 24*60*60*1000);
 setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
 setInterval(update_storage_payment_information, 2*60*1000);
+setInterval(backup_event_data_if_large_enough, 2*60*1000)
 
 load_events_for_all_e5s()
 

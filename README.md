@@ -11,6 +11,8 @@ npm install express web3 crypto-js
 npm install pm2@latest -g
 npm installl big-integer
 npm install crypto
+npm install os
+npm install check-disk-space
 ```
 
 [pm2](https://pm2.io) is used for the projects node runtime process management and tracking.

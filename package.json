@@ -11,11 +11,13 @@
   "license": "ISC",
   "dependencies": {
     "big-integer": "^1.6.52",
+    "check-disk-space": "^3.4.0",
     "cors": "^2.8.5",
     "crypto": "^1.0.1",
     "crypto-js": "^4.2.0",
     "diskusage": "^1.2.0",
     "express": "^4.21.1",
+    "os": "^0.1.2",
     "socket.io": "^4.8.1",
     "web3": "^4.15.0"
   }
