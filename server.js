@@ -309,8 +309,8 @@ async function fetch_data_from_arweave(id){
 /* updates the metrics for traffic from each color */
 function update_color_metric(data){
   var set_color = data['color'] == null ? 'g' : data['color']
-  if(data[set_color] == null) data[set_color] = 0
-  data[set_color]++
+  if(data['color_metrics'][set_color] == null) data['color_metrics'][set_color] = 0
+  data['color_metrics'][set_color]++
 }
 
 
