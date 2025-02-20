@@ -120,7 +120,7 @@ var object_types = {}
 var start_up_time = Date.now()/* start up time */
 var hash_count = 0/* number of ipfs hashes being tracked */
 var load_count = 0/* number of ipfs hashes loaded by the node */
-var app_key = `mysupersecurepasswordthatdefinitelynooneknowsabout123`/* app key */
+var app_key = ``/* app key */
 
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
