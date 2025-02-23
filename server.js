@@ -26,6 +26,7 @@ var bigInt = require("big-integer");
 var https = require('https');
 const os = require("os");
 const checkDiskSpace = require("check-disk-space").default;
+const mime = require("mime-types");
 
 const app = express();
 app.use(cors());
@@ -1234,8 +1235,9 @@ async function store_files_in_storage(binaries, file_types, file_datas){
 
 /* returns the mimetype for a specified set of file extensions */
 function get_final_content_type(content_type){
-  var obj = {'mp4':'video/mp4', 'mp3':'audio/mpeg', 'jpeg':'image/jpeg', 'jpg':'image/jpeg', 'png':'image/png', 'pdf':'application/pdf', 'zip':'application/zip'}
-  return obj[content_type]
+  // var obj = {'mp4':'video/mp4', 'mp3':'audio/mpeg', 'jpeg':'image/jpeg', 'jpg':'image/jpeg', 'png':'image/png', 'pdf':'application/pdf', 'zip':'application/zip'}
+  // return obj[content_type]
+  return mime.lookup(content_type)
 }
 
 /* formats a number by adding commas every three digits */
@@ -1313,8 +1315,12 @@ async function store_objects_in_node(file_datas){
 
 function is_all_file_type_ok(file_types){
   var ok = true
+  // var accepted = ['mp4', 'mp3', 'png','jpeg','jpg', 'pdf','zip']
   file_types.forEach(file_type => {
-    if(file_type != 'mp4' && file_type != 'mp3' && file_type != 'png' && file_type != 'jpeg' && file_type != 'jpg' && file_type != 'pdf' && file_type != 'zip'){
+    // if(!accepted.includes(file_type)){
+    //   ok = false
+    // }
+    if(mime.lookup(file_type) == null || mime.lookup(file_type) == false){
       ok = false
     }
   });
@@ -2181,6 +2187,7 @@ var options = {
 //npm install crypto
 //npm install os
 //npm install check-disk-space
+//npm install mime-types
 
 //pm2 start server.js --no-daemon
 //pm2 ls

@@ -17,6 +17,7 @@
     "crypto-js": "^4.2.0",
     "diskusage": "^1.2.0",
     "express": "^4.21.1",
+    "mime-types": "^2.1.35",
     "os": "^0.1.2",
     "socket.io": "^4.8.1",
     "web3": "^4.15.0"
