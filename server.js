@@ -30,7 +30,7 @@ const mime = require("mime-types");
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "10gb" }));
+app.use(express.json({ limit: "100gb" }));
 
 
 /* data object containing all the E5 data. */
@@ -57,7 +57,9 @@ var data = {
   },
   'unlimited_basic_storage':false,
   'nitro_link_data':{},
-  'color_metrics':{}
+  'color_metrics':{},
+  'upload_reservations':{},
+  'file_streams':{}
 }
 
 const E5_CONTRACT_ABI = [
@@ -121,7 +123,10 @@ var object_types = {}
 var start_up_time = Date.now()/* start up time */
 var hash_count = 0/* number of ipfs hashes being tracked */
 var load_count = 0/* number of ipfs hashes loaded by the node */
-var app_key = ``/* app key */
+var app_key = `e`/* app key */
+var pointer_data = {}
+var beacon_chain_link = ``
+var staged_ecids = {}
 
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
@@ -131,7 +136,6 @@ function decrypt_storage_data(data, key){
     var originalText = bytes.toString(CryptoJS.enc.Utf8);
     return originalText
   }catch(e){
-    console.log('stackdata', e)
     return data
   }
 }
@@ -202,9 +206,9 @@ async function fetch_object_data_from_infura(ecid_obj, count){
       throw new Error(`Failed to retrieve data from IPFS. Status: ${response}`);
     }
     var data = await response.text();
-    data = decrypt_storage_data(data, app_key)
-    var parsed_data = JSON.parse(data);
-    update_color_metric(data)
+    // data = decrypt_storage_data(data, app_key)
+    var parsed_data = attempt_parsing(data)
+    update_color_metric(parsed_data)
     hash_data[cid] = parsed_data
     load_count++
   } catch (error) {
@@ -232,9 +236,9 @@ async function fetch_objects_data_from_nft_storage (ecid_obj, count){
       throw new Error(`Failed to retrieve data from IPFS using nft storage. Status: ${response}`);
     }
     var data = await response.text();
-    data = decrypt_storage_data(data, app_key)
-    var parsed_data = JSON.parse(data);
-    update_color_metric(data)
+    // data = decrypt_storage_data(data, app_key)
+    var parsed_data = attempt_parsing(data)
+    update_color_metric(parsed_data)
     hash_data[cid] = parsed_data
     load_count++
   } catch (error) {
@@ -278,9 +282,10 @@ async function fetch_data_from_nitro(cid, depth){
     var data = await response.text();
     var obj = JSON.parse(data);
     var object_data = obj['data']
-    var cid_data = JSON.parse(object_data[nitro_cid])
-    
-    hash_data[nitro_cid] = cid_data
+    var cid_data = object_data[nitro_cid]
+    var parsed_data = attempt_parsing(cid_data)
+    update_color_metric(parsed_data)
+    hash_data[nitro_cid] = parsed_data
     load_count++
   }
   catch(e){
@@ -297,10 +302,10 @@ async function fetch_data_from_arweave(id){
     // var data = await arweave.transactions.getData(decoded, {decode: true, string: true})
     var return_data = await fetch(`https://arweave.net/${decoded}`)
     var data = await return_data.text()
-    var decrypted_data = decrypt_storage_data(data)
-    var parsed_data = JSON.parse(decrypted_data)
+    // var decrypted_data = decrypt_storage_data(data)
+    var parsed_data = attempt_parsing(data)
     update_color_metric(parsed_data)
-    hash_data[cid] = parsed_data
+    hash_data[id] = parsed_data
     load_count++
   }catch(e){
     console.log(e)
@@ -308,10 +313,38 @@ async function fetch_data_from_arweave(id){
 }
 
 /* updates the metrics for traffic from each color */
-function update_color_metric(data){
-  var set_color = data['color'] == null ? 'g' : data['color']
-  if(data['color_metrics'][set_color] == null) data['color_metrics'][set_color] = 0
-  data['color_metrics'][set_color]++
+function update_color_metric(hash_data){
+  var set_color = 'g'
+  if(hash_data != null && isJsonObject(hash_data) == true && hash_data['tags'] != null && hash_data['tags']['color'] != null){
+    set_color = hash_data['tags']['color']
+  }
+  try{
+    if(data['color_metrics'][set_color] == null) {
+      data['color_metrics'][set_color] = 0
+    }
+    data['color_metrics'][set_color]++
+  }catch(e){
+    console.log(e)
+  }
+}
+
+/* returns true if the specified argument is a JSON object */
+function isJsonObject(data) {
+  return typeof data === "object" && data !== null && !Array.isArray(data);
+}
+
+/* attempts to parse a string into a JSON object. Upon failure it returns the argument instead. */
+function attempt_parsing(data){
+  try{
+    var obj = JSON.parse(data)
+    if(obj != null){
+      return obj
+    }else{
+      return data
+    }
+  }catch(e){
+    return data
+  }
 }
 
 
@@ -338,35 +371,75 @@ function get_ecid_obj(ecid){
 }
 
 /* starts the fetching of data stored in multiple ipfs cid links */
-async function load_hash_data(cids){
+async function load_hash_data(cids, ecid_ids){
   var ecids = []
-  var included_ecids = []
+  var included_cids = []
   for(var i=0; i<cids.length; i++){
     var ecid_obj = get_ecid_obj(cids[i])
-    if(!included_ecids.includes(ecid_obj['cid'])){
+    if(!included_cids.includes(ecid_obj['cid'])){
       ecids.push(ecid_obj)
-      included_ecids.push(ecid_obj['cid'])
+      included_cids.push(ecid_obj['cid'])
     }
   }
-  for(var i=0; i<ecids.length; i++){
-    var ecid_obj = ecids[i]
-    if(hash_data[ecid_obj['cid']] == null){
-      if(ecid_obj['option'] == 'in'){
-        await fetch_object_data_from_infura(ecid_obj, 0)
+  if(beacon_chain_link != ''){
+    await load_data_from_beacon_node(included_cids)
+  }else{
+    for(var i=0; i<ecids.length; i++){
+      var ecid_obj = ecids[i]
+      if(hash_data[ecid_obj['cid']] == null){
+        if(ecid_obj['option'] == 'in'){
+          await fetch_object_data_from_infura(ecid_obj, 0)
+        }
+        else if(ecid_obj['option'] == 'nf'){
+          await fetch_objects_data_from_nft_storage(ecid_obj, 0)
+        }
+        else if(ecid_obj['option'] == 'ni'){
+          await fetch_data_from_nitro(ecid_obj['cid'], 0)
+        }
+        else if(ecid_obj['option'] == 'ar'){
+          await fetch_data_from_arweave(ecid_obj['cid'])
+        }
+        await new Promise(resolve => setTimeout(resolve, 6000))
       }
-      else if(ecid_obj['option'] == 'nf'){
-        await fetch_objects_data_from_nft_storage(ecid_obj, 0)
-      }
-      else if(ecid_obj['option'] == 'ni'){
-        await fetch_data_from_nitro(ecid_obj['cid'], 0)
-      }
-      else if(ecid_obj['option'] == 'ar'){
-        await fetch_data_from_arweave(ecid_obj['cid'])
-      }
-      await new Promise(resolve => setTimeout(resolve, 6000))
     }
   }
 }
+
+/* loads data from the beacon chain if a link to the node is specified */
+async function load_data_from_beacon_node(cids){
+  const params = new URLSearchParams({
+    arg_string:JSON.stringify({hashes: cids}),
+  });
+  var request = `${beacon_chain_link}/data?${params.toString()}`
+  try{
+    const response = await fetch(request);
+    if (!response.ok) {
+      console.log('datas',response)
+      throw new Error(`Failed to retrieve data. Status: ${response}`);
+    }
+    var data = await response.text();
+    var obj = JSON.parse(this.decrypt_storage_object(data));
+    var object_data = obj['data']
+
+    cids.forEach(cid => {
+      var parsed_data = attempt_parsing(object_data[cid])
+      if(parsed_data != null){
+        update_color_metric(parsed_data)
+        hash_data[cid] = parsed_data
+        load_count++
+      }
+    });
+    
+    
+    return cid_data
+  }
+  catch(e){
+    if(depth < 3){
+      return await this.fetch_data_from_nitro(cid, depth+1)
+    }
+  }
+}
+
 
 
 
@@ -422,13 +495,16 @@ async function load_past_events(contract, event, e5, web3, contract_name, latest
     else if(contract_name == 'E52' && event == 'e5'/* Metadata */){
       //new metadata events
       var ecids = []
+      var ecid_ids = []
       for(var i=0; i<events.length; i++){
         if(!ecids.includes(events[i].returnValues.p4/* metadata */)){
           ecids.push(events[i].returnValues.p4/* metadata */)
+          ecid_ids.push(events[i].returnValues.p1/* target_obj_id */)
         }
       }
-      load_hash_data(ecids)
+      load_hash_data(ecids, ecid_ids)
       add_ecids(ecids)
+      stage_ids_to_track(ecids, ecid_ids)
     }
     else if(contract_name == 'H52' && event == 'e5'/* Award */){
       //new award events
@@ -495,6 +571,7 @@ async function set_up_listeners(e5) {
     await new Promise(resolve => setTimeout(resolve, t))
     load_past_events(e52_contract, 'e5', e5, web3, 'E52', latest)
     await new Promise(resolve => setTimeout(resolve, t))
+    
 
     //F5
     load_past_events(f5_contract, 'e1', e5, web3, 'F5', latest)
@@ -551,7 +628,7 @@ async function set_up_listeners(e5) {
 
 /* starts the loading of all the E5 event data if the app key is defined */
 function load_events_for_all_e5s(){
-  if(app_key == null || app_key == '') return;
+  // if(app_key == null || app_key == '') return;
 
   var e5s = data['e']
   for(var i=0; i<e5s.length; i++){ 
@@ -574,6 +651,49 @@ function add_ecids(ecids){
   hash_count+=count
 }
 
+/* stages specified ecids and object ids into memory to track once loaded via ipfs */
+function stage_ids_to_track(ecids, obj_ids){
+  ecids.forEach((ecid, index) => {
+    staged_ecids[ecid] = obj_ids[index]
+  });
+}
+
+/* loads the tags from the objects loaded in memory. */
+function update_staged_hash_data(){
+  console.log('updating staged hash data...')
+  for(const ecid in staged_ecids){
+    if(staged_ecids.hasOwnProperty(ecid)){
+      const ecid_obj = get_ecid_obj(ecid)
+      const cid = ecid_obj['cid']
+      const container_data = hash_data[cid]
+      if(container_data != null){
+        try{
+          if(container_data['tags'] != null){
+            console.log('found an object with tags', container_data['tags'])
+            for(const key in container_data['tags']){
+              if(container_data['tags'].hasOwnProperty(key)){
+                if(key != 'color'){
+                  const index_values = container_data['tags'][key]['elements']
+                  const item_type = container_data['tags'][key]['type']
+                  if(pointer_data[item_type] == null){
+                    pointer_data[item_type] = []
+                  }
+                  pointer_data[item_type].push({'id':staged_ecids[ecid], 'keys':index_values})
+                  delete staged_ecids[ecid]
+                }
+              }
+            }
+          }else{
+            delete staged_ecids[ecid]
+          }
+        }catch(e){
+          
+        }
+      }
+    }
+  }
+}
+
 
 
 
@@ -581,7 +701,7 @@ function add_ecids(ecids){
 
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
-  var obj = {'data':data, /* 'event_data':event_data, */ /* 'hash_data':hash_data, */ 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files}
+  var obj = {'data':data, /* 'event_data':event_data, */ /* 'hash_data':hash_data, */ 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files, 'pointer_data':pointer_data}
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
   var backup_name = ''
@@ -636,6 +756,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       object_types = obj['object_types']
       cold_storage_hash_pointers = obj['cold_storage_hash_pointers']
       cold_storage_event_files = obj['cold_storage_event_files']
+      if(obj['pointer_data'] != null){
+        pointer_data = obj['pointer_data']
+      }
       console.log('successfully loaded back-up data')
 
       if(should_restore_key != null && should_restore_key == true){
@@ -659,137 +782,181 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
 
 
 /* returns all the objects (posts, jobs, contracts etc) stored in this node for a specified target type */
-async function get_all_objects(target_type){
-  var all_objects = []
-  var all_object_positions = {}
-  var e5s = data['e']
+// async function get_all_objects(target_type){
+//   var all_objects = []
+//   var all_object_positions = {}
+//   var e5s = data['e']
 
-  var search_cids = []
-  var focused_ecid_objects = []
-  var focused_object_ids = []
-  var focused_object_ids_e5s = []
-  for(var i=0; i<e5s.length; i++){
-    // var events = event_data[e5s[i]]['E52']['e5'/* Metadata */]
-    var events = fetch_event_data_for_specific_e5(e5s[i], 'E52', 'e5'/* Metadata */)
-    for(var e=0; e<events.length; e++){
-      var metadata_pointer = events[e].returnValues.p4/* metadata */
-      var object_id = parseInt(events[e].returnValues.p1/* target_obj_id */)
+//   var search_cids = []
+//   var focused_ecid_objects = []
+//   var focused_object_ids = []
+//   var focused_object_ids_e5s = []
+//   for(var i=0; i<e5s.length; i++){
+//     // var events = event_data[e5s[i]]['E52']['e5'/* Metadata */]
+//     var events = fetch_event_data_for_specific_e5(e5s[i], 'E52', 'e5'/* Metadata */)
+//     for(var e=0; e<events.length; e++){
+//       var metadata_pointer = events[e].returnValues.p4/* metadata */
+//       var object_id = parseInt(events[e].returnValues.p1/* target_obj_id */)
       
-      if(object_types[e5s[i]] != null && object_types[e5s[i]][object_id] == target_type){
-        var ecid_obj = get_ecid_obj(metadata_pointer)
-        var cid = ecid_obj['cid']
-        if(!search_cids.includes(cid)){
-          search_cids.push(cid)
-          focused_ecid_objects.push(ecid_obj)
-          focused_object_ids.push(object_id)
-          focused_object_ids_e5s.push(e5s[i])
-        }
-      }
-    }
-  }
+//       if(object_types[e5s[i]] != null && object_types[e5s[i]][object_id] == target_type){
+//         var ecid_obj = get_ecid_obj(metadata_pointer)
+//         var cid = ecid_obj['cid']
+//         if(!search_cids.includes(cid)){
+//           search_cids.push(cid)
+//           focused_ecid_objects.push(ecid_obj)
+//           focused_object_ids.push(object_id)
+//           focused_object_ids_e5s.push(e5s[i])
+//         }
+//       }
+//     }
+//   }
 
-  var object_cid_data = await fetch_hashes_from_file_storage_or_memory(search_cids)
+//   var object_cid_data = await fetch_hashes_from_file_storage_or_memory(search_cids)
 
-  for(var i=0; i<focused_ecid_objects.length; i++){
-    var ecid_obj = focused_ecid_objects[i]
-    var e5 = focused_object_ids_e5s[i]
-    var object_id = focused_object_ids[i]
+//   for(var i=0; i<focused_ecid_objects.length; i++){
+//     var ecid_obj = focused_ecid_objects[i]
+//     var e5 = focused_object_ids_e5s[i]
+//     var object_id = focused_object_ids[i]
     
-    var cid = ecid_obj['cid']
-    var container_data = object_cid_data[cid]
-    if(container_data != null){
-      var internal_id = ecid_obj['internal_id']
-      var obj_data = internal_id == '' ? container_data : container_data[internal_id]
-      var pos = all_objects.length
-      if(all_object_positions[e5+object_id] != null){
-        //this is an object that was edited
-        all_objects[e5+object_id] = {'id':object_id, 'data':obj_data}
-      }else{
-        all_objects.push({'id':object_id, 'data':obj_data})
-        all_object_positions[e5+object_id] = pos
-      }
-    }
-  }
+//     var cid = ecid_obj['cid']
+//     var container_data = object_cid_data[cid]
+//     if(container_data != null){
+//       var internal_id = ecid_obj['internal_id']
+//       var obj_data = internal_id == '' ? container_data : container_data[internal_id]
+//       var pos = all_objects.length
+//       if(all_object_positions[e5+object_id] != null){
+//         //this is an object that was edited
+//         all_objects[e5+object_id] = {'id':object_id, 'data':obj_data}
+//       }else{
+//         all_objects.push({'id':object_id, 'data':obj_data})
+//         all_object_positions[e5+object_id] = pos
+//       }
+//     }
+//   }
 
-  return all_objects
-}
+//   return all_objects
+// }
 
 /* filters objects by a specified set of tags */
 async function search_for_object_ids_by_tags(tags, target_type){
-  var all_objects = await get_all_objects(target_type)
+  // var all_objects = await get_all_objects(target_type)
 
+  // var filtered_objects = [];
+  // filtered_objects = all_objects.filter(function (object) {
+  //   var object_tags = object['data']['entered_indexing_tags'] == null ? [] : object['data']['entered_indexing_tags']
+  //   const containsAll = tags.some(r=> object_tags.includes(r))
+  //   return (containsAll)
+  // });//first find all the objects that have at least 1 tag from the searched
+
+
+  // var final_filtered_objects = []
+  // final_filtered_objects = filtered_objects.filter(function (object) {
+  //   var object_tags = object['data']['entered_indexing_tags'] == null ? [] : object['data']['entered_indexing_tags']
+  //   const containsAll = tags.every(element => {
+  //     return object_tags.includes(element);
+  //   });
+  //   return (containsAll)
+  // });//then filter those objects for the objects that have all the tags specified
+
+  // filtered_objects.forEach(object => {
+  //   if(!final_filtered_objects.includes(object)){
+  //     final_filtered_objects.push(object)
+  //   }
+  // });
+
+
+  // var ids = []
+  // final_filtered_objects.forEach(object => {
+  //   ids.push(object['id'])
+  // });
+
+
+  var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
   var filtered_objects = [];
-  filtered_objects = all_objects.filter(function (object) {
-    var object_tags = object['data']['entered_indexing_tags'] == null ? [] : object['data']['entered_indexing_tags']
+  filtered_objects = all_objs.filter(function (object) {
+    var object_tags = object['keys']
     const containsAll = tags.some(r=> object_tags.includes(r))
     return (containsAll)
-  });//first find all the objects that have at least 1 tag from the searched
-
-
+  });
   var final_filtered_objects = []
   final_filtered_objects = filtered_objects.filter(function (object) {
-    var object_tags = object['data']['entered_indexing_tags'] == null ? [] : object['data']['entered_indexing_tags']
+    var object_tags = object['keys']
     const containsAll = tags.every(element => {
       return object_tags.includes(element);
     });
     return (containsAll)
-  });//then filter those objects for the objects that have all the tags specified
-
-  filtered_objects.forEach(object => {
-    if(!final_filtered_objects.includes(object)){
-      final_filtered_objects.push(object)
-    }
   });
-
+  
 
   var ids = []
-  final_filtered_objects.forEach(object => {
-    ids.push(object['id'])
+  final_filtered_objects.forEach(item => {
+    if(!ids.includes(item['id'])){
+      ids.push(item['id'])
+    }
   });
-
+  filtered_objects.forEach(item => {
+    if(!ids.includes(item['id'])){
+      ids.push(item['id'])
+    }
+  });
 
   return ids;
 }
 
 /* filters objects by a specified title */
 async function search_for_object_ids_by_title(title, target_type){
-  var all_objects = await get_all_objects(target_type)
+  // var all_objects = await get_all_objects(target_type)
+  // var filtered_objects = [];
+  // filtered_objects = all_objects.filter(function (object) {
+  //   var object_title = object['data']['entered_title_text'] == null ? '' : object['data']['entered_title_text']
+  //   const match = object_title.toLowerCase().includes(title.toLowerCase())
+  //   if(target_type == 19/* 19(audio_object) */){
+  //     //its a album being searched, so check the songs in it
+  //     var songs = object['data']['songs']
+  //     var filtered_songs = songs.filter(function (object) {
+  //       var song_title = object['song_title'] == null ? '' : object['song_title']
+  //       var song_composer = object['song_composer'] == null ? '' : object['song_composer']
+  //       return (song_title.toLowerCase().includes(title.toLowerCase()) || song_composer.toLowerCase().includes(title.toLowerCase()))
+  //     });
+  //     if(filtered_songs.length > 0){
+  //       return true
+  //     }
+  //   }
+
+  //   if(target_type == 20/* 20(video_object) */){
+  //     //its a video being searched, check the videos in it
+  //     var videos = object['data']['videos']
+  //     var filtered_videos = videos.filter(function (object) {
+  //       var video_title = object['video_title'] == null ? '' : object['video_title']
+  //       var video_composer = object['video_composer'] == null ? '' : object['video_composer']
+  //       return (video_title.toLowerCase().includes(title.toLowerCase()) || video_composer.toLowerCase().includes(title.toLowerCase()))
+  //     });
+  //     if(filtered_videos.length > 0){
+  //       return true
+  //     }
+  //   }
+
+  //   return (match)
+  // });
+
+  // var ids = []
+  // filtered_objects.forEach(object => {
+  //   ids.push(object['id'])
+  // });
+
+  var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
   var filtered_objects = [];
-  filtered_objects = all_objects.filter(function (object) {
-    var object_title = object['data']['entered_title_text'] == null ? '' : object['data']['entered_title_text']
-    const match = object_title.toLowerCase().includes(title.toLowerCase())
-    if(target_type == 19/* 19(audio_object) */){
-      //its a album being searched, so check the songs in it
-      var songs = object['data']['songs']
-      var filtered_songs = songs.filter(function (object) {
-        var song_title = object['song_title'] == null ? '' : object['song_title']
-        var song_composer = object['song_composer'] == null ? '' : object['song_composer']
-        return (song_title.toLowerCase().includes(title.toLowerCase()) || song_composer.toLowerCase().includes(title.toLowerCase()))
-      });
-      if(filtered_songs.length > 0){
-        return true
-      }
-    }
-
-    if(target_type == 20/* 20(video_object) */){
-      //its a video being searched, check the videos in it
-      var videos = object['data']['videos']
-      var filtered_videos = videos.filter(function (object) {
-        var video_title = object['video_title'] == null ? '' : object['video_title']
-        var video_composer = object['video_composer'] == null ? '' : object['video_composer']
-        return (video_title.toLowerCase().includes(title.toLowerCase()) || video_composer.toLowerCase().includes(title.toLowerCase()))
-      });
-      if(filtered_videos.length > 0){
-        return true
-      }
-    }
-
-    return (match)
+  filtered_objects = all_objs.filter(function (object) {
+    var object_tags = object['keys']
+    const containsAll = object_tags.includes(title.toLowerCase())
+    return (containsAll)
   });
 
   var ids = []
-  filtered_objects.forEach(object => {
-    ids.push(object['id'])
+  filtered_objects.forEach(item => {
+    if(!ids.includes(item['id'])){
+      ids.push(item['id'])
+    }
   });
 
   return ids;
@@ -916,6 +1083,7 @@ async function filter_events(requested_e5, requested_contract, requested_event_i
 
 /* stores all the ipfs data in files. */
 function store_hashes_in_file_storage_if_memory_full(){
+  update_staged_hash_data()
   var keys = Object.keys(hash_data)
   if(keys.length >= 125){
     //store all the data in a file
@@ -1014,7 +1182,7 @@ async function get_round_down_value(web3, blockNumber){
     const currentBlock = await web3.eth.getBlock(blockNumber - 1);
     const previousBlock = await web3.eth.getBlock(blockNumber - 2);
     const miningTime = Number(currentBlock.timestamp - previousBlock.timestamp);
-    return Math.round(1 / (miningTime / 120))
+    return Math.round(1 / (miningTime / 12000))
   }
   catch(e){
     console.log(e)
@@ -1246,6 +1414,7 @@ function number_with_commas(x) {
     return x.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ",");
 }
 
+/* returns the timestamp as by a specified blockchain */
 async function get_e5_chain_time(e5){
   var provider = data[e5]['web3']
   var E5_address = data[e5]['addresses'][0]
@@ -1358,7 +1527,7 @@ function get_nitro_link_from_e5_id(e5_id){
 }
 
 /* combines all the mappings for each E5 into one object */
-function  get_all_sorted_objects_mappings(object){
+function get_all_sorted_objects_mappings(object){
   var all_objects = {}
   for(var i=0; i<data['e'].length; i++){
       var e5 = data['e'][i]
@@ -2020,7 +2189,12 @@ app.post('/store_files', async (req, res) => {
     if(storage_data.available_space < space_utilized){
       res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
       return;
-    }else{
+    }
+    else if(space_utilized > 35){
+      res.send(JSON.stringify({ message: 'Youll need to stream each file individually', success:false }));
+      return;
+    }
+    else{
       data['storage_data'][storage_data.account.toString()]['utilized_space'] += space_utilized
       data['storage_data'][storage_data.account.toString()]['files'] ++;
       data['metrics']['total_files_stored']++
@@ -2032,10 +2206,99 @@ app.post('/store_files', async (req, res) => {
       }else{
         res.send(JSON.stringify({ message: 'Files stored Successfully', files: success, success:true }));
       }
-      
     }
   }
 });//ok
+
+app.post('/reserve_upload', async (req, res) => {
+  const { signature_data, signature, file_length, file_type } = req.body;
+  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_length == null || isNaN(file_length) || file_type == null || !is_all_file_type_ok([file_type])){
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    return;
+  }
+  else if(file_length <= 0){
+    res.send(JSON.stringify({ message: 'You need to speicify the length of the file', success:false }));
+    return;
+  }
+  else if(data['max_buyable_capacity'] == 0){
+    res.send(JSON.stringify({ message: 'Storage on this node is disabeld', success:false }));
+    return;
+  }else{
+    var storage_data = await fetch_accounts_available_storage(signature_data, signature)
+    if(storage_data.available_space < file_length){
+      res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
+      return;
+    }else{
+      const upload_extension = makeid(53)
+      const expiry = Date.now() + (1000 * 60 * 60 * 24 * 3)/* 3 days */
+      data['upload_reservations'][upload_extension] = {'length':file_length, 'type':file_type, 'expiry':expiry, 'account':storage_data.account.toString(), 'aborted':false}
+      res.send(JSON.stringify({ message: 'reservation successful.', extension: upload_extension, success:true }));
+    }
+  }
+});
+
+app.post('/upload/:extension', async (req, res) => {
+  const { extension } = req.params;
+  if(extension == null || extension == ''){
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    return;
+  }else{
+    var reservation_data = data['upload_reservations'][extension]
+    if(reservation_data == null){
+      res.send(JSON.stringify({ message: 'Reservation doesnt exist.', success:false }));
+      return;
+    }
+    else if(Date.now() > reservation_data['expiry']){
+      res.send(JSON.stringify({ message: 'Reservation already expired.', success:false }));
+      return;
+    }
+    else if(reservation_data['aborted'] == true){
+      res.send(JSON.stringify({ message: 'Reservation is invalid, please make another reservation.', success:false }));
+      return;
+    }
+    else{
+      data['upload_reservations'][extension]['aborted'] = true
+      let receivedBytes = 0;
+      const filePath = `storage_data/${extension}.${reservation_data['type']}`;
+      var dir = './storage_data'
+      if (!fs.existsSync(dir)){
+        fs.mkdirSync(dir);
+      }
+      const writeStream = fs.createWriteStream(filePath);
+      const target_length = reservation_data['length']
+      const account = reservation_data['account']
+
+      req.on("data", (chunk) => {
+        receivedBytes += chunk.length;
+        data['storage_data'][account]['utilized_space'] += target_length / (1024 * 1024)
+        data['metrics']['total_space_utilized']+= target_length / (1024 * 1024)
+        if(receivedBytes > target_length){
+          console.log("Upload exceeded limit! Aborting...");
+          req.destroy(); // Close the connection
+          writeStream.destroy();
+          res.send(JSON.stringify({ message: 'Upload exceeded reserved space.', success:false }));
+        }else{
+          console.log(`Received: ${receivedBytes} bytes`);
+        }
+      });
+
+      req.pipe(writeStream);
+
+      writeStream.on("finish", () => {
+        console.log("Upload complete!");
+        data['storage_data'][account]['files'] ++;
+        data['metrics']['total_files_stored']++
+        res.send(JSON.stringify({ message: 'Upload Successful.', success:true }));
+      });
+
+      writeStream.on("error", (err) => {
+        console.error("Error writing file:", err);
+        res.send(JSON.stringify({ message: 'Upload Failed.', success:false }));
+      });
+    }
+    
+  }
+})
 
 /* endpoint for obtaining the storage space utilized by an account */
 app.get('/account_storage_data/:account', (req, res) => {
@@ -2071,7 +2334,10 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
     const stats = fs.statSync(filePath);
     const fileSize = stats.size;
     const range = req.headers.range;
-    
+    if(ile_streams[file] == null){
+      ile_streams[file] = 0
+    }
+    file_streams[file]++
     if (range) {
       const [start, end] = range
         .replace(/bytes=/, '')
@@ -2105,6 +2371,25 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
 
   }
 });//ok
+
+app.get('/streams', (req, res) => {
+  const { files } = req.body;
+  if(files == null || files.length == 0){
+    res.send(JSON.stringify({ message: 'Please speficy an array of file names.', success:false }));
+    return;
+  }
+
+  const return_streams_data = {}
+  files.forEach(file => {
+    var stream_count = file_streams[file]
+    if(stream_count == null){
+      stream_count = 0
+    }
+    return_streams_data[file] = stream_count
+  });
+
+  res.send(JSON.stringify({ message: 'Search successful.', streams: return_streams_data, success:true }));
+});
 
 /* endpoint for storing basic E5 run data. */
 app.post('/store_data', async (req, res) => {
@@ -2173,11 +2458,11 @@ const when_server_started = () => {
 
 
 
-var options = {
-  key: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.xyz/privkey.pem'), 
-  cert: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.xyz/fullchain.pem')
-  // set the directory for the keys and cerificates your using here
-};
+// var options = {
+//   key: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.xyz/privkey.pem'), 
+//   cert: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.xyz/fullchain.pem')
+//   // set the directory for the keys and cerificates your using here
+// };
 
 
 //npm install express web3 crypto-js
@@ -2204,8 +2489,8 @@ var options = {
 const EXPRESS_PORT = 443; // <----- change this to whichever port number you wish to use
 
 // Start server
-// app.listen(EXPRESS_PORT, when_server_started);
-https.createServer(options, app).listen(EXPRESS_PORT, when_server_started);
+app.listen(4000, when_server_started);
+// https.createServer(options, app).listen(EXPRESS_PORT, when_server_started);
 
 setInterval(load_events_for_all_e5s, 2*60*1000);
 setInterval(store_back_up_of_data, 24*60*60*1000);
