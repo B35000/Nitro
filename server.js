@@ -628,7 +628,7 @@ async function set_up_listeners(e5) {
 
 /* starts the loading of all the E5 event data if the app key is defined */
 function load_events_for_all_e5s(){
-  // if(app_key == null || app_key == '') return;
+  if(app_key == null || app_key == '') return;
 
   var e5s = data['e']
   for(var i=0; i<e5s.length; i++){ 
@@ -660,7 +660,7 @@ function stage_ids_to_track(ecids, obj_ids){
 
 /* loads the tags from the objects loaded in memory. */
 function update_staged_hash_data(){
-  console.log('updating staged hash data...')
+  // console.log('updating staged hash data...')
   for(const ecid in staged_ecids){
     if(staged_ecids.hasOwnProperty(ecid)){
       const ecid_obj = get_ecid_obj(ecid)
@@ -669,7 +669,7 @@ function update_staged_hash_data(){
       if(container_data != null){
         try{
           if(container_data['tags'] != null){
-            console.log('found an object with tags', container_data['tags'])
+            // console.log('found an object with tags', container_data['tags'])
             for(const key in container_data['tags']){
               if(container_data['tags'].hasOwnProperty(key)){
                 if(key != 'color'){
@@ -873,15 +873,16 @@ async function search_for_object_ids_by_tags(tags, target_type){
 
   var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
   var filtered_objects = [];
+  var processed_tags = tags.map(word => word.toLowerCase());
   filtered_objects = all_objs.filter(function (object) {
     var object_tags = object['keys']
-    const containsAll = tags.some(r=> object_tags.includes(r))
+    const containsAll = processed_tags.some(r=> object_tags.includes(r))
     return (containsAll)
   });
   var final_filtered_objects = []
   final_filtered_objects = filtered_objects.filter(function (object) {
     var object_tags = object['keys']
-    const containsAll = tags.every(element => {
+    const containsAll = processed_tags.every(element => {
       return object_tags.includes(element);
     });
     return (containsAll)
@@ -1201,10 +1202,10 @@ async function fetch_accounts_available_storage(signature_data, signature){
     var current_block = await web3.eth.getBlock(round_down_block);
     var block_hash = current_block.hash
 
-    if(block_hash.toString() !== signature_data.toString()){
-      console.log('block hash generated and signature received do not match')
-      return { available_space: 0.0, account: 0 }
-    } 
+    // if(block_hash.toString() !== signature_data.toString()){
+    //   console.log('block hash generated and signature received do not match')
+    //   return { available_space: 0.0, account: 0 }
+    // } 
 
     var original_address = await web3.eth.accounts.recover(signature_data.toString(), signature)
     const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
@@ -2079,9 +2080,9 @@ app.post('/update_iteration', (req, res) => {
 /* admin endpoint for booting the entire node with the required app_key */
 app.post('/boot', (req, res) => {
   try{
-    const key = req.query.app_key;
+    const beacon_chain_link = req.query.beacon_chain_link;
     const backup_key = req.query.backup_key;
-    if(key == null || key == '' || backup_key == null || backup_key == ''){
+    if(beacon_chain_link == null || beacon_chain_link == '' || backup_key == null || backup_key == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
       return;
     }
@@ -2089,7 +2090,7 @@ app.post('/boot', (req, res) => {
       res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
       return;
     }
-    app_key = key
+    beacon_chain_link = beacon_chain_link
     var obj = {message:`Node booted successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     res.send(string_obj);
@@ -2190,10 +2191,10 @@ app.post('/store_files', async (req, res) => {
       res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
       return;
     }
-    else if(space_utilized > 35){
-      res.send(JSON.stringify({ message: 'Youll need to stream each file individually', success:false }));
-      return;
-    }
+    // else if(space_utilized > 35){
+    //   res.send(JSON.stringify({ message: 'Youll need to stream each file individually', success:false }));
+    //   return;
+    // }
     else{
       data['storage_data'][storage_data.account.toString()]['utilized_space'] += space_utilized
       data['storage_data'][storage_data.account.toString()]['files'] ++;
@@ -2208,7 +2209,7 @@ app.post('/store_files', async (req, res) => {
       }
     }
   }
-});//ok
+});//ok -----
 
 app.post('/reserve_upload', async (req, res) => {
   const { signature_data, signature, file_length, file_type } = req.body;
@@ -2225,17 +2226,23 @@ app.post('/reserve_upload', async (req, res) => {
     return;
   }else{
     var storage_data = await fetch_accounts_available_storage(signature_data, signature)
-    if(storage_data.available_space < file_length){
+    if((storage_data.available_space * (1024 * 1024)) < file_length){
       res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
       return;
-    }else{
+    }
+    // else if(data['upload_reservations'][storage_data.account.toString()] != null && data['upload_reservations'][storage_data.account.toString()]['expiry'] < Date.now()){
+    //   res.send(JSON.stringify({ message: 'You cant reserve more than one upload at once.', success:false }));
+    //   return;
+    // }
+    else{
       const upload_extension = makeid(53)
       const expiry = Date.now() + (1000 * 60 * 60 * 24 * 3)/* 3 days */
       data['upload_reservations'][upload_extension] = {'length':file_length, 'type':file_type, 'expiry':expiry, 'account':storage_data.account.toString(), 'aborted':false}
+      // data['upload_reservations'][storage_data.account.toString()] = {'extension':upload_extension, 'expiry':expiry}
       res.send(JSON.stringify({ message: 'reservation successful.', extension: upload_extension, success:true }));
     }
   }
-});
+});//ok -----
 
 app.post('/upload/:extension', async (req, res) => {
   const { extension } = req.params;
@@ -2257,7 +2264,8 @@ app.post('/upload/:extension', async (req, res) => {
       return;
     }
     else{
-      data['upload_reservations'][extension]['aborted'] = true
+      // data['upload_reservations'][extension]['aborted'] = true;
+      // delete data['upload_reservations'][reservation_data['account']];
       let receivedBytes = 0;
       const filePath = `storage_data/${extension}.${reservation_data['type']}`;
       var dir = './storage_data'
@@ -2270,35 +2278,36 @@ app.post('/upload/:extension', async (req, res) => {
 
       req.on("data", (chunk) => {
         receivedBytes += chunk.length;
-        data['storage_data'][account]['utilized_space'] += target_length / (1024 * 1024)
-        data['metrics']['total_space_utilized']+= target_length / (1024 * 1024)
-        if(receivedBytes > target_length){
+        data['storage_data'][account]['utilized_space'] += (chunk.length / (1024 * 1024))
+        data['metrics']['total_space_utilized']+= (chunk.length / (1024 * 1024))
+        if(receivedBytes > target_length || data['storage_data'][account]['utilized_space'] > data['storage_data'][account]['acquired_space']){
           console.log("Upload exceeded limit! Aborting...");
           req.destroy(); // Close the connection
           writeStream.destroy();
           res.send(JSON.stringify({ message: 'Upload exceeded reserved space.', success:false }));
         }else{
-          console.log(`Received: ${receivedBytes} bytes`);
+          // console.log(`Received: ${receivedBytes} bytes`);
         }
       });
-
-      req.pipe(writeStream);
 
       writeStream.on("finish", () => {
         console.log("Upload complete!");
         data['storage_data'][account]['files'] ++;
         data['metrics']['total_files_stored']++
         res.send(JSON.stringify({ message: 'Upload Successful.', success:true }));
+        data['upload_reservations'][extension]['aborted'] = true;
       });
 
       writeStream.on("error", (err) => {
         console.error("Error writing file:", err);
         res.send(JSON.stringify({ message: 'Upload Failed.', success:false }));
       });
+
+      req.pipe(writeStream);
     }
     
   }
-})
+})//ok -----
 
 /* endpoint for obtaining the storage space utilized by an account */
 app.get('/account_storage_data/:account', (req, res) => {
@@ -2315,7 +2324,7 @@ app.get('/account_storage_data/:account', (req, res) => {
       res.send(JSON.stringify({ message: 'Account found.', account: payment_data, success:true }));
     }
   }
-});//ok
+});//ok -----
 
 /* endpoint for streaming a file stored in the node. */
 app.get('/stream_file/:content_type/:file', (req, res) => {
@@ -2370,26 +2379,7 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
     }
 
   }
-});//ok
-
-app.get('/streams', (req, res) => {
-  const { files } = req.body;
-  if(files == null || files.length == 0){
-    res.send(JSON.stringify({ message: 'Please speficy an array of file names.', success:false }));
-    return;
-  }
-
-  const return_streams_data = {}
-  files.forEach(file => {
-    var stream_count = file_streams[file]
-    if(stream_count == null){
-      stream_count = 0
-    }
-    return_streams_data[file] = stream_count
-  });
-
-  res.send(JSON.stringify({ message: 'Search successful.', streams: return_streams_data, success:true }));
-});
+});//ok -----
 
 /* endpoint for storing basic E5 run data. */
 app.post('/store_data', async (req, res) => {
@@ -2428,7 +2418,26 @@ app.post('/store_data', async (req, res) => {
       res.send(JSON.stringify({ message: 'Files stored Successfully', files: success, success:true }));
     }
   }
-});//ok
+});//ok -----
+
+app.get('/streams', (req, res) => {
+  const { files } = req.body;
+  if(files == null || files.length == 0){
+    res.send(JSON.stringify({ message: 'Please speficy an array of file names.', success:false }));
+    return;
+  }
+
+  const return_streams_data = {}
+  files.forEach(file => {
+    var stream_count = file_streams[file]
+    if(stream_count == null){
+      stream_count = 0
+    }
+    return_streams_data[file] = stream_count
+  });
+
+  res.send(JSON.stringify({ message: 'Search successful.', streams: return_streams_data, success:true }));
+});
 
 
 
