@@ -13,6 +13,8 @@ npm installl big-integer
 npm install crypto
 npm install os
 npm install check-disk-space
+npm install mime-types
+npm install dotenv
 ```
 
 [pm2](https://pm2.io) is used for the projects node runtime process management and tracking.
@@ -35,17 +37,17 @@ var options = {
 };
 ```
 
+Finally, youll need to declare a `.env` file with a backup key named `SECRET_KEY` which looks something like this:
+
+```
+SECRET_KEY=eeeeeArPOmnFJlPgAyT2x7IXU4YIMHekKyL0geeeee
+```
+
 Once this is done, you can start the node by running `pm2 start server.js --no-daemon` if youre using [pm2](https://pm2.io) or `node server.js` if youre debugging.
 
 ### Managing the API
 
-When the node is started, youll need to obtain the nodes backup key to set it up via [E5](https://b35000.github.io/E5UI/) in the Nitro module. When setting up a new Nitro, youll be required to specify the nodes backup key which looks something like this:
-
-```
-eeeeeqnoKLoYcdxdnxqvMafghrpeWQ19B4jTOeeeee
-```
-
-You can obtain this as the output when you start the server.
+When the node is started, youll need to obtain the nodes backup key to set it up via [E5](https://b35000.github.io/E5UI/) in the Nitro module. When setting up a new Nitro, youll be required to specify the nodes backup key.
 
 ### Configuring the API
 

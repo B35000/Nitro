@@ -16,6 +16,7 @@
     "crypto": "^1.0.1",
     "crypto-js": "^4.2.0",
     "diskusage": "^1.2.0",
+    "dotenv": "^16.4.7",
     "express": "^4.21.1",
     "mime-types": "^2.1.35",
     "os": "^0.1.2",

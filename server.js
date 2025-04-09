@@ -16,6 +16,7 @@
 // OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 // FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 // IN THE SOFTWARE.
+require('dotenv').config();
 const { Web3 } = require('web3');
 const express = require('express');
 var CryptoJS = require("crypto-js");
@@ -127,6 +128,7 @@ var app_key = `e`/* app key */
 var pointer_data = {}
 var beacon_chain_link = ``
 var staged_ecids = {}
+const SECRET = process.env.SECRET_KEY;
 
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
@@ -422,7 +424,7 @@ async function load_data_from_beacon_node(cids){
     var object_data = obj['data']
 
     cids.forEach(cid => {
-      var parsed_data = attempt_parsing(object_data[cid])
+      var parsed_data = (object_data[cid])
       if(parsed_data != null){
         update_color_metric(parsed_data)
         hash_data[cid] = parsed_data
@@ -442,43 +444,79 @@ async function load_data_from_beacon_node(cids){
 
 
 
-
+async function load_events_from_nitro(contract_name, event_id, e5, filter){
+  var event_request = {'requested_e5':e5, 'requested_contract':contract_name, 'requested_event_id':event_id, 'filter':filter}
+  const params = new URLSearchParams({
+    arg_string:JSON.stringify({requests:[event_request]}),
+  });
+  var request = `${beacon_chain_link}/events?${params.toString()}`
+  try{
+    const response = await fetch(request);
+    if (!response.ok) {
+      console.log('all_data2',response)
+      throw new Error(`Failed to retrieve data. Status: ${response}`);
+    }
+    var data = await response.text();
+    var obj = JSON.parse(data);
+    return { 'events': obj['data'][0], 'height': obj['block_heights'][0] }
+  }
+  catch(e){
+    // console.log(e)
+    return { 'events': [], 'height': 0 }
+  }
+}
 
 /* loads all the events emitted for a specified contract and event type, for a tracked period of time. */
 async function load_past_events(contract, event, e5, web3, contract_name, latest){
-  try{
-    var starting_block = data[e5]['current_block'][contract_name+event] == null ? data[e5]['first_block'] : data[e5]['current_block'][contract_name+event]
-
-    var iteration = data[e5]['iteration']
-    var events = []
-    if(latest - starting_block < iteration){
-      events = await contract.getPastEvents(event, { fromBlock: starting_block, toBlock: latest }, (error, events) => {});
-    }else{
-      var pos = starting_block
-      while (pos < latest) {
-        var to = pos+iteration < latest ? pos+iteration : latest
-        var from = pos
-        events = events.concat(await contract.getPastEvents(event, { fromBlock: from, toBlock: to }, (error, events) => {}))
-        pos = to+1
-      }
-    }
-
-    events.forEach(event => {
-      delete event.address
-      delete event.blockHash
-      delete event.blockNumber
-      delete event.data
-      delete event.raw
-      delete event.signature
-      delete event.topics
-      delete event.transactionHash
-    });
+  if(beacon_chain_link != '' && data[e5]['current_block'][contract_name+event] == null){
+    var event_data_obj = await load_events_from_nitro(contract_name, event, e5, {})
+    var events = event_data_obj['events']
+    var height = event_data_obj['height']
 
     event_data[e5][contract_name][event] = event_data[e5][contract_name][event].concat(events)
-    data[e5]['current_block'][contract_name+event] = latest
-  }catch(e){
-    console.log(e)
+    data[e5]['current_block'][contract_name+event] = height
+  }else{
+    try{
+      var starting_block = data[e5]['current_block'][contract_name+event] == null ? data[e5]['first_block'] : data[e5]['current_block'][contract_name+event]
+
+      var iteration = data[e5]['iteration']
+      var events = []
+      if(latest - starting_block < iteration){
+        events = await contract.getPastEvents(event, { fromBlock: starting_block, toBlock: latest }, (error, events) => {});
+      }else{
+        var pos = starting_block
+        while (pos < latest) {
+          var to = pos+iteration < latest ? pos+iteration : latest
+          var from = pos
+          events = events.concat(await contract.getPastEvents(event, { fromBlock: from, toBlock: to }, (error, events) => {}))
+          pos = to+1
+        }
+      }
+
+      events.forEach(event => {
+        delete event.address
+        delete event.blockHash
+        delete event.blockNumber
+        delete event.data
+        delete event.raw
+        delete event.signature
+        delete event.topics
+        delete event.transactionHash
+        
+        for(var v=0; v<15; v++){
+          if(event.returnValues[v] != null){
+            delete event.returnValues[v]
+          }
+        }
+      });
+
+      event_data[e5][contract_name][event] = event_data[e5][contract_name][event].concat(events)
+      data[e5]['current_block'][contract_name+event] = latest
+    }catch(e){
+      console.log(e)
+    }
   }
+  
 
   if(events.length > 0){
     if(contract_name == 'E52' && event == 'e4'/* Data */){
@@ -1651,7 +1689,7 @@ app.get('/events', async (req, res) => {
     var arg_obj = JSON.parse(arg_string)
     var requests = arg_obj.requests
     var filtered_events_array = []
-
+    var block_heights = []
     for(var i=0; i<requests.length; i++){
       var requested_e5 = requests[i]['requested_e5']
       var requested_contract = requests[i]['requested_contract']
@@ -1661,9 +1699,11 @@ app.get('/events', async (req, res) => {
 
       var filtered_events = await filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter)
       filtered_events_array.push(filtered_events)
+      var block_id = data[requested_e5]['current_block'][requested_contract+requested_event_id]
+      block_heights.push(block_id)
     }
     
-    var obj = {'data':filtered_events_array, success:true}
+    var obj = {'data':filtered_events_array, 'block_heights':block_heights, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     return res.send(string_obj);
   }
@@ -2449,7 +2489,8 @@ app.get('/streams', (req, res) => {
 
 const when_server_started = () => {
   start_up_time = Date.now()
-  var key = 'eeeee'+makeid(32)+'eeeee'
+  // var key = 'eeeee'+makeid(32)+'eeeee'
+  var key = SECRET
   data['key'] = key
   console.log('')
   console.log('------------------------e----------------------------')
@@ -2467,25 +2508,27 @@ const when_server_started = () => {
 
 
 
-// var options = {
-//   key: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.xyz/privkey.pem'), 
-//   cert: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.xyz/fullchain.pem')
-//   // set the directory for the keys and cerificates your using here
-// };
+var options = {
+  key: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.com/privkey.pem'), 
+  cert: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.com/fullchain.pem')
+  // set the directory for the keys and cerificates your using here
+};
 
 
 //npm install express web3 crypto-js
 //npm install pm2@latest -g
-//npm install diskusage
-//npm installl big-integer
+//npm install big-integer
 //npm install crypto
 //npm install os
 //npm install check-disk-space
 //npm install mime-types
+//npm install dotenv
 
 //pm2 start server.js --no-daemon
 //pm2 ls
 //pm2 stop all | 0
+//sudo pm2 kill
+//sudo pm2 start server.js --no-daemon
 
 //client-cert.pem  contract-listener  package-lock.json
 //client-key.pem   hash_data          package.json
@@ -2498,8 +2541,8 @@ const when_server_started = () => {
 const EXPRESS_PORT = 443; // <----- change this to whichever port number you wish to use
 
 // Start server
-app.listen(4000, when_server_started);
-// https.createServer(options, app).listen(EXPRESS_PORT, when_server_started);
+// app.listen(4000, when_server_started);
+https.createServer(options, app).listen(EXPRESS_PORT, when_server_started);
 
 setInterval(load_events_for_all_e5s, 2*60*1000);
 setInterval(store_back_up_of_data, 24*60*60*1000);
