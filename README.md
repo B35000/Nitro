@@ -21,26 +21,23 @@ npm install dotenv
 
 ### Running the project
 
-Once all the dependencies are installed, youll need to configure the port that [express](https://expressjs.com/) will use to host the api inside the `server.js` file:
-
-```
-const EXPRESS_PORT = 3000; // <----- change this to whichever port number you wish to use
-```
-
-Then youll need to set the server key and certificate that node will use to host the https endpoint:
-
-```
-var options = {
-  key: fs.readFileSync('/home/ubuntu/client-key.pem'),
-  cert: fs.readFileSync('/home/ubuntu/client-cert.pem')
-  // set the directory for the keys and cerificates your using here
-};
-```
-
-Finally, youll need to declare a `.env` file with a backup key named `SECRET_KEY` which looks something like this:
+Once all the dependencies are installed, youll need to declare a `.env` file with a backup key named `SECRET_KEY` which looks something like this:
 
 ```
 SECRET_KEY=eeeeeArPOmnFJlPgAyT2x7IXU4YIMHekKyL0geeeee
+```
+
+Also, inside the `.env` file you need to specify the private key and certificate to be uesd by the server to encrypt traffic to and from the server since it uses https exclusively. In the `.env` file, specify a link to the key using a variable called `PRIVATE_KEY_RESOURCE` and a link to the certificate file using a variable called `CERTIFICATE_RESOURCE`:
+
+```
+PRIVATE_KEY_RESOURCE=/etc/letsencrypt/live/api.mydomain.com/privkey.pem
+CERTIFICATE_RESOURCE=/etc/letsencrypt/live/api.mydomain.com/fullchain.pem
+```
+
+These certificates can be obtained using the certbot command. Finally, in the `.env` you also need to declare the port number you will be using for the server. This should be port `443`:
+
+```
+HTTPS_PORT=443
 ```
 
 Once this is done, you can start the node by running `pm2 start server.js --no-daemon` if youre using [pm2](https://pm2.io) or `node server.js` if youre debugging.

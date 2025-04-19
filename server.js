@@ -130,24 +130,26 @@ var beacon_chain_link = ``
 var staged_ecids = {}
 var failed_ecids = {'in':[], 'nf':[], 'ni':[], 'ar':[]}
 const SECRET = process.env.SECRET_KEY;
-
+const PRIVATE_KEY_RESOURCE = process.env.PRIVATE_KEY_RESOURCE
+const CERTIFICATE_RESOURCE = process.env.CERTIFICATE_RESOURCE
+const HTTPS_PORT = process.env.HTTPS_PORT
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
-function decrypt_storage_data(data, key){
-  try{
-    var bytes  = CryptoJS.AES.decrypt(data, key);
-    var originalText = bytes.toString(CryptoJS.enc.Utf8);
-    return originalText
-  }catch(e){
-    return data
-  }
-}
+// function decrypt_storage_data(data, key){
+//   try{
+//     var bytes  = CryptoJS.AES.decrypt(data, key);
+//     var originalText = bytes.toString(CryptoJS.enc.Utf8);
+//     return originalText
+//   }catch(e){
+//     return data
+//   }
+// }
 
 /* decrypts AES encrypted data with the specified key, returns original data */
-function encrypt_storage_data(data, key){
-  var ciphertext = CryptoJS.AES.encrypt(data, key).toString();
-  return ciphertext
-}
+// function encrypt_storage_data(data, key){
+//   var ciphertext = CryptoJS.AES.encrypt(data, key).toString();
+//   return ciphertext
+// }
 
 /* generates a random string with a specified length */
 function makeid(length) {
@@ -2532,8 +2534,8 @@ const when_server_started = () => {
 
 
 var options = {
-  key: fs.readFileSync(''), 
-  cert: fs.readFileSync('')
+  key: fs.readFileSync(`${PRIVATE_KEY_RESOURCE}`), 
+  cert: fs.readFileSync(`${CERTIFICATE_RESOURCE}`)
   // set the directory for the keys and cerificates your using here
 };
 
@@ -2561,11 +2563,10 @@ var options = {
 //ps aux | grep node
 //kill [processID]
 
-const EXPRESS_PORT = 443; // <----- change this to whichever port number you wish to use
 
 // Start server
 // app.listen(4000, when_server_started);
-https.createServer(options, app).listen(EXPRESS_PORT, when_server_started);
+https.createServer(options, app).listen(HTTPS_PORT, when_server_started);
 
 setInterval(attempt_loading_failed_ecids, 53*60*1000)
 setInterval(load_events_for_all_e5s, 2*60*1000);
