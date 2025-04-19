@@ -128,6 +128,7 @@ var app_key = `e`/* app key */
 var pointer_data = {}
 var beacon_chain_link = ``
 var staged_ecids = {}
+var failed_ecids = {'in':[], 'nf':[], 'ni':[], 'ar':[]}
 const SECRET = process.env.SECRET_KEY;
 
 
@@ -218,6 +219,9 @@ async function fetch_object_data_from_infura(ecid_obj, count){
     if(count < 5){
       await new Promise(resolve => setTimeout(resolve, 9500))
       await fetch_object_data_from_infura(ecid_obj, count+1)
+    }else{
+      const includes = failed_ecids['in'].find(e => e['cid'] === ecid_obj['cid']);
+      if(includes == null) failed_ecids['in'].push(ecid_obj);
     }
   }
 }
@@ -248,6 +252,9 @@ async function fetch_objects_data_from_nft_storage (ecid_obj, count){
     if(count < 5){
       await new Promise(resolve => setTimeout(resolve, 9500))
       await fetch_objects_data_from_nft_storage(ecid_obj, count+1)
+    }else{
+      const includes = failed_ecids['nf'].find(e => e['cid'] === ecid_obj['cid']);
+      if(includes == null) failed_ecids['nf'].push(ecid_obj)
     }
   }
 }
@@ -293,6 +300,9 @@ async function fetch_data_from_nitro(cid, depth){
   catch(e){
     if(depth < 3){
       return await fetch_data_from_nitro(cid, depth+1)
+    }else{
+      const includes = failed_ecids['ni'].find(e => e === cid);
+      if(includes == null) failed_ecids['ni'].push(cid)
     }
   }
 }
@@ -310,7 +320,8 @@ async function fetch_data_from_arweave(id){
     hash_data[id] = parsed_data
     load_count++
   }catch(e){
-    console.log(e)
+    const includes = failed_ecids['ar'].find(e => e === id);
+    if(includes == null) failed_ecids['ar'].push(id)
   }
 }
 
@@ -739,7 +750,8 @@ function update_staged_hash_data(){
 
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
-  var obj = {'data':data, /* 'event_data':event_data, */ /* 'hash_data':hash_data, */ 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files, 'pointer_data':pointer_data}
+  var obj = {'data':data, /* 'event_data':event_data, */ /* 'hash_data':hash_data, */ 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files, 'pointer_data':pointer_data, 
+  'hash_count': hash_count, 'load_count': load_count, 'app_key': app_key, 'staged_ecids':staged_ecids, 'beacon_chain_link': beacon_chain_link, 'failed_ecids':failed_ecids}
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
   var backup_name = ''
@@ -797,6 +809,25 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       if(obj['pointer_data'] != null){
         pointer_data = obj['pointer_data']
       }
+      if(obj['hash_count'] != null){
+        hash_count = obj['hash_count']
+      }
+      if(obj['load_count'] != null){
+        load_count = obj['load_count']
+      }
+      if(obj['app_key'] != null){
+        app_key = obj['app_key']
+      }
+      if(obj['staged_ecids'] != null){
+        staged_ecids = obj['staged_ecids']
+      }
+      if(obj['beacon_chain_link'] != null){
+        beacon_chain_link = obj['beacon_chain_link']
+      }
+      if(obj['failed_ecids'] != null){
+        failed_ecids = obj['failed_ecids']
+      }
+      
       console.log('successfully loaded back-up data')
 
       if(should_restore_key != null && should_restore_key == true){
@@ -817,63 +848,6 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
 
 
 
-
-
-/* returns all the objects (posts, jobs, contracts etc) stored in this node for a specified target type */
-// async function get_all_objects(target_type){
-//   var all_objects = []
-//   var all_object_positions = {}
-//   var e5s = data['e']
-
-//   var search_cids = []
-//   var focused_ecid_objects = []
-//   var focused_object_ids = []
-//   var focused_object_ids_e5s = []
-//   for(var i=0; i<e5s.length; i++){
-//     // var events = event_data[e5s[i]]['E52']['e5'/* Metadata */]
-//     var events = fetch_event_data_for_specific_e5(e5s[i], 'E52', 'e5'/* Metadata */)
-//     for(var e=0; e<events.length; e++){
-//       var metadata_pointer = events[e].returnValues.p4/* metadata */
-//       var object_id = parseInt(events[e].returnValues.p1/* target_obj_id */)
-      
-//       if(object_types[e5s[i]] != null && object_types[e5s[i]][object_id] == target_type){
-//         var ecid_obj = get_ecid_obj(metadata_pointer)
-//         var cid = ecid_obj['cid']
-//         if(!search_cids.includes(cid)){
-//           search_cids.push(cid)
-//           focused_ecid_objects.push(ecid_obj)
-//           focused_object_ids.push(object_id)
-//           focused_object_ids_e5s.push(e5s[i])
-//         }
-//       }
-//     }
-//   }
-
-//   var object_cid_data = await fetch_hashes_from_file_storage_or_memory(search_cids)
-
-//   for(var i=0; i<focused_ecid_objects.length; i++){
-//     var ecid_obj = focused_ecid_objects[i]
-//     var e5 = focused_object_ids_e5s[i]
-//     var object_id = focused_object_ids[i]
-    
-//     var cid = ecid_obj['cid']
-//     var container_data = object_cid_data[cid]
-//     if(container_data != null){
-//       var internal_id = ecid_obj['internal_id']
-//       var obj_data = internal_id == '' ? container_data : container_data[internal_id]
-//       var pos = all_objects.length
-//       if(all_object_positions[e5+object_id] != null){
-//         //this is an object that was edited
-//         all_objects[e5+object_id] = {'id':object_id, 'data':obj_data}
-//       }else{
-//         all_objects.push({'id':object_id, 'data':obj_data})
-//         all_object_positions[e5+object_id] = pos
-//       }
-//     }
-//   }
-
-//   return all_objects
-// }
 
 /* filters objects by a specified set of tags */
 async function search_for_object_ids_by_tags(tags, target_type){
@@ -907,9 +881,13 @@ async function search_for_object_ids_by_tags(tags, target_type){
   // final_filtered_objects.forEach(object => {
   //   ids.push(object['id'])
   // });
-
-
   var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
+  if(target_type == 0){
+    for(var p=17; p<=36; p++){
+      var p_objs = pointer_data[p] == null ? [] : pointer_data[p]
+      all_objs = all_objs.concat(p_objs)
+    }
+  }
   var filtered_objects = [];
   var processed_tags = tags.map(word => word.toLowerCase());
   filtered_objects = all_objs.filter(function (object) {
@@ -984,6 +962,12 @@ async function search_for_object_ids_by_title(title, target_type){
   // });
 
   var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
+  if(target_type == 0){
+    for(var p=17; p<=36; p++){
+      var p_objs = pointer_data[p] == null ? [] : pointer_data[p]
+      all_objs = all_objs.concat(p_objs)
+    }
+  }
   var filtered_objects = [];
   filtered_objects = all_objs.filter(function (object) {
     var object_tags = object['keys']
@@ -1669,6 +1653,45 @@ async function fetch_event_file_from_storage(file, e5, contract, event_name){
 function get_object_size_in_mbs(obj) {
   const bytes = new TextEncoder().encode(JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)).length;
   return (bytes / (1024 * 1024)).toFixed(2); // Convert bytes to MB
+}
+
+
+
+
+
+function attempt_loading_failed_ecids(){
+  reload_failed_infura_data(failed_ecids['in'])
+  reload_failed_nft_data(failed_ecids['nf'])
+  reload_failed_ni_data(failed_ecids['ni'])
+  reload_failed_ar_data(failed_ecids['ar'])
+}
+
+async function reload_failed_infura_data(cids){
+  for(var i=0; i<cids.length; i++){
+    await this.fetch_object_data_from_infura(cids[i], 0)
+    await new Promise(resolve => setTimeout(resolve, 6000))
+  }
+}
+
+async function reload_failed_nft_data(cids){
+  for(var i=0; i<cids.length; i++){
+    await this.fetch_objects_data_from_nft_storage(cids[i], 0)
+    await new Promise(resolve => setTimeout(resolve, 6000))
+  }
+}
+
+async function reload_failed_ni_data(cids){
+  for(var i=0; i<cids.length; i++){
+    await this.fetch_data_from_nitro(cids[i], 0)
+    await new Promise(resolve => setTimeout(resolve, 6000))
+  }
+}
+
+async function reload_failed_ar_data(cids){
+  for(var i=0; i<cids.length; i++){
+    await this.fetch_data_from_arweave(cids[i], 0)
+    await new Promise(resolve => setTimeout(resolve, 6000))
+  }
 }
 
 
@@ -2509,8 +2532,8 @@ const when_server_started = () => {
 
 
 var options = {
-  key: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.com/privkey.pem'), 
-  cert: fs.readFileSync('/etc/letsencrypt/live/twentythreeinreverse.com/fullchain.pem')
+  key: fs.readFileSync(''), 
+  cert: fs.readFileSync('')
   // set the directory for the keys and cerificates your using here
 };
 
@@ -2544,8 +2567,9 @@ const EXPRESS_PORT = 443; // <----- change this to whichever port number you wis
 // app.listen(4000, when_server_started);
 https.createServer(options, app).listen(EXPRESS_PORT, when_server_started);
 
+setInterval(attempt_loading_failed_ecids, 53*60*1000)
 setInterval(load_events_for_all_e5s, 2*60*1000);
-setInterval(store_back_up_of_data, 24*60*60*1000);
+setInterval(store_back_up_of_data, 2*60*60*1000);
 setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
 setInterval(update_storage_payment_information, 2*60*1000);
 setInterval(backup_event_data_if_large_enough, 2*60*1000)
