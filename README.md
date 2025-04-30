@@ -27,6 +27,8 @@ Once all the dependencies are installed, youll need to declare a `.env` file wit
 SECRET_KEY=eeeeeArPOmnFJlPgAyT2x7IXU4YIMHekKyL0geeeee
 ```
 
+Thats 32 random characters with five leading and trailing `e` characters. E5 expects the secret key to look like this while setting it in the app.
+
 Also, inside the `.env` file you need to specify the private key and certificate to be uesd by the server to encrypt traffic to and from the server since it uses https exclusively. In the `.env` file, specify a link to the key using a variable called `PRIVATE_KEY_RESOURCE` and a link to the certificate file using a variable called `CERTIFICATE_RESOURCE`:
 
 ```

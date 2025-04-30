@@ -197,10 +197,10 @@ function add_new_e5_to_event_data(e5){
 /* fetches the data from an ipfs node that was uploaded via infura api */
 async function fetch_object_data_from_infura(ecid_obj, count){
   var cid = ecid_obj['cid']
-  if(hash_data[cid] != null) return;
+  if(hash_data[cid] != null || cold_storage_hash_pointers[cid] != null) return;
 
   var gateways = [
-    `https://gateway.pinata.cloud/ipfs/${cid}`
+    `https://ipfs.io/ipfs/${cid}`
   ]
   var selected_gateway = gateways[0]
   selected_gateway = get_selected_gateway_if_custom_set(cid, selected_gateway)
@@ -231,7 +231,7 @@ async function fetch_object_data_from_infura(ecid_obj, count){
 /* fetches the data from an ipfs node that was uploaded via (now discontinued) nft storage api */
 async function fetch_objects_data_from_nft_storage (ecid_obj, count){
   var cid = ecid_obj['cid']
-  if(hash_data[cid] != null) return;
+  if(hash_data[cid] != null || cold_storage_hash_pointers[cid] != null) return;
   var gateways = [
     `https://nftstorage.link/ipfs/${cid}`
   ]
@@ -311,6 +311,7 @@ async function fetch_data_from_nitro(cid, depth){
 
 /* fetches data stored in arweave storage */
 async function fetch_data_from_arweave(id){
+  if(hash_data[id] != null || cold_storage_hash_pointers[id] != null) return;
   try{
     const decoded = Buffer.from(id, 'base64').toString();
     // var data = await arweave.transactions.getData(decoded, {decode: true, string: true})
@@ -752,7 +753,7 @@ function update_staged_hash_data(){
 
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
-  var obj = {'data':data, /* 'event_data':event_data, */ /* 'hash_data':hash_data, */ 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files, 'pointer_data':pointer_data, 
+  var obj = {'data':data, 'event_data':event_data, /* 'hash_data':hash_data, */ 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files, 'pointer_data':pointer_data, 
   'hash_count': hash_count, 'load_count': load_count, 'app_key': app_key, 'staged_ecids':staged_ecids, 'beacon_chain_link': beacon_chain_link, 'failed_ecids':failed_ecids}
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -789,21 +790,21 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
   console.log(name);
   var success = true;
   var isloading = true;
-  fs.readFile(`backup_data/${name}`, (error, data) => {
+  fs.readFile(`backup_data/${name}`, (error, dat) => {
     if (error) {
       console.log(error)
       success = false
       return success;
     }
-    const decrypted_data = (data.toString())
+    const decrypted_data = (dat.toString())
     // console.log('decrypted_data: ', decrypted_data)
     const obj = JSON.parse(decrypted_data);
-    if(obj == data){
+    if(obj == dat){
       console.log('invalid back-up key supplied')
       success = false
     }else{
       data = obj['data']
-      // event_data = obj['event_data']
+      event_data = obj['event_data']
       // hash_data = obj['hash_data']
       object_types = obj['object_types']
       cold_storage_hash_pointers = obj['cold_storage_hash_pointers']
@@ -812,7 +813,7 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
         pointer_data = obj['pointer_data']
       }
       if(obj['hash_count'] != null){
-        hash_count = obj['hash_count']
+        // hash_count = obj['hash_count']
       }
       if(obj['load_count'] != null){
         load_count = obj['load_count']
@@ -2408,10 +2409,10 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
     const stats = fs.statSync(filePath);
     const fileSize = stats.size;
     const range = req.headers.range;
-    if(ile_streams[file] == null){
-      ile_streams[file] = 0
+    if(data['file_streams'][file] == null){
+      data['file_streams'][file] = 0
     }
-    file_streams[file]++
+    data['file_streams'][file]++
     if (range) {
       const [start, end] = range
         .replace(/bytes=/, '')
@@ -2494,7 +2495,7 @@ app.get('/streams', (req, res) => {
 
   const return_streams_data = {}
   files.forEach(file => {
-    var stream_count = file_streams[file]
+    var stream_count = data['file_streams'][file]
     if(stream_count == null){
       stream_count = 0
     }
@@ -2574,6 +2575,4 @@ setInterval(store_back_up_of_data, 2*60*60*1000);
 setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
 setInterval(update_storage_payment_information, 2*60*1000);
 setInterval(backup_event_data_if_large_enough, 2*60*1000)
-
-load_events_for_all_e5s()
 
