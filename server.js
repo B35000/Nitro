@@ -1701,6 +1701,61 @@ async function reload_failed_ar_data(cids){
 
 
 
+async function get_iTransfer_data(identifier, account, recipient, requested_e5, type){
+  /* type 1: iTransfer, type 2: Bill */
+  const used_identifier = this.hash_data(identifier)
+  var itransfer_event_params = []
+  var transfer_event_params = []
+  if(account != ''){
+    itransfer_event_params = await filter_events(requested_e5, 'H52', 'e5', {p4/* metadata */: used_identifier,p2/* awward_receiver */: recipient, p1/* awward_sender */:account, p3/* awward_context */: type}, null)
+
+    transfer_event_params =  await filter_events(requested_e5, 'H52', 'e1', {p3/* receiver */: recipient, p2/* sender */:account}, null)
+  }else{
+    itransfer_event_params = await filter_events(requested_e5, 'H52', 'e5', {p4/* metadata */: used_identifier,p2/* awward_receiver */: recipient, p3/* awward_context */: type}, null)
+
+    transfer_event_params =  await filter_events(requested_e5, 'H52', 'e1', {p3/* receiver */: recipient}, null)
+  }
+
+  itransfer_event_params = itransfer_event_params.reverse()
+  transfer_event_params = transfer_event_params.reverse()
+
+  var iTransfer_objects = {}
+  itransfer_event_params.forEach(event => {
+    var block = event.returnValues.p6/* block_number */
+    var transfers_for_block = grouped_transfers_by_block[block]
+    if(iTransfer_objects[block] == null){
+      iTransfer_objects[block] = {}
+    }
+    transfers_for_block.forEach(transfer => {
+      var transfer_exchange = transfer.returnValues.p1/* exchange */
+      var transfer_receiver = transfer.returnValues.p3/* receiver */
+      var transfer_sender = transfer.returnValues.p2/* sender */
+      var transfer_amount = transfer.returnValues.p4/* amount */
+      var transfer_depth = transfer.returnValues.p7/* depth */
+      var amount = get_actual_number(transfer_amount, transfer_depth)
+      
+      if(transfer_receiver == recipient){
+        if(iTransfer_objects[block][transfer_sender] == null){
+          iTransfer_objects[block][transfer_sender] = []
+        }
+        iTransfer_objects[block][transfer_sender].push({'exchange':transfer_exchange, 'receiver':transfer_receiver, 'sender':transfer_sender, 'amount':amount })
+      }
+    });
+  });
+
+  return iTransfer_objects
+}
+
+function hash_data(data){
+  const web3 = new Web3(data['E25']['web3']);
+  var hash = web3.utils.keccak256(data.toString())
+  return hash
+}
+
+
+
+
+
 
 
 
@@ -2503,6 +2558,90 @@ app.get('/streams', (req, res) => {
   });
 
   res.send(JSON.stringify({ message: 'Search successful.', streams: return_streams_data, success:true }));
+});
+
+app.get('/iTransfers', async (req, res) => {
+  const { identifier, account, recipient, e5 } = req.body;
+  if(identifier == null || identifier == ''){
+    res.send(JSON.stringify({ message: 'Please speficy an identifier', success:false }));
+    return;
+  }
+  if(recipient == null){
+    res.send(JSON.stringify({ message: 'Please speficy the recipient of the iTransfer', success:false }));
+    return;
+  }
+  const used_account = account == null ? '' : account
+  const used_e5 = e5 == null ? 'E25' : e5
+
+  if(!data['e'].includes(used_e5)){
+    res.send(JSON.stringify({ message: 'The E5 youve specified is invalid.', success:false }));
+    return;
+  }
+
+  /* 1: iTransfer, 2: Bill */
+  var itransfer_data = await get_iTransfer_data(identifier, used_account, recipient, used_e5, 1/* iTransfer */)
+
+  res.send(JSON.stringify({ message: 'Search successful.', payment_data: itransfer_data, success:true }));
+  /* 
+    {
+      21_123_456 (block_number):{
+        1002 (account_number):[
+          { exchange: 3, amount: 50000, sender:1002, receiver:1112 },
+          { exchange: 5, amount: 60000, sender:1002, receiver:1112 },
+        ],
+        1005 (account_number):[
+          { exchange: 3, amount: 50000, sender:1005, receiver:1112 },
+          { exchange: 5, amount: 60000, sender:1005, receiver:1112 },
+        ],
+        ...
+      },
+      ...
+    }
+  */
+});
+
+app.get('/bill_payments', async (req, res) => {
+  //identifier, account, recipient, requested_e5, type
+  const { identifier, account, recipient, e5 } = req.body;
+  if(identifier == null || identifier == ''){
+    res.send(JSON.stringify({ message: 'Please speficy an identifier', success:false }));
+    return;
+  }
+  if(recipient == null){
+    res.send(JSON.stringify({ message: 'Please speficy the recipient of the bill payments', success:false }));
+    return;
+  }
+  if(account == null){
+    res.send(JSON.stringify({ message: 'Please speficy the targeted account that received the bill', success:false }));
+    return;
+  }
+  const used_e5 = e5 == null ? 'E25' : e5
+  
+  if(!data['e'].includes(used_e5)){
+    res.send(JSON.stringify({ message: 'The E5 youve specified is invalid.', success:false }));
+    return;
+  }
+
+  /* 1: iTransfer, 2: Bill */
+  var itransfer_data = await get_iTransfer_data(identifier, account, recipient, used_e5, 2/* Bill */)
+
+  res.send(JSON.stringify({ message: 'Search successful.', payment_data: itransfer_data, success:true }));
+  /* 
+    {
+      21_123_456 (block_number):{
+        1002 (account_number):[
+          { exchange: 3, amount: 50000, sender:1002, receiver:1112 },
+          { exchange: 5, amount: 60000, sender:1002, receiver:1112 },
+        ],
+        1005 (account_number):[
+          { exchange: 3, amount: 50000, sender:1005, receiver:1112 },
+          { exchange: 5, amount: 60000, sender:1005, receiver:1112 },
+        ],
+        ...
+      },
+      ...
+    }
+  */
 });
 
 
