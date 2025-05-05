@@ -2733,5 +2733,4 @@ process.on('SIGHUP', () => when_server_killed('SIGHUP'));   // terminal closed
 // Catch normal exit
 process.on('exit', (code) => {
   console.log(`\nProcess exited with code: ${code}`);
-  when_server_killed('SIGINT')
 });
