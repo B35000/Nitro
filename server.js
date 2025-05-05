@@ -2670,6 +2670,14 @@ const when_server_started = () => {
   get_list_of_server_files_and_auto_backup()
 }
 
+async function when_server_killed(){
+  await store_back_up_of_data()
+  setTimeout(() => {
+    console.log("Cleanup complete. Exiting.");
+    process.exit(0);
+  }, 1000);
+}
+
 
 
 
@@ -2715,3 +2723,15 @@ setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
 setInterval(update_storage_payment_information, 2*60*1000);
 setInterval(backup_event_data_if_large_enough, 2*60*1000)
 
+
+
+// Catch termination signals
+process.on('SIGINT', () => when_server_killed('SIGINT'));   // Ctrl+C
+process.on('SIGTERM', () => when_server_killed('SIGTERM')); // kill
+process.on('SIGHUP', () => when_server_killed('SIGHUP'));   // terminal closed
+
+// Catch normal exit
+process.on('exit', (code) => {
+  console.log(`\nProcess exited with code: ${code}`);
+  when_server_killed('SIGINT')
+});
