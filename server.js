@@ -753,7 +753,7 @@ function update_staged_hash_data(){
 
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
-  var obj = {'data':data, 'event_data':event_data, /* 'hash_data':hash_data, */ 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files, 'pointer_data':pointer_data, 
+  var obj = {'data':data, 'event_data':event_data, 'hash_data':hash_data, 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files, 'pointer_data':pointer_data, 
   'hash_count': hash_count, 'load_count': load_count, 'app_key': app_key, 'staged_ecids':staged_ecids, 'beacon_chain_link': beacon_chain_link, 'failed_ecids':failed_ecids}
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -805,7 +805,7 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
     }else{
       data = obj['data']
       event_data = obj['event_data']
-      // hash_data = obj['hash_data']
+      hash_data = obj['hash_data']
       object_types = obj['object_types']
       cold_storage_hash_pointers = obj['cold_storage_hash_pointers']
       cold_storage_event_files = obj['cold_storage_event_files']
@@ -1703,7 +1703,7 @@ async function reload_failed_ar_data(cids){
 
 async function get_iTransfer_data(identifier, account, recipient, requested_e5, type){
   /* type 1: iTransfer, type 2: Bill */
-  const used_identifier = this.hash_data(identifier)
+  const used_identifier = hash_this_data(identifier)
   var itransfer_event_params = []
   var transfer_event_params = []
   if(account != ''){
@@ -1746,7 +1746,7 @@ async function get_iTransfer_data(identifier, account, recipient, requested_e5, 
   return iTransfer_objects
 }
 
-function hash_data(data){
+function hash_this_data(data){
   const web3 = new Web3(data['E25']['web3']);
   var hash = web3.utils.keccak256(data.toString())
   return hash
