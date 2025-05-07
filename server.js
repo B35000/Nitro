@@ -124,7 +124,7 @@ var object_types = {}
 var start_up_time = Date.now()/* start up time */
 var hash_count = 0/* number of ipfs hashes being tracked */
 var load_count = 0/* number of ipfs hashes loaded by the node */
-var app_key = `e`/* app key */
+var app_key = ``/* app key */
 var pointer_data = {}
 var beacon_chain_link = ``
 var staged_ecids = {}
@@ -196,8 +196,11 @@ function add_new_e5_to_event_data(e5){
 
 /* fetches the data from an ipfs node that was uploaded via infura api */
 async function fetch_object_data_from_infura(ecid_obj, count){
+  await new Promise(resolve => setTimeout(resolve, 1500))
   var cid = ecid_obj['cid']
-  if(hash_data[cid] != null || cold_storage_hash_pointers[cid] != null) return;
+  if(hash_data[cid] != null || cold_storage_hash_pointers[cid] != null){
+    return;
+  }
 
   var gateways = [
     `https://ipfs.io/ipfs/${cid}`
@@ -231,7 +234,9 @@ async function fetch_object_data_from_infura(ecid_obj, count){
 /* fetches the data from an ipfs node that was uploaded via (now discontinued) nft storage api */
 async function fetch_objects_data_from_nft_storage (ecid_obj, count){
   var cid = ecid_obj['cid']
-  if(hash_data[cid] != null || cold_storage_hash_pointers[cid] != null) return;
+  if(hash_data[cid] != null || cold_storage_hash_pointers[cid] != null){
+    return;
+  }
   var gateways = [
     `https://nftstorage.link/ipfs/${cid}`
   ]
@@ -277,7 +282,9 @@ async function fetch_data_from_nitro(cid, depth){
   var e5_id = split_cid_array[0]
   var nitro_cid = split_cid_array[1]
 
-  if(hash_data[nitro_cid] != null || cold_storage_hash_pointers[nitro_cid] != null) return;
+  if(hash_data[nitro_cid] != null || cold_storage_hash_pointers[nitro_cid] != null){
+    return;
+  }
   var nitro_url = get_nitro_link_from_e5_id(e5_id)
   if(nitro_url == null) return
   const params = new URLSearchParams({
@@ -311,7 +318,9 @@ async function fetch_data_from_nitro(cid, depth){
 
 /* fetches data stored in arweave storage */
 async function fetch_data_from_arweave(id){
-  if(hash_data[id] != null || cold_storage_hash_pointers[id] != null) return;
+  if(hash_data[id] != null || cold_storage_hash_pointers[id] != null){
+    return;
+  }
   try{
     const decoded = Buffer.from(id, 'base64').toString();
     // var data = await arweave.transactions.getData(decoded, {decode: true, string: true})
@@ -434,7 +443,7 @@ async function load_data_from_beacon_node(cids){
       throw new Error(`Failed to retrieve data. Status: ${response}`);
     }
     var data = await response.text();
-    var obj = JSON.parse(this.decrypt_storage_object(data));
+    var obj = JSON.parse(data);
     var object_data = obj['data']
 
     cids.forEach(cid => {
@@ -445,13 +454,10 @@ async function load_data_from_beacon_node(cids){
         load_count++
       }
     });
-    
-    
-    return cid_data
   }
   catch(e){
     if(depth < 3){
-      return await this.fetch_data_from_nitro(cid, depth+1)
+      return await load_data_from_beacon_node(cid, depth+1)
     }
   }
 }
@@ -1671,28 +1677,28 @@ function attempt_loading_failed_ecids(){
 
 async function reload_failed_infura_data(cids){
   for(var i=0; i<cids.length; i++){
-    await this.fetch_object_data_from_infura(cids[i], 0)
+    await fetch_object_data_from_infura(cids[i], 0)
     await new Promise(resolve => setTimeout(resolve, 6000))
   }
 }
 
 async function reload_failed_nft_data(cids){
   for(var i=0; i<cids.length; i++){
-    await this.fetch_objects_data_from_nft_storage(cids[i], 0)
+    await fetch_objects_data_from_nft_storage(cids[i], 0)
     await new Promise(resolve => setTimeout(resolve, 6000))
   }
 }
 
 async function reload_failed_ni_data(cids){
   for(var i=0; i<cids.length; i++){
-    await this.fetch_data_from_nitro(cids[i], 0)
+    await fetch_data_from_nitro(cids[i], 0)
     await new Promise(resolve => setTimeout(resolve, 6000))
   }
 }
 
 async function reload_failed_ar_data(cids){
   for(var i=0; i<cids.length; i++){
-    await this.fetch_data_from_arweave(cids[i], 0)
+    await fetch_data_from_arweave(cids[i], 0)
     await new Promise(resolve => setTimeout(resolve, 6000))
   }
 }
@@ -2201,9 +2207,9 @@ app.post('/update_iteration', (req, res) => {
 /* admin endpoint for booting the entire node with the required app_key */
 app.post('/boot', (req, res) => {
   try{
-    const beacon_chain_link = req.query.beacon_chain_link;
+    const new_beacon_chain_link = req.query.beacon_chain_link;
     const backup_key = req.query.backup_key;
-    if(beacon_chain_link == null || beacon_chain_link == '' || backup_key == null || backup_key == ''){
+    if(new_beacon_chain_link == null || new_beacon_chain_link == '' || backup_key == null || backup_key == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
       return;
     }
@@ -2211,7 +2217,7 @@ app.post('/boot', (req, res) => {
       res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
       return;
     }
-    beacon_chain_link = beacon_chain_link
+    beacon_chain_link = new_beacon_chain_link
     var obj = {message:`Node booted successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     res.send(string_obj);
@@ -2713,7 +2719,7 @@ var options = {
 
 
 // Start server
-// app.listen(4000, when_server_started);
+// app.listen(4000, when_server_started); <-------- use this if youre testing, then comment 'options'
 https.createServer(options, app).listen(HTTPS_PORT, when_server_started);
 
 setInterval(attempt_loading_failed_ecids, 53*60*1000)
