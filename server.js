@@ -2339,7 +2339,7 @@ app.post('/store_files', async (req, res) => {
 });//ok -----
 
 app.post('/reserve_upload', async (req, res) => {
-  const { signature_data, signature, file_length, file_type } = req.body;
+  const { signature_data, signature, file_length, file_type, upload_extension } = req.body;
   if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_length == null || isNaN(file_length) || file_type == null || !is_all_file_type_ok([file_type])){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
@@ -2362,7 +2362,7 @@ app.post('/reserve_upload', async (req, res) => {
     //   return;
     // }
     else{
-      const upload_extension = makeid(53)
+      // const upload_extension = makeid(53)
       const expiry = Date.now() + (1000 * 60 * 60 * 24 * 3)/* 3 days */
       data['upload_reservations'][upload_extension] = {'length':file_length, 'type':file_type, 'expiry':expiry, 'account':storage_data.account.toString(), 'aborted':false}
       // data['upload_reservations'][storage_data.account.toString()] = {'extension':upload_extension, 'expiry':expiry}
@@ -2524,21 +2524,7 @@ app.post('/store_data', async (req, res) => {
     return;
   }
   else{
-    var space_utilized = get_length_of_string_files_in_mbs(file_datas)
-    var success = null;
-    if(data['unlimited_basic_storage'] == true){
-      success = await store_objects_in_node(file_datas)
-    }else{
-      if(storage_data.available_space < space_utilized){
-        res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
-        return;
-      }else{
-        var storage_data = await fetch_accounts_available_storage(signature_data, signature)
-        data['storage_data'][storage_data.account.toString()]['utilized_space'] += space_utilized
-        data['metrics']['total_space_utilized']+= space_utilized
-        success = await store_objects_in_node(file_datas)
-      }
-    }
+    var success = await store_objects_in_node(file_datas);
     if(success == null){
       res.send(JSON.stringify({ message: 'Files stored Unsucessfully, internal server error', success:false }));
     }else{
