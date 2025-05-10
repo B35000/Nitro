@@ -12,6 +12,7 @@ var votes = [
 //bun
 
 var candidates = ['green', 'red', 'blue']
+var consensus_snapshots = []
 
 function get_majority_proportion(primary_totals, total_vote_count){
     // Step 1: Find the minimum array length
@@ -25,7 +26,45 @@ function get_majority_proportion(primary_totals, total_vote_count){
     return [candidate_proportion, result]
 }
 
-function eliminate_losers(primary_totals, secondary_totals){
+function select_tie_breaker(unfortunate_candidates){
+    if(unfortunate_candidates.length == 1) return 0
+	var pos = -1
+    var e = 0
+    var selected_candidates = unfortunate_candidates.slice()
+    while(pos == -1){
+        if(consensus_snapshots.length > 0 && consensus_snapshots.length > e){
+            var focused_snapshot = consensus_snapshots[e]
+            var arr = []
+            selected_candidates.forEach(unfortunate_candid => {
+                arr.push(focused_snapshot[unfortunate_candid].length)
+                });
+            const maxValue = Math.max(...arr)
+            const positions = arr.reduce((acc, val, index) => {
+                if (val === maxValue) acc.push(index);
+                return acc;
+            }, []);
+            if(positions.length < selected_candidates.length){
+                positions.forEach(position => {
+                    selected_candidates.splice(position, 1)
+                });
+                if(selected_candidates.length == 1){
+                    pos = selected_candidates[0]
+                }else{
+                    e++
+                }
+            }else{
+                e++
+            }
+        }else{
+            pos = Math.floor(Math.random() * selected_candidates.length)
+        }
+    }
+    
+    var selected_c = selected_candidates[pos]
+    return unfortunate_candidates.indexOf(selected_c)
+}
+
+function eliminate_losers(primary_totals){
     // Step 1: Find the minimum array length
     const minLength = Math.min(...Object.values(primary_totals).map(arr => arr.length));
     // Step 2: Filter entries with that length
@@ -33,7 +72,7 @@ function eliminate_losers(primary_totals, secondary_totals){
         .filter(([_, arr]) => arr.length === minLength)
         .map(([key]) => key);
  
- 	var candidate = result[Math.floor(Math.random() * result.length)]
+ 	var candidate = result[select_tie_breaker(result)]
     const their_voters = primary_totals[candidate]
     their_voters.forEach(voter => {
         votes[voter].splice(0, 1)
@@ -46,7 +85,6 @@ function eliminate_losers(primary_totals, secondary_totals){
 
 function calculate_winner(){
 	const primary_totals = {}
-    const secondary_totals = {}
     const total_vote_count = votes.length
     
     for(var i=0; i<votes.length; i++){
@@ -61,33 +99,18 @@ function calculate_winner(){
         primary_totals[primary_vote] = []
         }
         primary_totals[primary_vote].push(i)
-        
-        var secondary_vote = focused_vote_object[1]
-        while(secondary_vote != null && !candidates.includes(secondary_vote)){
-        votes[i].splice(1, 1)
-        secondary_vote = focused_vote_object[1]
-        }
-        if(secondary_vote != null){
-        if(secondary_totals[secondary_vote] == null){
-            secondary_totals[secondary_vote] = []
-        }
-        secondary_totals[secondary_vote].push(i)
-        }
     }
 
     for(var e=0; e<candidates.length; e++){
         if(primary_totals[candidates[e]] == null){
         primary_totals[candidates[e]] = []
         }
-        if(secondary_totals[candidates[e]] == null){
-            secondary_totals[candidates[e]] = []
-        }
     }
-
+    consensus_snapshots.push(primary_totals)
     var majority_proportion = get_majority_proportion(primary_totals, total_vote_count)
     if(majority_proportion[0] < 0.5 && majority_proportion[1].length > 2){
         //runoff is required
-        eliminate_losers(primary_totals, secondary_totals)
+        eliminate_losers(primary_totals)
         calculate_winner()
     }
     else if(majority_proportion[0] == 0.5 && majority_proportion[1].length == 2){
