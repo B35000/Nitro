@@ -7,6 +7,8 @@ var target_positions = 1/* the number of positions or seats to fill. If the elec
 var selected = []/* the selected candidates who reached the quota */
 var consensus_snapshots = []/* snapshots of the consensus at different stages or runoffs */
 var elimination_snapshot = []/* snapshot of the candidates that were eliminated during different stages or runoffs. */
+var vote_transfer_snapshots = []/* snapshot of the number of votes that were transferred to each candidate by an eliminated candidate */
+var vote_donation_snapshots = []
 var predefinied_random_value = 0.53/* a predefined random number used during the tie breaking process during elimination of candidates. This is necessary for preventing consensus inconsistency in results. */
 var consensus_tie = false;
 var tie_breaker = ''
@@ -76,9 +78,23 @@ function eliminate_losers(primary_totals){
  	var selected_loser_pos = select_tie_breaker(result)/* call the tie breaker function with the result array of losers with the least votes */
  	var candidate = result[selected_loser_pos]/* select the canidate obtained from the tie breaker function */
     const their_voters = primary_totals[candidate]/* focus on all their voters */
+    var transfer_snapshot = {}
     their_voters.forEach(voter => {
         votes[voter].splice(0, 1)
-    });/* foreach voter, remove their eliminated candidate's vote and shift to their next preferred option  */
+        var pos = 0
+        var voters_next_pick = votes[voter][pos]
+        while(!candidates.includes(voters_next_pick) && voters_next_pick != null){/* incase the next pick has been eliminated before */
+            pos++/* increment pos and move to the next candidate */
+            voters_next_pick = votes[voter][pos]
+        }
+        if(voters_next_pick != null){/*  */
+            if(transfer_snapshot[voters_next_pick] == null){
+                transfer_snapshot[voters_next_pick] = 0
+            }
+            transfer_snapshot[voters_next_pick] ++
+        }
+    });/* foreach voter, remove their eliminated candidate's vote and shift to their next preferred option, recording their next pick in a snapshot */
+    vote_transfer_snapshots.push(transfer_snapshot)/* record the transfer snapshot */
     const index = candidates.indexOf(candidate)
     if(index != -1){
         candidates.splice(index, 1)
@@ -111,6 +127,7 @@ function calculate_winner(){
 
         Note: if the number of targeted postions is just one (its an instant-runoff election) then teh quota will be equal to excatly 50% of the cast votes plus one.
     */
+   const vote_donation_object = {}
     
     for(var i=0; i<votes.length; i++){/* for each vote */
         var focused_vote_object = votes[i]/* intitialize a variable containing a specific vote in focus. */
@@ -123,7 +140,9 @@ function calculate_winner(){
         
         if(primary_totals[primary_vote] != null){/* if the candidate's voters' array array is initialized in the primary_totals object */
             var focused_totals = primary_totals[primary_vote].length/* initialize a variable containing the number of votes that have been counted. */
+            var my_previous_preference_that_passed_quota = ''/* record the voters preference that may have met quota */
             while(focused_totals == quota || !candidates.includes(primary_vote)){/* execute the below code if the quota has been reached or the preferred candidate of the focused voter has been eliminated */
+                my_previous_preference_that_passed_quota = focused_vote_object[0]/* record my preference before removing it since theyve already hit the quota and their next pick will be used */
                 votes[i].splice(0, 1)/* remove the candidate from their vote */
                 primary_vote = focused_vote_object[0]/* switch to their next preferred choice */
                 if(primary_totals[primary_vote] != null){/* if the next preferred choice is initialized in the primary_totals object */
@@ -131,6 +150,13 @@ function calculate_winner(){
                 }else{
                     focused_totals = 0 /* their next preferred choice is uninitialized, set the focused_totals value to be zero */
                 }
+            }
+            if(my_previous_preference_that_passed_quota != primary_vote && my_previous_preference_that_passed_quota != ''){/* if the primary selection is not the original vote that may have passed quota. */
+                if(vote_donation_object[my_previous_preference_that_passed_quota] == null){
+                    vote_donation_object[my_previous_preference_that_passed_quota] = 0
+                }
+                vote_donation_object[my_previous_preference_that_passed_quota]++
+                /* increment the number of donated votes for my original pick */
             }
         }
     
@@ -148,9 +174,13 @@ function calculate_winner(){
             primary_totals[candidates[e]] = []
             sub_voter_data[candidates[e]] = 0
         }
+        if(vote_donation_object[candidates[e]] == null){
+            vote_donation_object[candidates[e]] = 0 
+        }
     }/* initialize the canidates who got no votes as empty arrays in their primary_totals  and sub_voter_data positions */
 
     consensus_snapshots.push(sub_voter_data)/* record the snapshot of the runoff or stage */
+    vote_donation_snapshots.push(vote_donation_object)
     var qualifier_data = get_qualifiers_if_any(primary_totals, quota)/* obtain the candidates that have reached the quota. */
     selected = selected.concat(qualifier_data)/* add the candidates that have reached the quota to the selected candidates array */
     if(selected.length == target_positions){/* if the selected candidates array equals the targeted positions, the consensus process may be concluded */
@@ -305,7 +335,7 @@ function start_counting(){
     initialize_everything()
     calculate_winner()
 
-    return { current_winners: selected, consensus_snapshots, elimination_snapshot, time: Date.now(), consensus_tie, tie_breaker, valid_vote_count: votes.length, registered_voters }
+    return { current_winners: selected, consensus_snapshots, elimination_snapshot, time: Date.now(), consensus_tie, tie_breaker, valid_vote_count: votes.length, registered_voters, vote_transfer_snapshots, vote_donation_snapshots }
 }
 
 const result = start_counting();
