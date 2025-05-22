@@ -228,10 +228,13 @@ function initialize_everything(){
     const end_time = workerData.static_poll_data.end_time
     const winner_count = workerData.static_poll_data.winner_count
     const randomizer = workerData.static_poll_data.randomizer
+    const change_vote_enabled = workerData.static_poll_data.change_vote_enabled
     const candiate_ids = []
     const registered_voter_registry = {}
     const participated_voter_registry = {}
     const all_votes = []
+    const voter_positions = {}
+    const voter_times = {}
     var registered_voter_count = 0
 
     valid_e5s.forEach(e5 => {
@@ -295,16 +298,18 @@ function initialize_everything(){
 
     /* add the valid votes in each of the e5s to the all_votes value */
     valid_e5s.forEach(e5 => {
-        var e5_votes = poll_votes[e5]/* the votes in the specific e5 in focus */
+        const e5_votes = poll_votes[e5]/* the votes in the specific e5 in focus */
         if(e5_votes.length > 0){/* if votes exist */
             e5_votes.forEach(event => {/* for each vote event */
-                var voter_id = event.returnValues.p2/* sender_acc_id */
-                var vote_string = event.returnValues.p4/* string_data */
-                var vote_time = event.returnValues.p6/* timestamp */
-                if(vote_time > start_time && vote_time < end_time){/* if the vote was cast in the valid period */
+                const voter_id = event.returnValues.p2/* sender_acc_id */
+                const vote_string = event.returnValues.p4/* string_data */
+                const vote_time = event.returnValues.p6/* timestamp */
+                const voter_e5_id = voter_id+e5
+                if(vote_time > start_time && vote_time < end_time && (voter_times[voter_e5_id] == null || voter_times[voter_e5_id] < vote_time)){/* if the vote was cast in the valid period set and their previous recorded vote time is less than the current timestamp in focus */
                     if(is_open_vote == true || registered_voter_registry[e5].includes(voter_id)){/* if the voter is in the retistry or its an open vote */
-                        if(!participated_voter_registry[e5].includes(voter_id)){/* if its the first vote emitted by the voter */
-                            participated_voter_registry[e5].push(voter_id)/* record their id to avoid double voting */
+                        if(!participated_voter_registry[e5].includes(voter_id) || change_vote_enabled == true){/* if its the first vote emitted by the voter or change_vote_enabled setting is enabled */
+                            if(change_vote_enabled == false) participated_voter_registry[e5].push(voter_id);/* record their id to prevent double vote counting if disabled */
+                            const voter_pos = voter_positions[voter_e5_id] == null ? -1 : voter_positions[voter_e5_id]/* get the position of their vote if exists */
                             var voter_array = ''
                             try{
                                 voter_array = JSON.parse(vote_string)['e']/* attempt to parse the value */
@@ -313,7 +318,13 @@ function initialize_everything(){
                             }
                             if(voter_array != '' && voter_array != null && voter_array.length == candiate_ids.length){/* if the value parsed is valid and the array length is valid */
                                 if(allElementsAppearOnce(candiate_ids, voter_array) == true){/* if all the required candidates appear in the vote exactly once */
-                                    all_votes.push(voter_array)/* record the vote in all votes */
+                                    voter_positions[voter_e5_id] = all_votes.length/* record the position of the voters vote array */
+                                    voter_times[voter_e5_id] = vote_time/* record the timestamp of the vote */
+                                    if(voter_pos == -1){/* if this is the voters first vote */
+                                        all_votes.push(voter_array)/* record the vote in all votes */
+                                    }else{/* replace their first vote with the current vote */
+                                        all_votes[voter_pos] = voter_array
+                                    }
                                 }
                             }
                         }
