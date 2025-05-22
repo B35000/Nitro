@@ -28,6 +28,7 @@ var https = require('https');
 const os = require("os");
 const checkDiskSpace = require("check-disk-space").default;
 const mime = require("mime-types");
+const { Worker } = require('worker_threads');
 
 const app = express();
 app.use(cors());
@@ -1163,7 +1164,9 @@ async function fetch_hashes_from_file_storage_or_memory(hashes){
           }else{
             var cold_storage_obj = JSON.parse(data.toString())
             hash_data_objects[hashes[i]] = cold_storage_obj[hashes[i]]
-            file_name_function_memory[file_name] = cold_storage_obj
+            if(get_object_size_in_mbs(file_name_function_memory) < 100){
+              file_name_function_memory[file_name] = cold_storage_obj
+            }
           }
           is_loading_file = false
         });
@@ -1466,8 +1469,9 @@ async function get_e5_chain_time(e5){
 
 
 
-
+/* generates a SHA-256 hash of a specified data string. */
 async function generate_hash(data) {
+  /* try not to change this please. */
   // Encode the data as a Uint8Array
   const encoder = new TextEncoder();
   const encodedData = encoder.encode(data);
@@ -1762,6 +1766,120 @@ function hash_this_data(data){
 
 
 
+/* calculates the results of a poll */
+async function calculate_poll_results(static_poll_data, poll_id, file_objects, poll_e5){
+  try{
+    var verification_data = await verify_poll_data(static_poll_data, file_objects, poll_e5, poll_id)/* call the verification function that verifies that the supplied registered voter data is valid and matches the originally recorded data. */
+    if(!verification_data.is_valid){
+      /* if invalid, return */
+      return { success:false, message: 'Verification failed. Your provided data is invalid.', error: verification_data.message }
+    }
+  }
+  catch(e){
+    return { success:false, message: 'Your provided data may be malformed', error: e }
+  }
+
+  const poll_e5s = static_poll_data.poll_e5s/* the e5s that were selected for the poll */
+  const poll_votes = {}/* initialize an object to hold all the cast votes */
+  var does_poll_contain_votes = false;
+
+  for(var i=0; i<poll_e5s.length; i++){
+    var event_votes = await filter_events(poll_e5s[i], 'e52', 'e4', { p1/* target_id */: 25, p3/* context */:poll_id, p5/* int_data */: parseInt(poll_e5s[i].replace('E','')) }, null)
+    if(event_votes.length > 0){/* if a vote exists */
+      does_poll_contain_votes = true;
+    }
+    poll_votes[poll_e5s[i]] = event_votes/* record the event array under the e5 key */
+  }
+
+  if(!does_poll_contain_votes){/* if no votes have been cast in the poll, return */
+    return { success: false, message: 'Inconclusive consensus. No votes were found.', error: null }
+  }
+  
+  try{
+    var current_results = await runPollVoteCounterWorker({poll_votes, static_poll_data, file_objects})/* run the poll vote counter worker in a background thread */
+    return { success: true, message: '', error: null, results: current_results }
+  }
+  catch(e){
+    return { success: false, message: 'something went wrong during the calculation process', error: e }
+  }
+}
+
+/* verifies that the poll data supplied is valid and matches the original */
+async function verify_poll_data(static_poll_data, file_objects, e5, poll_id){
+  const web3 = new Web3(data[e5]['web3']);/* initialize a web3 object */
+  const e52_contract = new web3.eth.Contract(E52_CONTRACT_ABI, data[e5]['addresses'][1]);
+  var author = await e52_contract.methods.f133(poll_id).call((error, result) => {});/* read the author owner of the poll */
+  if(author == 0) return { is_valid: false, message: 'No author found with provided poll id' };/* if the author value is 0, return */
+
+  var filtered_events = await filter_events(e5, 'e52', 'e4', { p1/* target_id */: poll_id, p2/* sender_acc_id */: author, p3/* context */:42 }, null)/* fetch the hash record events under the specific poll  */
+  
+  if(filtered_events.length == 0){/* if no hash record was made, return */
+    return { is_valid: false, message: 'No hash record made with specific poll object' }
+  }
+  const final_valid_hash = filtered_events[0].returnValues.p4/* string_data */
+  const final_static_poll_data_hash = await generate_hash(JSON.stringify(static_poll_data))
+  if(final_static_poll_data_hash != final_valid_hash){/* require the hash generated from the supplied poll data matches the hash recorded on the blockchain */
+    return { is_valid: false, message: `The original poll data object provided does not generate a hash matching the record found on the blockchain.` }
+  }
+
+  const csv_data = file_objects.csv_files
+  const json_data = file_objects.json_files
+  for(var i=0; i<csv_data.length; i++){/* for each csv file */
+    var csv_file = csv_data[i]
+    var provided_hash = csv_file['data'].data/* the hash provided for the csv file in focus */
+    var data_hash = await generate_hash(JSON.stringify(csv_file['data'].final_obj))
+    if(data_hash != provided_hash){/* if the provided hash doesnt match the hash of the voter retistry provided, return */
+      return { is_valid: false, message: 'The hash generated from the csv final object does not match the hash youve provided.' }
+    }
+    var specific_csv_object = static_poll_data.csv_files.find(e => e['name'] === csv_file['name']);/* fetch the csv file object matching the csv file in focus */
+    if(specific_csv_object == null){/* if none was found, return */
+      return { is_valid: false, message: `The original poll data object provided does not contain a file titled ${csv_file['name']} that youve provided` }
+    }
+    var specific_csv_object_hash = specific_csv_object['data'].data/* the csv file hash from the csv file in the static poll data value */
+    if(data_hash != specific_csv_object_hash){/* if the hash doesnt match the hash provided in the csv file in focus and consequently the hash generated by the voter registry object supplied, return */
+      return { is_valid: false, message: `The hash of the data youve provided under the file ${csv_file['name']} does not match the original file hash that was first posted` }
+    }
+  }
+
+  for(var i=0; i<json_data.length; i++){
+    var json_file = json_data[i]
+    var provided_hash = json_file['data'].data
+    var data_hash = await generate_hash(JSON.stringify(json_file['data'].final_obj))
+    if(data_hash != provided_hash){
+      return { is_valid: false, message: 'The hash generated from the json final object does not match the hash youve provided.' }
+    }
+    var specific_json_object = static_poll_data.json_files.find(e => e['name'] === json_file['name'])
+    if(specific_json_object == null){
+      return { is_valid: false, message: `The original poll data object provided does not contain a file titled ${json_file['name']} that youve provided` }
+    }
+    var specific_json_object_hash = specific_json_object['data'].data
+    if(data_hash != specific_json_object_hash){
+      return { is_valid: false, message: `The hash of the data youve provided under the file ${json_file['name']} does not match the original file hash that was first posted` }
+    }
+  }
+
+  return { is_valid: true, message: '', author }/* if everything is valid, return */
+}
+
+/* initializes background thread in the polls.js file */
+function runPollVoteCounterWorker(data) {
+  return new Promise((resolve, reject) => {
+      const worker = new Worker('./polls.js', {
+          workerData: data
+      });
+      worker.on('message', resolve);
+      worker.on('error', reject);
+      worker.on('exit', (code) => {
+      if (code !== 0)
+          reject(new Error(`Worker stopped with exit code ${code}`));
+      });
+  });
+}
+
+
+
+
+
 
 
 
@@ -1918,10 +2036,6 @@ app.get('/marco', async (req, res) => {
     'storage': await get_maximum_available_disk_space(),
     success:true
   }
-  
-  // if(Date.now() - parseInt(start_up_time) < (5 * 60 * 1000)){
-  //   obj['backup-key'] = data['key']
-  // }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
   res.send(string_obj);
 });//ok
@@ -2634,6 +2748,30 @@ app.get('/bill_payments', async (req, res) => {
       ...
     }
   */
+});
+
+app.post('/count_votes', async (req, res) => {
+  try{
+    const { static_poll_data, poll_id, file_objects, poll_e5 } = req.body;
+    if(!data['e'].includes(poll_e5)){
+      res.send(JSON.stringify({ message: 'The poll e5 value provided is invalid', success:false }));
+      return;
+    }
+    if(isNaN(poll_id)){
+      res.send(JSON.stringify({ message: 'The poll id value provided is invalid', success:false }));
+      return;
+    }
+    var success_obj = await calculate_poll_results(static_poll_data, poll_id, file_objects, poll_e5)
+    if(success_obj.success == true){
+      var obj = {message:`Vote counted successfully.`, results: success_obj.results, success: true}
+      var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      res.send(string_obj);
+    }else{
+      res.send(JSON.stringify({ message: success_obj.message, success:false, error:success_obj.error}));
+    }
+  }catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong.', success:false, error: e }));
+  }
 });
 
 
