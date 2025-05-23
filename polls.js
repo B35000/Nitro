@@ -139,24 +139,26 @@ function calculate_winner(){
         }/* if the primary vote selected above is for a voter who was eliminated in a previous stage, remove that vote and focus on their next preferred candidate. This is done repeatedly until a candidate whose still in the race is found. */
         
         if(primary_totals[primary_vote] != null){/* if the candidate's voters' array array is initialized in the primary_totals object */
-            var focused_totals = primary_totals[primary_vote].length/* initialize a variable containing the number of votes that have been counted. */
-            var my_previous_preference_that_passed_quota = ''/* record the voters preference that may have met quota */
-            while(focused_totals == quota || !candidates.includes(primary_vote)){/* execute the below code if the quota has been reached or the preferred candidate of the focused voter has been eliminated */
-                my_previous_preference_that_passed_quota = focused_vote_object[0]/* record my preference before removing it since theyve already hit the quota and their next pick will be used */
-                votes[i].splice(0, 1)/* remove the candidate from their vote */
-                primary_vote = focused_vote_object[0]/* switch to their next preferred choice */
-                if(primary_totals[primary_vote] != null){/* if the next preferred choice is initialized in the primary_totals object */
-                    focused_totals = primary_totals[primary_vote].length/* set their number of votes in the focused_totals variable */
-                }else{
-                    focused_totals = 0 /* their next preferred choice is uninitialized, set the focused_totals value to be zero */
+            if(target_positions > 1 && candidates.length > 2){/* only donate votes if were targeting more than one position and the number of candidates left in the running are more than two */
+                var focused_totals = primary_totals[primary_vote].length/* initialize a variable containing the number of votes that have been counted. */
+                var my_previous_preference_that_passed_quota = ''/* record the voters preference that may have met quota */
+                while(focused_totals == quota || !candidates.includes(primary_vote)){/* execute the below code if the quota has been reached or the preferred candidate of the focused voter has been eliminated */
+                    my_previous_preference_that_passed_quota = focused_vote_object[0]/* record my preference before removing it since theyve already hit the quota and their next pick will be used */
+                    votes[i].splice(0, 1)/* remove the candidate from their vote */
+                    primary_vote = focused_vote_object[0]/* switch to their next preferred choice */
+                    if(primary_totals[primary_vote] != null){/* if the next preferred choice is initialized in the primary_totals object */
+                        focused_totals = primary_totals[primary_vote].length/* set their number of votes in the focused_totals variable */
+                    }else{
+                        focused_totals = 0 /* their next preferred choice is uninitialized, set the focused_totals value to be zero */
+                    }
                 }
-            }
-            if(my_previous_preference_that_passed_quota != primary_vote && my_previous_preference_that_passed_quota != ''){/* if the primary selection is not the original vote that may have passed quota. */
-                if(vote_donation_object[my_previous_preference_that_passed_quota] == null){
-                    vote_donation_object[my_previous_preference_that_passed_quota] = 0
+                if(my_previous_preference_that_passed_quota != primary_vote && my_previous_preference_that_passed_quota != ''){/* if the primary selection is not the original vote that may have passed quota. */
+                    if(vote_donation_object[my_previous_preference_that_passed_quota] == null){
+                        vote_donation_object[my_previous_preference_that_passed_quota] = 0
+                    }
+                    vote_donation_object[my_previous_preference_that_passed_quota]++
+                    /* increment the number of donated votes for my original pick */
                 }
-                vote_donation_object[my_previous_preference_that_passed_quota]++
-                /* increment the number of donated votes for my original pick */
             }
         }
     
