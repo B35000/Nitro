@@ -1864,7 +1864,7 @@ async function verify_poll_data(static_poll_data, file_objects, e5, poll_id){
 /* initializes background thread in the polls.js file */
 function runPollVoteCounterWorker(data) {
   return new Promise((resolve, reject) => {
-      const worker = new Worker('./polls.js', {
+      const worker = new Worker('./polls.cjs', {
           workerData: data
       });
       worker.on('message', resolve);
