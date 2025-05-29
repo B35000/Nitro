@@ -388,7 +388,7 @@ const return_data = {
     vote_transfer_snapshots, 
     vote_donation_snapshots, 
     logs, 
-    quota, 
+    quota,
     candidates, 
     target_positions,
     tied_candidates,

@@ -1713,7 +1713,7 @@ async function reload_failed_ar_data(cids){
 
 async function get_iTransfer_data(identifier, account, recipient, requested_e5, type){
   /* type 1: iTransfer, type 2: Bill */
-  const used_identifier = hash_this_data(identifier)
+  const used_identifier = hash_my_data(identifier)
   var itransfer_event_params = []
   var transfer_event_params = []
   if(account != ''){
@@ -1756,9 +1756,9 @@ async function get_iTransfer_data(identifier, account, recipient, requested_e5, 
   return iTransfer_objects
 }
 
-function hash_this_data(data){
+function hash_my_data(h_data){
   const web3 = new Web3(data['E25']['web3']);
-  var hash = web3.utils.keccak256(data.toString())
+  var hash = web3.utils.keccak256(h_data.toString())
   return hash
 }
 
@@ -1784,7 +1784,7 @@ async function calculate_poll_results(static_poll_data, poll_id, file_objects, p
   var does_poll_contain_votes = false;
 
   for(var i=0; i<poll_e5s.length; i++){
-    var event_votes = await filter_events(poll_e5s[i], 'e52', 'e4', { p1/* target_id */: 25, p3/* context */:poll_id, p5/* int_data */: parseInt(poll_e5s[i].replace('E','')) }, null)
+    var event_votes = await filter_events(poll_e5s[i], 'E52', 'e4', { p1/* target_id */: 25, p3/* context */:poll_id, p5/* int_data */: parseInt(poll_e5s[i].replace('E','')) }, null)
     if(event_votes.length > 0){/* if a vote exists */
       does_poll_contain_votes = true;
     }
@@ -1811,13 +1811,13 @@ async function verify_poll_data(static_poll_data, file_objects, e5, poll_id){
   var author = await e52_contract.methods.f133(poll_id).call((error, result) => {});/* read the author owner of the poll */
   if(author == 0) return { is_valid: false, message: 'No author found with provided poll id' };/* if the author value is 0, return */
 
-  var filtered_events = await filter_events(e5, 'e52', 'e4', { p1/* target_id */: poll_id, p2/* sender_acc_id */: author, p3/* context */:42 }, null)/* fetch the hash record events under the specific poll  */
+  var filtered_events = await filter_events(e5, 'E52', 'e4', { p1/* target_id */: poll_id, p2/* sender_acc_id */: author, p3/* context */:42 }, null)/* fetch the hash record events under the specific poll  */
   
   if(filtered_events.length == 0){/* if no hash record was made, return */
     return { is_valid: false, message: 'No hash record made with specific poll object' }
   }
   const final_valid_hash = filtered_events[0].returnValues.p4/* string_data */
-  const final_static_poll_data_hash = await generate_hash(JSON.stringify(static_poll_data))
+  const final_static_poll_data_hash = hash_my_data(JSON.stringify(static_poll_data))
   if(final_static_poll_data_hash != final_valid_hash){/* require the hash generated from the supplied poll data matches the hash recorded on the blockchain */
     return { is_valid: false, message: `The original poll data object provided does not generate a hash matching the record found on the blockchain.` }
   }
@@ -1862,10 +1862,10 @@ async function verify_poll_data(static_poll_data, file_objects, e5, poll_id){
 }
 
 /* initializes background thread in the polls.js file */
-function runPollVoteCounterWorker(data) {
+function runPollVoteCounterWorker(poll_data) {
   return new Promise((resolve, reject) => {
       const worker = new Worker('./polls.cjs', {
-          workerData: data
+          workerData: poll_data
       });
       worker.on('message', resolve);
       worker.on('error', reject);
