@@ -61,7 +61,8 @@ var data = {
   'nitro_link_data':{},
   'color_metrics':{},
   'upload_reservations':{},
-  'file_streams':{}
+  'file_streams':{},
+  'free_default_storage':0.0,
 }
 
 const E5_CONTRACT_ABI = [
@@ -810,7 +811,7 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       console.log('invalid back-up key supplied')
       success = false
     }else{
-      data = obj['data']
+      Object.assign(data, obj['data']);
       event_data = obj['event_data']
       hash_data = obj['hash_data']
       object_types = obj['object_types']
@@ -1230,12 +1231,11 @@ async function fetch_accounts_available_storage(signature_data, signature){
   const e5 = data['target_account_e5']
   const web3 = new Web3(data[e5]['web3']);
   try{
-    var current_block_number = Number(await web3.eth.getBlockNumber())
-    var round_down_value = await get_round_down_value(web3, (current_block_number))
-    var round_down_block = round_down(current_block_number, round_down_value)
-    var current_block = await web3.eth.getBlock(round_down_block);
-    var block_hash = current_block.hash
-
+    // var current_block_number = Number(await web3.eth.getBlockNumber())
+    // var round_down_value = await get_round_down_value(web3, (current_block_number))
+    // var round_down_block = round_down(current_block_number, round_down_value)
+    // var current_block = await web3.eth.getBlock(round_down_block);
+    // var block_hash = current_block.hash
     // if(block_hash.toString() !== signature_data.toString()){
     //   console.log('block hash generated and signature received do not match')
     //   return { available_space: 0.0, account: 0 }
@@ -1247,7 +1247,19 @@ async function fetch_accounts_available_storage(signature_data, signature){
     var address_account = accounts[0]
 
     var payment_data = data['storage_data'][address_account.toString()]
-    if(payment_data == null) return { available_space: 0.0, account: address_account };
+    if(payment_data == null){
+      if(data['free_default_storage'] != 0 && address_account != 0){
+        var balance = await web3.eth.getBalance(original_address)
+        if(balance != 0){
+          data['storage_data'][address_account.toString()] = {'files':0, 'acquired_space':parseFloat(data['free_default_storage']), 'utilized_space':0.0};
+
+          payment_data = data['storage_data'][address_account.toString()]
+
+          return { available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: address_account }
+        }
+      }
+      return { available_space: 0.0, account: address_account };
+    } 
     return { available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: address_account }
   }catch(e){
     console.log(e)
@@ -1586,13 +1598,45 @@ function get_list_of_server_files_and_auto_backup(){
   files.forEach(filename => {
     var string_date = filename.replaceAll('.txt', '')
     var date_in_mills = Date.parse(string_date)
-    int_dates.push(date_in_mills)
-    int_string_date_obj[date_in_mills] = filename
+    if(Date.now() - date_in_mills > (1000*60*60*24*7)){
+      //file is old and should be deleted
+      delete_backup_file(filename)
+    }else{
+      int_dates.push(date_in_mills)
+      int_string_date_obj[date_in_mills] = filename
+    }
   });
 
   var largest = Math.max.apply(Math, int_dates);
   var most_recent_backup = int_string_date_obj[largest]
-  const success = restore_backed_up_data_from_storage(most_recent_backup, '', '', false)
+  restore_backed_up_data_from_storage(most_recent_backup, '', '', false)
+}
+
+
+function delete_backup_file(file_name){
+  var dir = `./backup_data/${file_name}`
+  fs.unlink(dir, (err) => {
+    if (err) {
+      console.error('Failed to delete file:', err);
+    } else {
+      console.log('File deleted successfully.');
+    }
+  });
+}
+
+function delete_old_backup_files(){
+  var dir = './backup_data/'
+  var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
+  if(files.length == 0) return
+  //Fri Jan 10 2025 20:57:42 GMT+0000 (Coordinated Universal Time).txt
+  files.forEach(filename => {
+    var string_date = filename.replaceAll('.txt', '')
+    var date_in_mills = Date.parse(string_date)
+    if(Date.now() - date_in_mills > (1000*60*60*24*7)){
+      //file is old and should be deleted
+      delete_backup_file(filename)
+    }
+  });
 }
 
 
@@ -2034,6 +2078,7 @@ app.get('/marco', async (req, res) => {
     'unlimited_basic_storage':data['unlimited_basic_storage'],
     'color_metrics':data['color_metrics'],
     'storage': await get_maximum_available_disk_space(),
+    'free_default_storage':data['free_default_storage'],
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -2343,7 +2388,7 @@ app.post('/boot', (req, res) => {
 
 /* admin endpoint for booting the node's storage services for paid users */
 app.post('/boot_storage', async (req, res) => {
-  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage } = req.body;
+  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage } = req.body;
   // var available_space = await get_maximum_available_disk_space()
   
   if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account) || unlimited_basic_storage == null){
@@ -2374,6 +2419,9 @@ app.post('/boot_storage', async (req, res) => {
     data['target_storage_purchase_recipient_account'] = target_storage_purchase_recipient_account
     data['storage_boot_time'] = await get_e5_chain_time(target_account_e5)
     data['unlimited_basic_storage'] = unlimited_basic_storage
+    if(free_default_storage != null && !isNaN(free_default_storage)){
+      data['free_default_storage'] = free_default_storage
+    }
 
     res.send(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs, payments recipient account ${target_storage_purchase_recipient_account} of E5 ${target_account_e5}`, success:true }));
   }
@@ -2391,7 +2439,13 @@ app.post('/reconfigure_storage', async (req, res) => {
     res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
     return;
   }
-  else if(/* key !== 'file_data_capacity' && */ key !== 'max_buyable_capacity' && key !== 'price_per_megabyte' && key !== 'target_account_e5' && key !== 'target_storage_purchase_recipient_account' && key !== 'unlimited_basic_storage'){
+  else if(
+    key !== 'max_buyable_capacity' && 
+    key !== 'price_per_megabyte' && 
+    key !== 'target_storage_purchase_recipient_account' && 
+    key !== 'unlimited_basic_storage' && 
+    key !== 'free_default_storage'
+  ){
     res.send(JSON.stringify({ message: 'Invalid modify targets', success:false }));
     return;
   }
@@ -2401,9 +2455,6 @@ app.post('/reconfigure_storage', async (req, res) => {
   }
   else{
     data[key] = value
-    if(key == 'target_storage_purchase_recipient_account'){
-      data['target_account_e5'] = e5
-    }
     res.send(JSON.stringify({ message: `node reconfigured with the specified parameter '${key}' to the speicified value`, success:true }));
   }
 });//ok -----
@@ -2772,7 +2823,7 @@ app.post('/count_votes', async (req, res) => {
   }catch(e){
     res.send(JSON.stringify({ message: 'Something went wrong.', success:false, error: e }));
   }
-});
+});//ok -----
 
 
 
@@ -2852,6 +2903,7 @@ setInterval(store_back_up_of_data, 2*60*60*1000);
 setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
 setInterval(update_storage_payment_information, 2*60*1000);
 setInterval(backup_event_data_if_large_enough, 2*60*1000)
+setInterval(delete_old_backup_files, 2*60*60*1000)
 
 
 
