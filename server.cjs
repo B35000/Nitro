@@ -33,6 +33,7 @@ const { Worker } = require('worker_threads');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "100gb" }));
+const version = '1.0'
 
 
 /* data object containing all the E5 data. */
@@ -2079,6 +2080,7 @@ app.get('/marco', async (req, res) => {
     'color_metrics':data['color_metrics'],
     'storage': await get_maximum_available_disk_space(),
     'free_default_storage':data['free_default_storage'],
+    'version':version,
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
