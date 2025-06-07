@@ -1451,8 +1451,12 @@ async function store_files_in_storage(binaries, file_types, file_datas){
 
 /* returns the mimetype for a specified set of file extensions */
 function get_final_content_type(content_type){
-  // var obj = {'mp4':'video/mp4', 'mp3':'audio/mpeg', 'jpeg':'image/jpeg', 'jpg':'image/jpeg', 'png':'image/png', 'pdf':'application/pdf', 'zip':'application/zip'}
-  // return obj[content_type]
+  if(content_type == 'lrc'){
+    return 'text/plain'
+  }
+  else if(content_type == 'vtt'){
+    return 'text/vtt'
+  }
   return mime.lookup(content_type)
 }
 
@@ -1533,12 +1537,9 @@ async function store_objects_in_node(file_datas){
 
 function is_all_file_type_ok(file_types){
   var ok = true
-  // var accepted = ['mp4', 'mp3', 'png','jpeg','jpg', 'pdf','zip']
+  var accepted = ['vtt', 'lrc']
   file_types.forEach(file_type => {
-    // if(!accepted.includes(file_type)){
-    //   ok = false
-    // }
-    if(mime.lookup(file_type) == null || mime.lookup(file_type) == false){
+    if((mime.lookup(file_type) == null || mime.lookup(file_type) == false) && !accepted.includes(file_type)){
       ok = false
     }
   });
