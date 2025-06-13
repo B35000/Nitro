@@ -19,7 +19,6 @@
 require('dotenv').config();
 const { Web3 } = require('web3');
 const express = require('express');
-var CryptoJS = require("crypto-js");
 const crypto = require('crypto');
 const cors = require('cors');
 const fs = require("fs");
@@ -1081,8 +1080,18 @@ async function filter_events(requested_e5, requested_contract, requested_event_i
   const check_event = (eventt) => {
     var accepted = true
     for (const key in filter) {
-      if(filter[key] instanceof Array){
-        if(!filter[key].includes(eventt['returnValues'][key])){
+      var is_array = false
+      try{
+        if(typeof filter[key] === 'string'){
+          is_array = false
+        }else{
+          var clone = filter[key].slice()
+          clone.concat(clone)
+          is_array = true
+        }
+      }catch(e){}
+      if(is_array == true){
+        if(!filter[key].includes(eventt['returnValues'][key]) && eventt['returnValues'][key] != filter[key]){
           accepted = false
         }
       }else{
@@ -1756,7 +1765,7 @@ async function reload_failed_ar_data(cids){
 
 
 
-
+/* returns all the iTransfer data given a specified identifier */
 async function get_iTransfer_data(identifier, account, recipient, requested_e5, type){
   /* type 1: iTransfer, type 2: Bill */
   const used_identifier = hash_my_data(identifier)
@@ -1802,6 +1811,7 @@ async function get_iTransfer_data(identifier, account, recipient, requested_e5, 
   return iTransfer_objects
 }
 
+/* hashes data using keccak256 formula in web3 */
 function hash_my_data(h_data){
   const web3 = new Web3(data['E25']['web3']);
   var hash = web3.utils.keccak256(h_data.toString())
@@ -1920,6 +1930,21 @@ function runPollVoteCounterWorker(poll_data) {
           reject(new Error(`Worker stopped with exit code ${code}`));
       });
   });
+}
+
+
+
+
+/* returns false if basic data being uploaded doesnt exceed 0.5 mbs */
+function is_basic_data_upload_size_valid(string_array){
+  var is_valid = true;
+  for(var i=0; i<string_array.length; i++){
+    var object_string_length = lengthInUtf8Bytes(string_array[i])
+    if(object_string_length > (1024 * 530)){
+      is_valid = false
+    }
+  }
+  return is_valid
 }
 
 
@@ -2691,6 +2716,10 @@ app.post('/store_data', async (req, res) => {
     res.send(JSON.stringify({ message: 'Storage on this node is disabeld', success:false }));
     return;
   }
+  else if(!is_basic_data_upload_size_valid(file_datas)){
+    res.send(JSON.stringify({ message: 'One of the data objects has an invalid size', success:false }));
+    return;
+  }
   else{
     var success = await store_objects_in_node(file_datas);
     if(success == null){
@@ -2701,6 +2730,7 @@ app.post('/store_data', async (req, res) => {
   }
 });//ok -----
 
+/*  */
 app.get('/streams', (req, res) => {
   const { files } = req.body;
   if(files == null || files.length == 0){
@@ -2720,6 +2750,7 @@ app.get('/streams', (req, res) => {
   res.send(JSON.stringify({ message: 'Search successful.', streams: return_streams_data, success:true }));
 });
 
+/* endpoint for fetching itransfers with a specified identifier */
 app.get('/iTransfers', async (req, res) => {
   const { identifier, account, recipient, e5 } = req.body;
   if(identifier == null || identifier == ''){
@@ -2760,6 +2791,7 @@ app.get('/iTransfers', async (req, res) => {
   */
 });
 
+/* endpoint for fetching bill payment data with a specified identifier */
 app.get('/bill_payments', async (req, res) => {
   //identifier, account, recipient, requested_e5, type
   const { identifier, account, recipient, e5 } = req.body;
@@ -2804,6 +2836,7 @@ app.get('/bill_payments', async (req, res) => {
   */
 });
 
+/* endpoint for calculating and tallying consensus info for a specified poll */
 app.post('/count_votes', async (req, res) => {
   try{
     const { static_poll_data, poll_id, file_objects, poll_e5 } = req.body;
