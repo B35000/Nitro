@@ -63,6 +63,7 @@ var data = {
   'upload_reservations':{},
   'file_streams':{},
   'free_default_storage':0.0,
+  'cold_storage_stream_data_files':{'backup_array':[],},
 }
 
 const E5_CONTRACT_ABI = [
@@ -135,6 +136,9 @@ const SECRET = process.env.SECRET_KEY;
 const PRIVATE_KEY_RESOURCE = process.env.PRIVATE_KEY_RESOURCE
 const CERTIFICATE_RESOURCE = process.env.CERTIFICATE_RESOURCE
 const HTTPS_PORT = process.env.HTTPS_PORT
+var file_data_steams = {}
+var ipAccessTimestamps = {}
+const RATE_LIMIT_WINDOW = 5*60*60*1000;
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -762,7 +766,7 @@ function update_staged_hash_data(){
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
   var obj = {'data':data, 'event_data':event_data, 'hash_data':hash_data, 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files, 'pointer_data':pointer_data, 
-  'hash_count': hash_count, 'load_count': load_count, 'app_key': app_key, 'staged_ecids':staged_ecids, 'beacon_chain_link': beacon_chain_link, 'failed_ecids':failed_ecids}
+  'hash_count': hash_count, 'load_count': load_count, 'app_key': app_key, 'staged_ecids':staged_ecids, 'beacon_chain_link': beacon_chain_link, 'failed_ecids':failed_ecids, 'file_data_steams':file_data_steams}
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
   var backup_name = ''
@@ -837,6 +841,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       }
       if(obj['failed_ecids'] != null){
         failed_ecids = obj['failed_ecids']
+      }
+      if(obj['file_data_steams'] != null){
+        file_data_steams = obj['file_data_steams']
       }
       
       console.log('successfully loaded back-up data')
@@ -1947,6 +1954,306 @@ function is_basic_data_upload_size_valid(string_array){
   return is_valid
 }
 
+async function calculate_income_stream_data_points(subscription_object, steps, filter_value){
+  const subscription_e5 = subscription_object['e5']
+  const subscription_id = subscription_object['id']
+  const events = await filter_events(subscription_e5, 'F5', 'e1', { p1/* target_id */: subscription_id}, null)
+  if(events.length == 0){
+    return { data: {}, success:false, reason: 'No payment events Found' }
+  }
+  const all_modification_events = await filter_events(subscription_e5, 'F5', 'e5', { p1/* target_id */: subscription_id}, null)
+
+  const price_data_snapshots = get_price_data_snapshots(all_modification_events, object)
+  var data = []
+  var total_payment_data = {}
+  const starting_time = Math.floor(Date.now()/1000) - filter_value
+
+  try{
+    const payment_history = {}
+    for(var j=0; j<events.length; j++){
+        const time_units_bought = events[j].returnValues.p3/* time_units_paid_for */
+        const paying_account = events[j].returnValues.p2/* sender_acc_id */
+        const paying_time = parseInt(events[j].returnValues.p5/* timestamp */)
+        if(payment_history[paying_account] == null){
+            payment_history[paying_account] = []
+        }
+        const price_snapshot = price_data_snapshots.find(e => (paying_time > e['from'] && paying_time < e['to']))
+        if(price_snapshot != null){
+            const time_unit = price_snapshot['time_unit']
+            const prices_used = price_snapshot['prices']
+            if(payment_history[paying_account].length == 0){
+                const to = bigInt(paying_time).plus((bigInt(time_units_bought).multiply(bigInt(time_unit))))
+                payment_history[paying_account].push({'from':paying_time, 'to':to, 'prices':prices_used})
+            }else{
+                const last_payment_item = payment_history[paying_account][payment_history[paying_account].length -1]
+                if(last_payment_item['to'] > paying_time){
+                    //account added to ther existing subscription before expiry
+                    const to = bigInt(last_payment_item['to']).plus((bigInt(time_units_bought).multiply(bigInt(time_unit))))
+                    
+                    payment_history[paying_account].push({'from':paying_time, 'to':to, 'prices':prices_used})
+                }else{
+                    // account returned to pay subscription after expiry
+                    const to = bigInt(paying_time).plus((bigInt(time_units_bought).multiply(bigInt(time_unit))))
+                    payment_history[paying_account].push({'from':paying_time, 'to':to, 'prices':prices_used})
+                }
+            }
+        }
+    }
+    const time_steps = []
+    const steps_to_use = Math.floor((Math.floor(Date.now()/1000) - starting_time) / steps)
+    for(var l=0; l<steps_to_use; l++){
+        var start = time_steps.length == 0 ? starting_time + (steps * l) : time_steps[time_steps.length -1]['end_time']+1
+        var end = start + (steps-1)
+        time_steps.push({'start_time':start, 'end_time':end})
+    }
+    // console.log('income_stream_data_points', 'time_steps', time_steps.length)
+    for(var i=0; i<time_steps.length; i++){
+        const focused_step = time_steps[i]
+        const valid_user_keys = Object.entries(payment_history).filter(([key, value]) => {
+                var result = value.filter(function (payment_object) {
+                    return (
+                        bigInt(focused_step['start_time']).greaterOrEquals(bigInt(payment_object['from'])) && bigInt(focused_step['start_time']).lesserOrEquals(bigInt(payment_object['to']))
+                    )
+                })
+                return result.length > 0
+            }
+        );
+        const price_snapshot = price_data_snapshots.find(e => ( focused_step['start_time'] >= e['from'] && focused_step['end_time'] <= e['to'] ) )
+        
+        if(price_snapshot != null){
+            // const number_count = Object.keys(valid_user_keys).length
+            const number_count = valid_user_keys.length
+            data.push({'count':number_count, 'price_data':price_snapshot})
+        }
+    }
+  }catch(e){
+    return { data: {}, success:false, reason: e.toString() }
+  }
+
+  for(var w=0; w<data.length; w++){
+      const focused_data_point = data[w]
+      const focused_time_unit = focused_data_point['price_data']['time_unit']
+      const focused_payment_exchange_items = focused_data_point['price_data']['prices']
+      const paying_accounts = focused_data_point['count']
+      const time_share = steps / focused_time_unit
+      if(total_payment_data == null){
+          focused_payment_exchange_items.forEach(price_object => {
+              total_payment_data[price_object['id']] = bigInt(0)
+          });
+      }
+      focused_payment_exchange_items.forEach(price_object => {
+          var total_amount_for_period = Math.floor((bigInt(paying_accounts).multiply(price_object['amount'])) * time_share)
+          total_payment_data[price_object['id']] = bigInt(total_payment_data[price_object['id']]).plus(bigInt(total_amount_for_period))
+      });
+  }
+
+
+  var xVal = 1, yVal = 0;
+  var dps = [];
+  var noOfDps = 100;
+  var factor = Math.round(data.length/noOfDps) +1;
+  var largest_number = get_total_supply_interval_figure(data)
+  for(var v = 0; v < noOfDps; v++) {
+    var pos = factor * xVal
+    const focused_data_point = data[pos]
+    yVal = 0
+    if(focused_data_point != null && focused_data_point['count'] != 0 && largest_number != 0){
+        yVal = parseInt(bigInt(focused_data_point['count']).multiply(100).divide(largest_number))
+    }
+    
+    if(yVal != null && focused_data_point != null){
+      if(v == 25 || v == 76){
+          const price_data =  focused_data_point['price_data']['prices']
+          var selected_price_item = price_data[0]
+          for(var p = 0; p < price_data.length; p++) {
+              const price_item = price_data[p]
+              if(price_item['id'] == 3 || price_item['id'] == 5){
+                  if(selected_price_item['id'] != 3 && selected_price_item['id'] != 5){
+                      selected_price_item = price_item
+                  }
+              }
+          }
+          const final_price_amount = bigInt(selected_price_item['amount']).multiply(focused_data_point['count'])
+          const token_name = this.get_all_sorted_objects_mappings(this.props.app_state.token_directory)[selected_price_item['id']]
+
+          dps.push({x: xVal,y: (yVal+10), indexLabel: ""+this.format_account_balance_figure(final_price_amount)+` ${token_name}`});//
+      }else{
+          dps.push({x: xVal, y: (yVal+10)});//
+      }
+      xVal++;
+    }
+  }
+
+  return { data: {dps, total_payment_data}, success:true }
+}
+
+function get_total_supply_interval_figure(valid_data){
+  var largest = 0
+  valid_data.forEach(valid_data_item => {
+      if(valid_data_item['count'] > largest){
+          largest = valid_data_item['count']
+      }
+  });
+  return largest
+}
+
+function get_price_data_snapshots(modification_events, object){
+  const original_price_data = object['ipfs'].price_data
+  const original_time_unit = object['ipfs'].time_unit == 0 ? 60*53 : object['ipfs'].time_unit
+  const original_time = parseInt(object['event'].returnValues.p4/* timestamp */)
+  const now = Math.floor(Date.now()/1000)
+  const snapshots = [{'from':original_time, 'prices':original_price_data, 'time_unit':original_time_unit, 'to':now}]
+
+  modification_events.forEach(event => {
+      const config_item_array = event.returnValues.p3/* config_item_array */
+      const config_item_pos = event.returnValues.p4/* config_item_pos */
+      const new_config_item = event.returnValues.p5/* new_config_item */
+      const timestamp = parseInt(event.returnValues.p6/* timestamp */)
+
+      const last_configuration = structuredClone(snapshots[snapshots.length -1])
+      if(config_item_array == 3/* amounts_for_buying */){
+          last_configuration['prices'][config_item_pos]['amount'] = new_config_item
+          last_configuration['from'] = timestamp
+          snapshots[snapshots.length -1]['to'] = timestamp - 1
+          snapshots.push(last_configuration)
+      }
+      else if(config_item_array == 1 && config_item_pos == 5/* <5>time_unit */){
+          last_configuration['time_unit'] = new_config_item == 0 ? 60*53 : new_config_item
+          last_configuration['from'] = timestamp
+          snapshots[snapshots.length -1]['to'] = timestamp - 1
+          snapshots.push(last_configuration)
+      }
+  });
+
+  return snapshots
+}
+
+
+
+
+
+function record_stream_event(file, chunk_length){
+  const date = new Date();
+  const month = date.getMonth() + 1;
+  const year = date.getFullYear(); 
+  const timestamp_id = year.toString()+':'+month.toString()
+
+  if(file_data_steams[timestamp_id] == null){
+    file_data_steams[timestamp_id] = {}
+  }
+
+  if(file_data_steams[timestamp_id][file] == null){
+    file_data_steams[timestamp_id][file] = 0
+  }
+
+  file_data_steams[timestamp_id][file] += chunk_length
+}
+
+function record_view_event(file){
+  if(data['file_streams'][file] == null){
+    data['file_streams'][file] = 0
+  }
+  data['file_streams'][file]++
+}
+
+function backup_steam_count_data_if_large_enough(){
+  var stream_keys = Object.keys(file_data_steams)
+  var keys_to_backup = []
+  const date = new Date();
+  const month = date.getMonth() + 1;
+  const year = date.getFullYear();
+  const timestamp_id = year.toString()+':'+month.toString()
+  stream_keys.forEach(key => {
+    if(key != timestamp_id){
+      keys_to_backup.push(key)
+    }
+  });
+
+  if(keys_to_backup.length > 0){
+    //stash backup keys
+    const now = Date.now()
+    var backup_obj = {}
+    keys_to_backup.forEach(key => {
+      obj[key] = file_data_steams[key]
+    });
+    const write_data = JSON.stringify(backup_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    var dir = './stream_data'
+    if (!fs.existsSync(dir)){
+      fs.mkdirSync(dir);
+    }
+    fs.writeFile(`stream_data/${now}.json`, write_data, (error) => {
+      if (error) {
+        console.log(error)
+      }else{
+        keys_to_backup.forEach(key => {
+          data['cold_storage_stream_data_files'][key] = now
+          delete file_data_steams[key]
+        });
+        data['cold_storage_stream_data_files']['backup_array'].push(now)
+      }
+    });
+  }
+}
+
+async function get_data_streams_for_files(files){
+  var active_time_keys = Object.keys(file_data_steams)
+  var cold_storage_time_keys = data['cold_storage_stream_data_files']['backup_array']
+  var all_keys = active_time_keys.concat(cold_storage_time_keys)
+  var file_data_objects = {}
+  var file_name_function_memory = {}
+  var is_loading_file = false
+
+  for(var i=0; i<files.length; i++){
+    var focused_file = files[i]
+    if(file_data_objects[focused_file] == null){
+      file_data_objects[focused_file] = {}
+    }
+    for(var j=0; j<all_keys.length; j++){
+      var focused_time_key = all_keys[j]
+      if(file_name_function_memory[focused_time_key] != null){
+        file_data_objects[focused_file][focused_time_key] = file_name_function_memory[focused_time_key][focused_file] || 0
+      }else{
+        var cold_storage_file_name = data['cold_storage_stream_data_files'][focused_time_key]
+        is_loading_file = true
+        fs.readFile(`stream_data/${cold_storage_file_name}.json`, (error, data) => {
+          if (error) {
+            console.error(error);
+          }else{
+            var cold_storage_obj = JSON.parse(data.toString())
+            var cold_storage_object_keys = Object.keys(cold_storage_obj)
+            file_data_objects[focused_file][focused_time_key] = cold_storage_object_keys[focused_time_key][focused_file] || 0
+
+            cold_storage_object_keys.forEach(key => {
+              if(get_object_size_in_mbs(file_name_function_memory) < 100){
+                if(file_name_function_memory[key] != null){
+                  file_name_function_memory[key] = cold_storage_object_keys[key]
+                }
+              }
+            });
+          }
+          is_loading_file = false
+        });
+        while (is_loading_file == true) {
+          if (is_loading_file == false) break
+          await new Promise(resolve => setTimeout(resolve, 700))
+        }
+      }
+    }
+  }
+
+  return file_data_objects
+}
+
+function reset_ip_access_timestamp_object(){
+  var keys = Object.keys(ipAccessTimestamps)
+  const now = Date.now();
+  keys.forEach(key => {
+    var lastAccess = ipAccessTimestamps[key]
+    if(now - lastAccess < RATE_LIMIT_WINDOW){
+      delete ipAccessTimestamps[key]
+    }
+  });
+}
 
 
 
@@ -2659,14 +2966,24 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
     return;
   }
   else{
+    const ip = req.ip;
+    const now = Date.now();
+    var should_count_view_and_stream = true
+    if(ip != null){
+      const lastAccess = ipAccessTimestamps[ip+file] || 0;
+      if(now - lastAccess < RATE_LIMIT_WINDOW){
+        should_count_view_and_stream = false
+      }else{
+        ipAccessTimestamps[ip+file] = now;
+      }
+    }
+    
+
     const filePath = `storage_data/${file}`
     const stats = fs.statSync(filePath);
     const fileSize = stats.size;
     const range = req.headers.range;
-    if(data['file_streams'][file] == null){
-      data['file_streams'][file] = 0
-    }
-    data['file_streams'][file]++
+    
     if (range) {
       const [start, end] = range
         .replace(/bytes=/, '')
@@ -2679,6 +2996,21 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
       const stream = fs.createReadStream(filePath, {
         start: chunkStart,
         end: chunkEnd,
+      });
+
+      var has_view_been_recorded = false
+      let bytesSent = 0;
+
+      stream.on('data', (chunk) => {
+        if(should_count_view_and_stream == true){
+          record_stream_event(file, chunk.length)
+          bytesSent += chunk.length;
+          const streamed_proportion = bytesSent / fileSize
+          if(!has_view_been_recorded && streamed_proportion >= 0.35){
+            has_view_been_recorded = true
+            record_view_event(file)
+          }
+        }
       });
 
       res.writeHead(206, {
@@ -2696,6 +3028,10 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
         'Content-Type': final_content_type,
       });
       fs.createReadStream(filePath).pipe(res);
+      if(should_count_view_and_stream == true){
+        record_stream_event(file, fileSize)
+        record_view_event(file)
+      }
     }
 
   }
@@ -2730,7 +3066,7 @@ app.post('/store_data', async (req, res) => {
   }
 });//ok -----
 
-/*  */
+/* returns the view count for a given file */
 app.get('/streams', (req, res) => {
   const { files } = req.body;
   if(files == null || files.length == 0){
@@ -2772,7 +3108,9 @@ app.get('/iTransfers', async (req, res) => {
   /* 1: iTransfer, 2: Bill */
   var itransfer_data = await get_iTransfer_data(identifier, used_account, recipient, used_e5, 1/* iTransfer */)
 
-  res.send(JSON.stringify({ message: 'Search successful.', payment_data: itransfer_data, success:true }));
+  var return_obj = { message: 'Search successful.', payment_data: itransfer_data, success:true }
+  var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  res.send(string_obj);
   /* 
     {
       21_123_456 (block_number):{
@@ -2817,7 +3155,9 @@ app.get('/bill_payments', async (req, res) => {
   /* 1: iTransfer, 2: Bill */
   var itransfer_data = await get_iTransfer_data(identifier, account, recipient, used_e5, 2/* Bill */)
 
-  res.send(JSON.stringify({ message: 'Search successful.', payment_data: itransfer_data, success:true }));
+  var return_obj = { message: 'Search successful.', payment_data: itransfer_data, success:true }
+  var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  res.send(string_obj);
   /* 
     {
       21_123_456 (block_number):{
@@ -2860,6 +3200,48 @@ app.post('/count_votes', async (req, res) => {
     res.send(JSON.stringify({ message: 'Something went wrong.', success:false, error: e }));
   }
 });//ok -----
+
+/* endpoint for calculating income stream datapoints for subscription payments */
+app.post('/subscription_income_stream_datapoints', async (req, res) => {
+  //identifier, account, recipient, requested_e5, type
+  const { subscription_object, steps, filter_value } = req.body;
+  if(subscription_object == null || steps == null || filter_value == null || isNaN(steps) || isNaN(filter_value)){
+    res.send(JSON.stringify({ message: 'Invalid arg strings', success:false }));
+    return;
+  }
+  
+  try{
+    var data = await calculate_income_stream_data_points(subscription_object, steps, filter_value)
+    if(data.success == false){
+      res.send(JSON.stringify({ message: 'Something went wrong', error: data.reason, success:false }));
+      return;
+    }else{
+      var return_obj = { message: 'Calculation successful.', data: data.data, success:true }
+      var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      res.send(string_obj);
+    }
+  }catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    return;
+  }
+});//ok -----
+
+/* returns the data streams for a given file */
+app.get('/data_streams', async (req, res) => {
+  const { files } = req.body;
+  if(files == null || files.length == 0){
+    res.send(JSON.stringify({ message: 'Please speficy an array of file names.', success:false }));
+    return;
+  }
+
+  try{
+    const return_streams_data = await get_data_streams_for_files(files)
+    res.send(JSON.stringify({ message: 'Search successful.', streams: return_streams_data, success:true }));
+  }catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    return;
+  }
+});
 
 
 
@@ -2940,6 +3322,8 @@ setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
 setInterval(update_storage_payment_information, 2*60*1000);
 setInterval(backup_event_data_if_large_enough, 2*60*1000)
 setInterval(delete_old_backup_files, 2*60*60*1000)
+setInterval(backup_steam_count_data_if_large_enough, 31*24*60*60*1000)
+setInterval(reset_ip_access_timestamp_object, 5*60*60*1000)
 
 
 
