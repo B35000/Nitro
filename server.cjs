@@ -2244,6 +2244,18 @@ async function get_data_streams_for_files(files){
   return file_data_objects
 }
 
+function get_file_views(files){
+  const return_views_data = {}
+  files.forEach(file => {
+    var stream_count = data['file_streams'][file]
+    if(stream_count == null){
+      stream_count = 0
+    }
+    return_views_data[file] = stream_count
+  });
+  return return_views_data
+}
+
 function reset_ip_access_timestamp_object(){
   var keys = Object.keys(ipAccessTimestamps)
   const now = Date.now();
@@ -3067,23 +3079,23 @@ app.post('/store_data', async (req, res) => {
 });//ok -----
 
 /* returns the view count for a given file */
-app.get('/streams', (req, res) => {
+app.post('/streams', async (req, res) => {
   const { files } = req.body;
   if(files == null || files.length == 0){
     res.send(JSON.stringify({ message: 'Please speficy an array of file names.', success:false }));
     return;
   }
 
-  const return_streams_data = {}
-  files.forEach(file => {
-    var stream_count = data['file_streams'][file]
-    if(stream_count == null){
-      stream_count = 0
-    }
-    return_streams_data[file] = stream_count
-  });
-
-  res.send(JSON.stringify({ message: 'Search successful.', streams: return_streams_data, success:true }));
+  try{
+    const return_views_data = get_file_views(files)
+    const return_streams_data = await get_data_streams_for_files(files)
+    
+    res.send(JSON.stringify({ message: 'Search successful.', views:return_views_data , streams: return_streams_data, success:true }));
+  }
+  catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    return;
+  }
 });
 
 /* endpoint for fetching itransfers with a specified identifier */
@@ -3225,23 +3237,6 @@ app.post('/subscription_income_stream_datapoints', async (req, res) => {
     return;
   }
 });//ok -----
-
-/* returns the data streams for a given file */
-app.get('/data_streams', async (req, res) => {
-  const { files } = req.body;
-  if(files == null || files.length == 0){
-    res.send(JSON.stringify({ message: 'Please speficy an array of file names.', success:false }));
-    return;
-  }
-
-  try{
-    const return_streams_data = await get_data_streams_for_files(files)
-    res.send(JSON.stringify({ message: 'Search successful.', streams: return_streams_data, success:true }));
-  }catch(e){
-    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
-    return;
-  }
-});
 
 
 
