@@ -138,7 +138,7 @@ const CERTIFICATE_RESOURCE = process.env.CERTIFICATE_RESOURCE
 const HTTPS_PORT = process.env.HTTPS_PORT
 var file_data_steams = {}
 var ipAccessTimestamps = {}
-const RATE_LIMIT_WINDOW = 5*60*60*1000;
+const RATE_LIMIT_WINDOW = 5*60*60*1000;/* 5hrs */
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -2143,10 +2143,10 @@ function record_stream_event(file, chunk_length){
   }
 
   if(file_data_steams[timestamp_id][file] == null){
-    file_data_steams[timestamp_id][file] = 0
+    file_data_steams[timestamp_id][file] = bigInt(0)
   }
 
-  file_data_steams[timestamp_id][file] += chunk_length
+  file_data_steams[timestamp_id][file] = bigInt(file_data_steams[timestamp_id][file]).plus(bigInt(chunk_length))
 }
 
 function record_view_event(file){
@@ -2156,7 +2156,7 @@ function record_view_event(file){
   data['file_streams'][file]++
 }
 
-function backup_steam_count_data_if_large_enough(){
+function backup_stream_count_data_if_large_enough(){
   var stream_keys = Object.keys(file_data_steams)
   var keys_to_backup = []
   const date = new Date();
@@ -2211,7 +2211,7 @@ async function get_data_streams_for_files(files){
     for(var j=0; j<all_keys.length; j++){
       var focused_time_key = all_keys[j]
       if(file_name_function_memory[focused_time_key] != null){
-        file_data_objects[focused_file][focused_time_key] = file_name_function_memory[focused_time_key][focused_file] || 0
+        file_data_objects[focused_file][focused_time_key] = file_name_function_memory[focused_time_key][focused_file] || bigInt(0)
       }else{
         var cold_storage_file_name = data['cold_storage_stream_data_files'][focused_time_key]
         is_loading_file = true
@@ -2221,7 +2221,7 @@ async function get_data_streams_for_files(files){
           }else{
             var cold_storage_obj = JSON.parse(data.toString())
             var cold_storage_object_keys = Object.keys(cold_storage_obj)
-            file_data_objects[focused_file][focused_time_key] = cold_storage_object_keys[focused_time_key][focused_file] || 0
+            file_data_objects[focused_file][focused_time_key] = cold_storage_object_keys[focused_time_key][focused_file] || bigInt(0)
 
             cold_storage_object_keys.forEach(key => {
               if(get_object_size_in_mbs(file_name_function_memory) < 100){
@@ -2260,12 +2260,208 @@ function reset_ip_access_timestamp_object(){
   var keys = Object.keys(ipAccessTimestamps)
   const now = Date.now();
   keys.forEach(key => {
-    var lastAccess = ipAccessTimestamps[key]
+    var lastAccess = ipAccessTimestamps[key]['time']
     if(now - lastAccess < RATE_LIMIT_WINDOW){
       delete ipAccessTimestamps[key]
     }
   });
 }
+
+
+
+
+
+async function calculate_income_stream_for_multiple_subscriptions(subscription_objects, steps, filter_value, file_view_data){
+  const subscription_object_keys = Object.keys(subscription_objects)
+  const total_payment_data_for_subscriptions = {}
+  const now = new Date();
+  const firstOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+  const last_month_date = new Date(firstOfThisMonth.getTime() - 1);
+  const starting_time = Math.floor(last_month_date.getTime()/1000) - filter_value
+  const starting_time_date = new Date(starting_time*1000);
+
+  for(var i=0; i<subscription_object_keys.length; i++){
+    const subscription_object = subscription_objects[subscription_object_keys[i]]
+    const subscription_e5 = subscription_object['e5']
+    const subscription_id = subscription_object['id']
+    const events = await filter_events(subscription_e5, 'F5', 'e1', { p1/* target_id */: subscription_id}, null)
+    if(events.length > 0){
+      const all_modification_events = await filter_events(subscription_e5, 'F5', 'e5', { p1/* target_id */: subscription_id}, null)
+
+      const price_data_snapshots = get_price_data_snapshots(all_modification_events, object)
+      var data = []
+      var total_payment_data = {}
+
+      try{
+        const payment_history = {}
+        for(var j=0; j<events.length; j++){
+            const time_units_bought = events[j].returnValues.p3/* time_units_paid_for */
+            const paying_account = events[j].returnValues.p2/* sender_acc_id */
+            const paying_time = parseInt(events[j].returnValues.p5/* timestamp */)
+            if(payment_history[paying_account] == null){
+                payment_history[paying_account] = []
+            }
+            const price_snapshot = price_data_snapshots.find(e => (paying_time > e['from'] && paying_time < e['to']))
+            if(price_snapshot != null){
+                const time_unit = price_snapshot['time_unit']
+                const prices_used = price_snapshot['prices']
+                if(payment_history[paying_account].length == 0){
+                    const to = bigInt(paying_time).plus((bigInt(time_units_bought).multiply(bigInt(time_unit))))
+                    payment_history[paying_account].push({'from':paying_time, 'to':to, 'prices':prices_used})
+                }else{
+                    const last_payment_item = payment_history[paying_account][payment_history[paying_account].length -1]
+                    if(last_payment_item['to'] > paying_time){
+                        //account added to ther existing subscription before expiry
+                        const to = bigInt(last_payment_item['to']).plus((bigInt(time_units_bought).multiply(bigInt(time_unit))))
+                        
+                        payment_history[paying_account].push({'from':paying_time, 'to':to, 'prices':prices_used})
+                    }else{
+                        // account returned to pay subscription after expiry
+                        const to = bigInt(paying_time).plus((bigInt(time_units_bought).multiply(bigInt(time_unit))))
+                        payment_history[paying_account].push({'from':paying_time, 'to':to, 'prices':prices_used})
+                    }
+                }
+            }
+        }
+        const time_steps = []
+        const steps_to_use = Math.floor((Math.floor(Date.now()/1000) - starting_time) / steps)
+        for(var l=0; l<steps_to_use; l++){
+            var start = time_steps.length == 0 ? starting_time + (steps * l) : time_steps[time_steps.length -1]['end_time']+1
+            var end = start + (steps-1)
+            time_steps.push({'start_time':start, 'end_time':end})
+        }
+        // console.log('income_stream_data_points', 'time_steps', time_steps.length)
+        for(var i=0; i<time_steps.length; i++){
+            const focused_step = time_steps[i]
+            const valid_user_keys = Object.entries(payment_history).filter(([key, value]) => {
+                    var result = value.filter(function (payment_object) {
+                        return (
+                            bigInt(focused_step['start_time']).greaterOrEquals(bigInt(payment_object['from'])) && bigInt(focused_step['start_time']).lesserOrEquals(bigInt(payment_object['to']))
+                        )
+                    })
+                    return result.length > 0
+                }
+            );
+            const price_snapshot = price_data_snapshots.find(e => ( focused_step['start_time'] >= e['from'] && focused_step['end_time'] <= e['to'] ) )
+            
+            if(price_snapshot != null){
+                // const number_count = Object.keys(valid_user_keys).length
+                const number_count = valid_user_keys.length
+                data.push({'count':number_count, 'price_data':price_snapshot})
+            }
+        }
+      }catch(e){
+        return { data: {}, success:false, reason: e.toString() }
+      }
+
+      for(var w=0; w<data.length; w++){
+          const focused_data_point = data[w]
+          const focused_time_unit = focused_data_point['price_data']['time_unit']
+          const focused_payment_exchange_items = focused_data_point['price_data']['prices']
+          const paying_accounts = focused_data_point['count']
+          const time_share = steps / focused_time_unit
+          if(total_payment_data == null){
+              focused_payment_exchange_items.forEach(price_object => {
+                  total_payment_data[price_object['id']] = bigInt(0)
+              });
+          }
+          focused_payment_exchange_items.forEach(price_object => {
+              var total_amount_for_period = Math.floor((bigInt(paying_accounts).multiply(price_object['amount'])) * time_share)
+              total_payment_data[price_object['id']] = bigInt(total_payment_data[price_object['id']]).plus(bigInt(total_amount_for_period))
+          });
+      }
+
+      total_payment_data_for_subscriptions[subscription_object_keys[i]] = total_payment_data
+    }
+  }
+  
+  const valid_time_list = get_time_list(starting_time_date, last_month_date)
+  var total_data_bytes_streamed = bigInt(0)
+  const valid_user_stream_data = {}
+
+  for(var j=0; j<file_view_data.length; j++){
+    const stream_user_item = file_view_data[j]
+    const stream_data_object = stream_user_item['view_data'].files_stream_count
+    const stream_keys = Object.keys(stream_data_object)
+    var bytes_stream_count = bigInt(0)
+    stream_keys.forEach(key => {
+      if(valid_time_list.includes(key)){
+        total_data_bytes_streamed = bigInt(total_data_bytes_streamed).plus(stream_data_object[key])
+        bytes_stream_count = bigInt(bytes_stream_count).plus(stream_data_object[key]) 
+      }
+    });
+    const user_e5_id = stream_user_item['e5']+':'+stream_user_item['author']
+    if(valid_user_stream_data[user_e5_id] == null){
+      valid_user_stream_data[user_e5_id] = bigInt(0)
+    }
+    valid_user_stream_data[user_e5_id] = bigInt(valid_user_stream_data[user_e5_id]).plus(bytes_stream_count)
+  }
+
+  const final_payment_info = {}
+  const user_stream_data_keys = Object.keys(valid_user_stream_data)
+  for(var k=0; k<user_stream_data_keys.length; k++){
+    const user_e5_id = user_stream_data_keys[k]
+    if(final_payment_info[user_e5_id] == null){
+      final_payment_info[user_e5_id] = {}
+    }
+    const subscription_keys = Object.keys(total_payment_data_for_subscriptions)
+    for(var l=0; l<subscription_keys.length; l++){
+      const subscription_id = subscription_keys[l]
+      const subscription_payment_data = total_payment_data_for_subscriptions[subscription_id]
+      const subscription_object = subscription_objects[subscription_id]
+      const subscription_e5 = subscription_object['e5']
+       
+      const focused_exchanges = Object.keys(subscription_payment_data)
+      for(var m=0; m<focused_exchanges.length; m++){
+        const exchange_id = focused_exchanges[m]
+        const total_collected_amounts = subscription_payment_data[exchange_id]
+        if(
+          bigInt(total_collected_amounts).equals(bigInt(0)) || 
+          bigInt(total_data_bytes_streamed).equals(bigInt(0)) || 
+          bigInt(valid_user_stream_data[user_e5_id]).equals(bigInt(0))
+        ){
+          final_payment_info[user_e5_id][(subscription_e5+':'+exchange_id)] = bigInt(0)
+        }else{
+          const users_amount_share = bigInt(total_collected_amounts).multiply(bigInt(valid_user_stream_data[user_e5_id])).divide(bigInt(total_data_bytes_streamed))
+          final_payment_info[user_e5_id][(subscription_e5+':'+exchange_id)] = users_amount_share
+        }
+      }
+    }
+  }
+
+  
+  return { 
+    data: {
+      final_payment_info, 
+      total_payment_data_for_subscriptions, 
+      end_time: last_month_date.getTime(),
+      total_data_bytes_streamed, 
+      starting_time:starting_time,
+      valid_user_stream_data,
+    },
+    success: true
+  }
+}
+
+function get_time_list(startDate, endDate) {
+  const dates = [];
+  const date = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+
+  while (date <= endDate) {
+    const month = date.getMonth() + 1;
+    const year = date.getFullYear(); 
+    const timestamp_id = year.toString()+':'+month.toString()
+
+    dates.push(timestamp_id);
+    date.setMonth(date.getMonth() + 1);
+  }
+
+  return dates.reverse();
+}
+
+
+
+
 
 
 
@@ -2978,24 +3174,34 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
     return;
   }
   else{
-    const ip = req.ip;
-    const now = Date.now();
-    var should_count_view_and_stream = true
-    if(ip != null){
-      const lastAccess = ipAccessTimestamps[ip+file] || 0;
-      if(now - lastAccess < RATE_LIMIT_WINDOW){
-        should_count_view_and_stream = false
-      }else{
-        ipAccessTimestamps[ip+file] = now;
-      }
-    }
-    
-
     const filePath = `storage_data/${file}`
     const stats = fs.statSync(filePath);
     const fileSize = stats.size;
-    const range = req.headers.range;
+
+    const ip = req.ip;
+    const now = Date.now();
+    var should_count_view = true
+    var should_count_stream = true
+
+    if(ip != null){
+      if(ipAccessTimestamps[ip+file] == null){
+        ipAccessTimestamps[ip+file] = { 'time': now, 'bytes': 0 }
+      }
+      const lastAccess = ipAccessTimestamps[ip+file]['time'];
+      var stream_proportion = ipAccessTimestamps[ip+file]['bytes'] == 0 ? 0 : (ipAccessTimestamps[ip+file]['bytes'] / fileSize)
+
+      if(now - lastAccess < RATE_LIMIT_WINDOW && stream_proportion > 0.35){
+        should_count_view = false
+      }
+      if(stream_proportion > 0.35){
+        should_count_stream = true
+      }
+    }else{
+      should_count_view = false
+      should_count_stream = false
+    }
     
+    const range = req.headers.range;
     if (range) {
       const [start, end] = range
         .replace(/bytes=/, '')
@@ -3014,8 +3220,10 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
       let bytesSent = 0;
 
       stream.on('data', (chunk) => {
-        if(should_count_view_and_stream == true){
+        if(should_count_stream == true){
           record_stream_event(file, chunk.length)
+        }
+        if(should_count_view == true){
           bytesSent += chunk.length;
           const streamed_proportion = bytesSent / fileSize
           if(!has_view_been_recorded && streamed_proportion >= 0.35){
@@ -3040,8 +3248,10 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
         'Content-Type': final_content_type,
       });
       fs.createReadStream(filePath).pipe(res);
-      if(should_count_view_and_stream == true){
+      if(should_count_stream == true){
         record_stream_event(file, fileSize)
+      }
+      if(should_count_view == true){
         record_view_event(file)
       }
     }
@@ -3090,7 +3300,9 @@ app.post('/streams', async (req, res) => {
     const return_views_data = get_file_views(files)
     const return_streams_data = await get_data_streams_for_files(files)
     
-    res.send(JSON.stringify({ message: 'Search successful.', views:return_views_data , streams: return_streams_data, success:true }));
+    var return_obj = { message: 'Search successful.', views:return_views_data , streams: return_streams_data, success:true }
+    var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    res.send(string_obj);
   }
   catch(e){
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
@@ -3215,7 +3427,6 @@ app.post('/count_votes', async (req, res) => {
 
 /* endpoint for calculating income stream datapoints for subscription payments */
 app.post('/subscription_income_stream_datapoints', async (req, res) => {
-  //identifier, account, recipient, requested_e5, type
   const { subscription_object, steps, filter_value } = req.body;
   if(subscription_object == null || steps == null || filter_value == null || isNaN(steps) || isNaN(filter_value)){
     res.send(JSON.stringify({ message: 'Invalid arg strings', success:false }));
@@ -3237,6 +3448,29 @@ app.post('/subscription_income_stream_datapoints', async (req, res) => {
     return;
   }
 });//ok -----
+
+app.post('/creator_group_payouts', async (req, res) => {
+  const { subscription_objects, steps, filter_value, file_view_data } = req.body;
+  if(subscription_objects == null || subscription_objects.length == 0 || steps == null || filter_value == null || isNaN(steps) || isNaN(filter_value) || file_view_data == null || file_view_data.length == 0){
+    res.send(JSON.stringify({ message: 'Invalid arg strings', success:false }));
+    return;
+  }
+  
+  try{
+    var data = await calculate_income_stream_for_multiple_subscriptions(subscription_objects, steps, filter_value, file_view_data)
+    if(data.success == false){
+      res.send(JSON.stringify({ message: 'Something went wrong', error: data.reason, success:false }));
+      return;
+    }else{
+      var return_obj = { message: 'Calculation successful.', data: data.data, success:true }
+      var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      res.send(string_obj);
+    }
+  }catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    return;
+  }
+});
 
 
 
@@ -3317,7 +3551,7 @@ setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
 setInterval(update_storage_payment_information, 2*60*1000);
 setInterval(backup_event_data_if_large_enough, 2*60*1000)
 setInterval(delete_old_backup_files, 2*60*60*1000)
-setInterval(backup_steam_count_data_if_large_enough, 31*24*60*60*1000)
+setInterval(backup_stream_count_data_if_large_enough, 32*24*60*60*1000)
 setInterval(reset_ip_access_timestamp_object, 5*60*60*1000)
 
 
