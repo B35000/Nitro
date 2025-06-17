@@ -2279,6 +2279,13 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
   const last_month_date = new Date(firstOfThisMonth.getTime() - 1);
   const starting_time = Math.floor(last_month_date.getTime()/1000) - filter_value
   const starting_time_date = new Date(starting_time*1000);
+  const end_time = last_month_date.getTime()
+
+  if(starting_time > (end_time / 1000)){
+    return { data: {}, success:false, reason: 'The filter value provided is invalid' }
+  }
+
+  const subscription_e5s = []
 
   for(var i=0; i<subscription_object_keys.length; i++){
     const subscription_object = subscription_objects[subscription_object_keys[i]]
@@ -2286,6 +2293,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
     const subscription_id = subscription_object['id']
     const events = await filter_events(subscription_e5, 'F5', 'e1', { p1/* target_id */: subscription_id}, null)
     if(events.length > 0){
+      subscription_e5s.push(subscription_e5)
       const all_modification_events = await filter_events(subscription_e5, 'F5', 'e5', { p1/* target_id */: subscription_id}, null)
 
       const price_data_snapshots = get_price_data_snapshots(all_modification_events, object)
@@ -2324,7 +2332,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
             }
         }
         const time_steps = []
-        const steps_to_use = Math.floor((Math.floor(Date.now()/1000) - starting_time) / steps)
+        const steps_to_use = Math.floor((Math.floor(end_time/1000) - starting_time) / steps)
         for(var l=0; l<steps_to_use; l++){
             var start = time_steps.length == 0 ? starting_time + (steps * l) : time_steps[time_steps.length -1]['end_time']+1
             var end = start + (steps-1)
@@ -2429,15 +2437,46 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
     }
   }
 
+  const user_account_data = {}
+  const user_account_addresses = []
+  const searched_account_e5_ids = []
+  for(var l=0; l<user_stream_data_keys.length; l++){
+    const user_e5_id = user_stream_data_keys[l]
+    
+    if(user_account_data[user_e5_id] == null){
+      const user_e5 = user_e5_id.split(':')[0]
+      const user_id = user_e5_id.split(':')[1]
+
+      const web3 = new Web3(data[e5]['web3']);
+      const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[user_e5]['addresses'][0]);
+      const account_address = await e5_contract.methods.f289(user_id).call((error, result) => {});
+
+      user_account_data[user_e5_id] = { 'address':account_address, 'accounts':{} }   
+      user_account_addresses.push(account_address)  
+      searched_account_e5_ids.push(user_e5_id) 
+    }
+  }
+
+  for(var m=0; m<subscription_e5s.length; m++){
+    const e5 = subscription_e5s[m]
+    const web3 = new Web3(data[e5]['web3']);
+    const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[user_e5]['addresses'][0]);
+    const account_ids = await e5_contract.methods.f167([],user_account_addresses, 2).call((error, result) => {});
+    account_ids.forEach((account, index) => {
+      const user_e5_id = searched_account_e5_ids[index]
+      user_account_data[user_e5_id]['accounts'][e5] = account
+    });
+  }
   
   return { 
     data: {
       final_payment_info, 
       total_payment_data_for_subscriptions, 
       end_time: last_month_date.getTime(),
+      start_time:(starting_time*1000),
       total_data_bytes_streamed, 
-      starting_time:starting_time,
       valid_user_stream_data,
+      user_account_data,
     },
     success: true
   }
