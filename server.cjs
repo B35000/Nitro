@@ -64,6 +64,7 @@ var data = {
   'file_streams':{},
   'free_default_storage':0.0,
   'cold_storage_stream_data_files':{'backup_array':[],},
+  'uploaded_files_data':{},
 }
 
 const E5_CONTRACT_ABI = [
@@ -1379,7 +1380,7 @@ async function update_storage_payment_information(){
         acquired_space = data['max_buyable_capacity']
       }
       if(data['storage_data'][account] == null){
-        data['storage_data'][account] = {'files':0, 'acquired_space':parseFloat(acquired_space), 'utilized_space':0.0}
+        data['storage_data'][account] = { 'files':0, 'acquired_space':parseFloat(acquired_space), 'utilized_space':0.0,}
       }else{
         data['storage_data'][account]['acquired_space'] = parseFloat(data['storage_data'][account]['acquired_space']+acquired_space)
       }
@@ -2451,7 +2452,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
       const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[user_e5]['addresses'][0]);
       const account_address = await e5_contract.methods.f289(user_id).call((error, result) => {});
 
-      user_account_data[user_e5_id] = { 'address':account_address, 'accounts':{} }   
+      user_account_data[user_e5_id] = {'address':account_address, 'accounts':{}}   
       user_account_addresses.push(account_address)  
       searched_account_e5_ids.push(user_e5_id) 
     }
@@ -2496,6 +2497,15 @@ function get_time_list(startDate, endDate) {
   }
 
   return dates.reverse();
+}
+
+function record_file_data(file_names, binaries, account){
+  for(var i=0; i<binaries.length; i++){
+    const file_name = file_names[i]
+    var binaryData = binaries[i]
+    var file_size = get_length_of_binary_files_in_mbs([binaryData])[0]
+    data['uploaded_files_data'][file_name] = {'size':file_size, 'owner':account}
+  }
 }
 
 
@@ -3074,9 +3084,16 @@ app.post('/store_files', async (req, res) => {
       data['storage_data'][storage_data.account.toString()]['files'] ++;
       data['metrics']['total_files_stored']++
       data['metrics']['total_space_utilized']+= space_utilized
-      var success = await store_files_in_storage(binaries, file_types, file_datas)
+      var success = await store_files_in_storage(binaries, file_types, file_datas, storage_data.account)
       
       if(success == null){
+        record_file_data(success, binaries, storage_data.account)
+        if(data['storage_data'][storage_data.account.toString()]['uploaded_files'] == null){
+          data['storage_data'][storage_data.account.toString()]['uploaded_files'] = []
+        }
+        success.forEach(file => {
+          data['storage_data'][storage_data.account.toString()]['uploaded_files'].push(file)
+        });
         res.send(JSON.stringify({ message: 'Files stored Unsucessfully, internal server error', success:false }));
       }else{
         res.send(JSON.stringify({ message: 'Files stored Successfully', files: success, success:true }));
@@ -3168,6 +3185,13 @@ app.post('/upload/:extension', async (req, res) => {
         console.log("Upload complete!");
         data['storage_data'][account]['files'] ++;
         data['metrics']['total_files_stored']++
+        
+        data['uploaded_files_data'][extension] = {'size': (receivedBytes/(1024 * 1024)), 'owner':account}
+        if(data['storage_data'][account]['uploaded_files'] == null){
+          data['storage_data'][account]['uploaded_files'] = []
+        }
+        data['storage_data'][account]['uploaded_files'].push(extension)
+
         res.send(JSON.stringify({ message: 'Upload Successful.', success:true }));
         data['upload_reservations'][extension]['aborted'] = true;
       });
