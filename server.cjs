@@ -766,8 +766,22 @@ function update_staged_hash_data(){
 
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
-  var obj = {'data':data, 'event_data':event_data, 'hash_data':hash_data, 'object_types':object_types, 'cold_storage_hash_pointers':cold_storage_hash_pointers, 'cold_storage_event_files':cold_storage_event_files, 'pointer_data':pointer_data, 
-  'hash_count': hash_count, 'load_count': load_count, 'app_key': app_key, 'staged_ecids':staged_ecids, 'beacon_chain_link': beacon_chain_link, 'failed_ecids':failed_ecids, 'file_data_steams':file_data_steams}
+  var obj = {
+    'data':data, 
+    'event_data':event_data, 
+    'hash_data':hash_data, 
+    'object_types':object_types, 
+    'cold_storage_hash_pointers':cold_storage_hash_pointers, 
+    'cold_storage_event_files':cold_storage_event_files, 
+    'pointer_data':pointer_data, 
+    'hash_count': hash_count, 
+    'load_count': load_count, 
+    'app_key': app_key, 
+    'staged_ecids':staged_ecids, 
+    'beacon_chain_link': beacon_chain_link, 
+    'failed_ecids':failed_ecids, 
+    'file_data_steams':file_data_steams
+  }
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
   var backup_name = ''
@@ -2504,7 +2518,7 @@ function record_file_data(file_names, binaries, account){
     const file_name = file_names[i]
     var binaryData = binaries[i]
     var file_size = get_length_of_binary_files_in_mbs([binaryData])[0]
-    data['uploaded_files_data'][file_name] = {'size':file_size, 'owner':account}
+    data['uploaded_files_data'][file_name] = {'size':file_size, 'owner':account, 'time':Date.now()}
   }
 }
 
@@ -3186,14 +3200,14 @@ app.post('/upload/:extension', async (req, res) => {
         data['storage_data'][account]['files'] ++;
         data['metrics']['total_files_stored']++
         
-        data['uploaded_files_data'][extension] = {'size': (receivedBytes/(1024 * 1024)), 'owner':account}
+        data['uploaded_files_data'][extension] = {'size': (receivedBytes/(1024 * 1024)), 'owner':account, 'time':Date.now()}
         if(data['storage_data'][account]['uploaded_files'] == null){
           data['storage_data'][account]['uploaded_files'] = []
         }
         data['storage_data'][account]['uploaded_files'].push(extension)
 
-        res.send(JSON.stringify({ message: 'Upload Successful.', success:true }));
         data['upload_reservations'][extension]['aborted'] = true;
+        res.send(JSON.stringify({ message: 'Upload Successful.', success:true }));
       });
 
       writeStream.on("error", (err) => {
@@ -3306,17 +3320,18 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
       stream.pipe(res);
     }
     else{
-      res.writeHead(200, {
-        'Content-Length': fileSize,
-        'Content-Type': final_content_type,
-      });
-      fs.createReadStream(filePath).pipe(res);
       if(should_count_stream == true){
         record_stream_event(file, fileSize)
       }
       if(should_count_view == true){
         record_view_event(file)
       }
+
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': final_content_type,
+      });
+      fs.createReadStream(filePath).pipe(res);
     }
 
   }
