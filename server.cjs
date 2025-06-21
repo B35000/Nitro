@@ -140,6 +140,7 @@ const HTTPS_PORT = process.env.HTTPS_PORT
 var file_data_steams = {}
 var ipAccessTimestamps = {}
 const RATE_LIMIT_WINDOW = 5*60*60*1000;/* 5hrs */
+const STREAM_DATA_THRESHOLD = 1024*1024*5.3/* 5.3mbs */
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -3260,6 +3261,9 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
     var should_count_view = true
     var should_count_stream = true
 
+    var stream_proportion_target = fileSize > STREAM_DATA_THRESHOLD ? 
+    file_size / STREAM_DATA_THRESHOLD : 96.0
+
     if(ip != null){
       if(ipAccessTimestamps[ip+file] == null){
         ipAccessTimestamps[ip+file] = { 'time': now, 'bytes': 0 }
@@ -3267,10 +3271,10 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
       const lastAccess = ipAccessTimestamps[ip+file]['time'];
       var stream_proportion = ipAccessTimestamps[ip+file]['bytes'] == 0 ? 0 : (ipAccessTimestamps[ip+file]['bytes'] / fileSize)
 
-      if(now - lastAccess < RATE_LIMIT_WINDOW && stream_proportion > 0.35){
+      if(now - lastAccess < RATE_LIMIT_WINDOW && stream_proportion > stream_proportion_target){
         should_count_view = false
       }
-      if(stream_proportion > 0.35){
+      if(stream_proportion > stream_proportion_target){
         should_count_stream = true
       }
     }else{
@@ -3303,7 +3307,7 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
         if(should_count_view == true){
           bytesSent += chunk.length;
           const streamed_proportion = bytesSent / fileSize
-          if(!has_view_been_recorded && streamed_proportion >= 0.35){
+          if(!has_view_been_recorded && streamed_proportion >= stream_proportion_target){
             has_view_been_recorded = true
             record_view_event(file)
           }
