@@ -34,6 +34,13 @@ app.use(cors());
 app.use(express.json({ limit: "100gb" }));
 const version = '1.0'
 
+const SECRET = process.env.SECRET_KEY;
+const PRIVATE_KEY_RESOURCE = process.env.PRIVATE_KEY_RESOURCE
+const CERTIFICATE_RESOURCE = process.env.CERTIFICATE_RESOURCE
+const HTTPS_PORT = process.env.HTTPS_PORT
+
+const logStream = fs.createWriteStream('errors.log', { flags: 'a' });
+
 
 /* data object containing all the E5 data. */
 var data = {
@@ -50,7 +57,7 @@ var data = {
   'price_per_megabyte':[],
   'target_account_e5':'',
   'target_storage_purchase_recipient_account':0,
-  'last_checked_storage_block':0,
+  'last_checked_storage_block':{},
   'storage_data':{},
   'storage_boot_time':0,
   'metrics':{
@@ -65,6 +72,8 @@ var data = {
   'free_default_storage':0.0,
   'cold_storage_stream_data_files':{'backup_array':[],},
   'uploaded_files_data':{},
+  'target_storage_recipient_accounts':{},
+  'last_checked_storage_renewal_block':{},
 }
 
 const E5_CONTRACT_ABI = [
@@ -133,10 +142,6 @@ var pointer_data = {}
 var beacon_chain_link = ``
 var staged_ecids = {}
 var failed_ecids = {'in':[], 'nf':[], 'ni':[], 'ar':[]}
-const SECRET = process.env.SECRET_KEY;
-const PRIVATE_KEY_RESOURCE = process.env.PRIVATE_KEY_RESOURCE
-const CERTIFICATE_RESOURCE = process.env.CERTIFICATE_RESOURCE
-const HTTPS_PORT = process.env.HTTPS_PORT
 var file_data_steams = {}
 var ipAccessTimestamps = {}
 const RATE_LIMIT_WINDOW = 5*60*60*1000;/* 5hrs */
@@ -1260,8 +1265,7 @@ async function get_round_down_value(web3, blockNumber){
 }
 
 /* returns an accounts available storage in megabytes from their signature */
-async function fetch_accounts_available_storage(signature_data, signature){
-  const e5 = data['target_account_e5']
+async function fetch_accounts_available_storage(signature_data, signature, e5){
   const web3 = new Web3(data[e5]['web3']);
   try{
     // var current_block_number = Number(await web3.eth.getBlockNumber())
@@ -1278,36 +1282,46 @@ async function fetch_accounts_available_storage(signature_data, signature){
     const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
     var accounts = await e5_contract.methods.f167([],[original_address], 2).call((error, result) => {});
     var address_account = accounts[0]
+    const e5_address_account = e5+':'+address_account
 
-    var payment_data = data['storage_data'][address_account.toString()]
+    var payment_data = data['storage_data'][e5_address_account]
     if(payment_data == null){
       if(data['free_default_storage'] != 0 && address_account != 0){
         var balance = await web3.eth.getBalance(original_address)
         if(balance != 0){
-          data['storage_data'][address_account.toString()] = {'files':0, 'acquired_space':parseFloat(data['free_default_storage']), 'utilized_space':0.0};
+          data['storage_data'][e5_address_account] = {'files':0, 'acquired_space':parseFloat(data['free_default_storage']), 'utilized_space':0.0};
 
-          payment_data = data['storage_data'][address_account.toString()]
+          payment_data = data['storage_data'][e5_address_account]
 
-          return { available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: address_account }
+          return { available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: e5_address_account }
         }
       }
-      return { available_space: 0.0, account: address_account };
+      return { available_space: 0.0, account: e5_address_account };
     } 
-    return { available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: address_account }
+    return { available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: e5_address_account }
   }catch(e){
-    console.log(e)
-    return { available_space: 0.0, account: 0 }
+    return { available_space: 0.0, account: e5+':'+0, }
   }
 }
 
 /* checks for new storage payments and updates how much storage space their account has in the node */
-async function update_storage_payment_information(){
-  const e5 = data['target_account_e5']
+function start_update_storage_payment_information(){
+  const e5_keys = Object.keys(data['target_storage_recipient_accounts'])
+  if(!isNaN(data['last_checked_storage_block'])){
+    data['last_checked_storage_block'] = {}
+  }
+  e5_keys.forEach(e5_key => {
+    const target_storage_purchase_recipient_account = data['target_storage_recipient_accounts'][e5_key]
+    if(data['last_checked_storage_block'][e5_key] == null){
+      data['last_checked_storage_block'][e5_key] = 0
+    }
+    update_storage_payment_information(e5_key, target_storage_purchase_recipient_account)
+  });
+}
+
+async function update_storage_payment_information(e5, target_storage_purchase_recipient_account){
   const storage_boot_time = parseInt(data['storage_boot_time'])
-  if(e5 == '') return;
-  var target_storage_purchase_recipient_account = data['target_storage_purchase_recipient_account']
-  var last_checked_storage_block = data['last_checked_storage_block']
-  // console.log('last_checked_storage_block', last_checked_storage_block)
+  var last_checked_storage_block = data['last_checked_storage_block'][e5]
   
   var from_filter = {'p':'p6'/* block_number */, 'value': last_checked_storage_block}
   var events = await filter_events(e5, 'H52', 'e1'/* transfer */, {p3/* receiver */:target_storage_purchase_recipient_account}, from_filter)
@@ -1324,8 +1338,6 @@ async function update_storage_payment_information(){
 
   events = events.filter(check_event)
   purchase_events = purchase_events.filter(check_purchase_event)
-
-
 
 
   if(events.length > 0){
@@ -1348,7 +1360,7 @@ async function update_storage_payment_information(){
         var data_event = data_events[0]
         if(data_event.returnValues.p4/* string_data */ == 'storage'){
           var sized_amount = get_actual_number(amount.toString().toLocaleString('fullwide', {useGrouping:false}), depth.toString().toLocaleString('fullwide', {useGrouping:false}))
-          var sender = event.returnValues.p2.toString()/* sender */
+          const sender = e5+':'+event.returnValues.p2.toString()/* sender */
 
           if(payment_data[sender] == null) payment_data[sender] = {}
           if(payment_data[sender][exchange_id] == null) payment_data[sender][exchange_id] = bigInt(0)
@@ -1364,7 +1376,7 @@ async function update_storage_payment_information(){
       
     }
 
-    var price_per_megabyte = data['price_per_megabyte']
+    var price_per_megabyte = data['price_per_megabyte'][e5]
     var accounts_space_units = {}
     for (const account_payment in payment_data) {
       var final_space_units = -1
@@ -1401,11 +1413,9 @@ async function update_storage_payment_information(){
       }
       // console.log(`updated storage space for account ${account} to ${data['storage_data'][account]['acquired_space']} mbs`)
     }
-  }else{
-    // console.log('no storage payments so far.')
   }
-
-  data['last_checked_storage_block'] = (data[e5]['current_block']['H52'+'e1'])
+  
+  data['last_checked_storage_block'][e5] = (data[e5]['current_block']['H52'+'e1'])
 }
 
 /* returns a big int value from a number and its specified depth */
@@ -1413,6 +1423,138 @@ function get_actual_number(number, depth){
   var p = (bigInt(depth).times(72)).toString().toLocaleString('fullwide', {useGrouping:false})
   var depth_vaule = bigInt(('1e'+p))
   return (bigInt(number).times(depth_vaule)).toString().toLocaleString('fullwide', {useGrouping:false})
+}
+
+
+function start_update_storage_renewal_payment_information(){
+  const current_month = new Date().getMonth()
+  if(current_month > 5){
+    return;
+  }
+
+  const e5_keys = Object.keys(data['target_storage_recipient_accounts'])
+  e5_keys.forEach(e5_key => {
+    const target_storage_purchase_recipient_account = data['target_storage_recipient_accounts'][e5_key]
+    if(data['last_checked_storage_renewal_block'][e5_key] == null){
+      data['last_checked_storage_renewal_block'][e5_key] = 0
+    }
+    update_storage_renewal_payment_information(e5_key, target_storage_purchase_recipient_account)
+  });
+}
+
+async function update_storage_renewal_payment_information(e5, target_storage_purchase_recipient_account){
+  const storage_boot_time = parseInt(data['storage_boot_time'])
+  var last_checked_storage_block = data['last_checked_storage_renewal_block'][e5]
+  
+  var from_filter = {'p':'p6'/* block_number */, 'value': last_checked_storage_block}
+  var events = await filter_events(e5, 'H52', 'e1'/* transfer */, {p3/* receiver */:target_storage_purchase_recipient_account}, from_filter)
+
+  var purchase_events = await filter_events(e5, 'E52', 'e4'/* data */, {p1/* target_id */:29, p5/* int_data */: target_storage_purchase_recipient_account}, {})
+
+  const check_event = (eventt) => {
+    return (parseInt(eventt.returnValues.p5/* timestamp */) > parseInt(storage_boot_time))
+  }
+
+  const check_purchase_event = (eventt) => {
+    return (parseInt(eventt.returnValues.p6/* timestamp */) > parseInt(storage_boot_time))
+  }
+
+  events = events.filter(check_event)
+  purchase_events = purchase_events.filter(check_purchase_event)
+
+  if(events.length > 0){
+    //the tracked account received some payments
+    var payment_data = {}
+    for(var i=0; i<events.length; i++){
+      var event = events[i]
+      var exchange_id = event.returnValues.p1.toString()/* exchange_id */
+      var amount = event.returnValues.p4/* amount */
+      var depth = event.returnValues.p7/* depth */
+      var event_block = event.returnValues.p6/* block_number */
+
+      const individual_block_filter = (eventt) => {
+        return parseInt(eventt.returnValues.p7/* block_number */) == parseInt(event_block)
+      }
+
+      var data_events = purchase_events.filter(individual_block_filter)
+      
+      if(data_events.length > 0){
+        var data_event = data_events[0]
+        if(data_event.returnValues.p4/* string_data */ == 'renewal'){
+          var sized_amount = get_actual_number(amount.toString().toLocaleString('fullwide', {useGrouping:false}), depth.toString().toLocaleString('fullwide', {useGrouping:false}))
+          const sender = e5+':'+event.returnValues.p2.toString()/* sender */
+
+          if(payment_data[sender] == null) payment_data[sender] = {}
+          if(payment_data[sender][exchange_id] == null) payment_data[sender][exchange_id] = bigInt(0)
+          payment_data[sender][exchange_id] = bigInt(payment_data[sender][exchange_id]).plus(sized_amount)
+          // console.log(`added ${sized_amount} for exchange: ${exchange_id} for sender: ${sender}`)
+        }else{
+          // console.log('event string not `storage`')
+        }
+      }
+      else{
+        // console.log('no purchase events recorded')
+      }
+      
+    }
+
+    var price_per_megabyte = data['price_per_megabyte'][e5]
+    var accounts_space_units = {}
+    for (const account_payment in payment_data) {
+      var final_space_units = -1
+      for(var p=0; p<price_per_megabyte.length; p++){
+        var exchange = price_per_megabyte[p]['exchange']
+        var amount = bigInt(price_per_megabyte[p]['amount'])
+
+        var paid_amount_for_exchange = payment_data[account_payment][exchange]
+        var final_amount = bigInt(amount).equals(0) ? bigInt(1) : bigInt(amount)
+        var space_units_acquired = bigInt(paid_amount_for_exchange).divide(final_amount)
+        
+        if(final_space_units > space_units_acquired || final_space_units == -1){
+          final_space_units = space_units_acquired
+          // console.log(`space unit of ${space_units_acquired} set`)
+        }else{
+          // console.log(`space unit of ${space_units_acquired} not set`)
+        }
+      }
+      if(final_space_units > 0){
+        accounts_space_units[account_payment] = final_space_units
+        // console.log(`final space units of ${final_space_units} set to account ${account_payment}`)
+      }
+    }
+    const startOfYear = new Date(new Date().getFullYear(), 0, 1).getTime()
+    const last_year = new Date().getFullYear() - 1
+    for (const account in accounts_space_units) {
+      var acquired_space = accounts_space_units[account]
+      if(data['storage_data'][account] != null){
+        var total_space_to_be_paid_for = 0
+        const files = []
+        if(data['storage_data'][account]['uploaded_files'] != null && data['storage_data'][account]['uploaded_files'].length > 0){
+          data['storage_data'][account]['uploaded_files'].forEach(file => {
+            const file_size = data['uploaded_files_data'][file]['size']
+            const file_upload_time = data['uploaded_files_data'][file]['time']
+            const is_file_deleted = data['uploaded_files_data'][file]['deleted']
+            if(file_upload_time < startOfYear && is_file_deleted != true){
+              total_space_to_be_paid_for += file_size
+              files.push(file)
+            }
+          });
+        }
+        if(acquired_space >= total_space_to_be_paid_for){
+          files.forEach(file => {
+            if(data['uploaded_files_data'][file]['renewals'] == null){
+              data['uploaded_files_data'][file]['renewals'] = []
+            }
+            if(!data['uploaded_files_data'][file]['renewals'].includes(last_year)){
+              data['uploaded_files_data'][file]['renewals'].push(last_year)
+            }
+          });
+        }
+      }
+    }
+  }
+  
+  data['last_checked_storage_renewal_block'][e5] = (data[e5]['current_block']['H52'+'e1'])
 }
 
 
@@ -1645,7 +1787,6 @@ function get_list_of_server_files_and_auto_backup(){
   var most_recent_backup = int_string_date_obj[largest]
   restore_backed_up_data_from_storage(most_recent_backup, '', '', false)
 }
-
 
 function delete_backup_file(file_name){
   var dir = `./backup_data/${file_name}`
@@ -1970,7 +2111,8 @@ function is_basic_data_upload_size_valid(string_array){
   return is_valid
 }
 
-async function calculate_income_stream_data_points(subscription_object, steps, filter_value){
+/* calculates the chart data to display in requested subscription */
+async function calculate_income_stream_data_points(subscription_object, steps, filter_value, token_name_data){
   const subscription_e5 = subscription_object['e5']
   const subscription_id = subscription_object['id']
   const events = await filter_events(subscription_e5, 'F5', 'e1', { p1/* target_id */: subscription_id}, null)
@@ -2090,9 +2232,9 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
               }
           }
           const final_price_amount = bigInt(selected_price_item['amount']).multiply(focused_data_point['count'])
-          const token_name = this.get_all_sorted_objects_mappings(this.props.app_state.token_directory)[selected_price_item['id']]
+          const token_name = token_name_data[selected_price_item['id']]
 
-          dps.push({x: xVal,y: (yVal+10), indexLabel: ""+this.format_account_balance_figure(final_price_amount)+` ${token_name}`});//
+          dps.push({x: xVal,y: (yVal+10), indexLabel: ""+format_account_balance_figure(final_price_amount)+` ${token_name}`});//
       }else{
           dps.push({x: xVal, y: (yVal+10)});//
       }
@@ -2103,6 +2245,7 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
   return { data: {dps, total_payment_data}, success:true }
 }
 
+/* gets the largest figure from an array of items */
 function get_total_supply_interval_figure(valid_data){
   var largest = 0
   valid_data.forEach(valid_data_item => {
@@ -2113,6 +2256,7 @@ function get_total_supply_interval_figure(valid_data){
   return largest
 }
 
+/* returns an object containing the price data of a given subscription over time */
 function get_price_data_snapshots(modification_events, object){
   const original_price_data = object['ipfs'].price_data
   const original_time_unit = object['ipfs'].time_unit == 0 ? 60*53 : object['ipfs'].time_unit
@@ -2147,7 +2291,7 @@ function get_price_data_snapshots(modification_events, object){
 
 
 
-
+/*  */
 function record_stream_event(file, chunk_length){
   const date = new Date();
   const month = date.getMonth() + 1;
@@ -2302,6 +2446,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
   }
 
   const subscription_e5s = []
+  const transaction_event_object = {}
 
   for(var i=0; i<subscription_object_keys.length; i++){
     const subscription_object = subscription_objects[subscription_object_keys[i]]
@@ -2311,6 +2456,8 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
     if(events.length > 0){
       subscription_e5s.push(subscription_e5)
       const all_modification_events = await filter_events(subscription_e5, 'F5', 'e5', { p1/* target_id */: subscription_id}, null)
+
+      transaction_event_object[subscription_e5] = await filter_events(subscription_e5, 'E5', 'e4', {}, null)
 
       const price_data_snapshots = get_price_data_snapshots(all_modification_events, object)
       var data = []
@@ -2463,9 +2610,14 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
       const user_e5 = user_e5_id.split(':')[0]
       const user_id = user_e5_id.split(':')[1]
 
-      const web3 = new Web3(data[e5]['web3']);
-      const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[user_e5]['addresses'][0]);
-      const account_address = await e5_contract.methods.f289(user_id).call((error, result) => {});
+      // const web3 = new Web3(data[e5]['web3']);
+      // const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[user_e5]['addresses'][0]);
+      // await new Promise(resolve => setTimeout(resolve, 1500))
+      // const account_address = await e5_contract.methods.f289(user_id).call((error, result) => {});
+
+      const accounts_transaction_events = transaction_event_object[user_e5].find(e => e.returnValues.p1/* sender_account_id */ == user_id)
+
+      const account_address = accounts_transaction_events.returnValues.p2/* sender_address */
 
       user_account_data[user_e5_id] = {'address':account_address, 'accounts':{}}   
       user_account_addresses.push(account_address)  
@@ -2514,15 +2666,101 @@ function get_time_list(startDate, endDate) {
   return dates.reverse();
 }
 
-function record_file_data(file_names, binaries, account){
+function record_file_data(file_names, binaries, account, file_types){
   for(var i=0; i<binaries.length; i++){
     const file_name = file_names[i]
     var binaryData = binaries[i]
     var file_size = get_length_of_binary_files_in_mbs([binaryData])[0]
-    data['uploaded_files_data'][file_name] = {'size':file_size, 'owner':account, 'time':Date.now()}
+    data['uploaded_files_data'][file_name] = {'size':file_size, 'owner':account, 'time':Date.now(), 'extension':file_types[i]}
   }
 }
 
+
+
+
+function delete_unrenewed_files(){
+  const current_month = new Date().getMonth()
+  if(current_month != 6) return;
+  var files = Object.keys(data['uploaded_files_data'])
+  files.forEach(file => {
+    if(data['uploaded_files_data'][file]['deleted'] == null && !is_file_ok_to_stream(file)){
+      data['uploaded_files_data'][file]['deleted'] = true;
+      var extension = data['uploaded_files_data'][file]['extension']
+
+      if(extension != null){
+        var dir = `./storage_data/${file_name}.${extension}`
+        fs.unlink(dir, (err) => {
+          if (err) {
+            console.error('Failed to delete file:', err);
+          } else {
+            console.log('File deleted successfully.');
+          }
+        });
+      }
+    }
+  });
+}
+
+function is_file_ok_to_stream(file){
+  if(data['uploaded_files_data'][file] == null || data['uploaded_files_data'][file]['deleted'] == true) return false;
+  var upload_time = data['uploaded_files_data'][file]['time']
+  var current_year = new Date().getFullYear()
+  var upload_year = upload_time == null ? current_year : new Date(upload_time).getFullYear();
+
+  var required_years = []
+  for(var i=upload_year; i<current_year; i++){
+    required_years.push(i)
+  }
+
+  if(required_years.length == 0){
+    return true;
+  }
+
+  var is_ok = true;
+  const my_paid_years = data['uploaded_files_data'][file]['renewals'] == null ? [] : data['uploaded_files_data'][file]['renewals']
+  required_years.forEach(year => {
+    if(!my_paid_years.includes(year)){
+      is_ok = false
+    }
+  });
+
+  return is_ok
+}
+
+function get_file_renewal_data(files){
+  const return_data = {}
+  files.forEach(file => {
+    const my_paid_years = data['uploaded_files_data'][file] == null ? [] : (data['uploaded_files_data'][file]['renewals'] == null ? [] : data['uploaded_files_data'][file]['renewals'])
+    return_data[file] = my_paid_years
+  });
+  return return_data
+}
+
+function get_files_statuses(files){
+  const return_data = {}
+  files.forEach(file => {
+    const is_file_deleted = data['uploaded_files_data'][file] == null ? false : (data['uploaded_files_data'][file]['deleted'] == null ? false : data['uploaded_files_data'][file]['deleted'])
+    return_data[file] = is_file_deleted
+  });
+  return return_data
+}
+
+
+
+
+
+function format_account_balance_figure(amount){
+  if(amount == null){
+    amount = 0;
+  }
+  if(amount < 1_000_000_000){
+    return number_with_commas(amount.toString())
+  }else{
+    var power = amount.toString().length - 9
+    return number_with_commas(amount.toString().substring(0, 9)) +'e'+power
+  }
+  
+}
 
 
 
@@ -2685,6 +2923,7 @@ app.get('/marco', async (req, res) => {
     'color_metrics':data['color_metrics'],
     'storage': await get_maximum_available_disk_space(),
     'free_default_storage':data['free_default_storage'],
+    'target_storage_recipient_accounts':data['target_storage_recipient_accounts'],
     'version':version,
     success:true
   }
@@ -2995,10 +3234,10 @@ app.post('/boot', (req, res) => {
 
 /* admin endpoint for booting the node's storage services for paid users */
 app.post('/boot_storage', async (req, res) => {
-  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage } = req.body;
+  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage, target_storage_recipient_accounts } = req.body;
   // var available_space = await get_maximum_available_disk_space()
   
-  if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account) || unlimited_basic_storage == null){
+  if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || /* target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account) || */ unlimited_basic_storage == null || target_storage_recipient_accounts == null){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
@@ -3010,27 +3249,41 @@ app.post('/boot_storage', async (req, res) => {
   //   res.send(JSON.stringify({ message: 'You dont have enough disk space for that specified max_capacity', success:false }));
   //   return;
   // }
+
   else if(data['max_buyable_capacity'] !== 0 || data['target_account_e5'] !== ''){
     res.send(JSON.stringify({ message: 'Storage already booted in node.', success:false }));
     return;
   }
-  else if(!data['e'].includes(target_account_e5)){
-    res.send(JSON.stringify({ message: `That E5 is not being watched.`, success:false }));
-    return;
-  }
+  // else if(!data['e'].includes(target_account_e5)){
+  //   res.send(JSON.stringify({ message: `That E5 is not being watched.`, success:false }));
+  //   return;
+  // }
   else{
+    try{
+      Object.keys(target_storage_recipient_accounts).forEach(focused_e5 => {
+        if(!data['e'].includes(focused_e5)){
+          res.send(JSON.stringify({ message: `${focused_e5} is not being watched.`, success:false }));
+          return;
+        }
+      });
+    }catch(e){
+      res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+      return;
+    }
     // data['file_data_capacity'] = max_capacity
+    const default_e5_key = Object.keys(target_storage_recipient_accounts)[0]
     data['max_buyable_capacity'] = max_buyable_capacity
     data['price_per_megabyte'] = price_per_megabyte
-    data['target_account_e5'] = target_account_e5
-    data['target_storage_purchase_recipient_account'] = target_storage_purchase_recipient_account
+    data['target_account_e5'] = default_e5_key
+    data['target_storage_purchase_recipient_account'] = target_storage_recipient_accounts[default_e5_key]
     data['storage_boot_time'] = await get_e5_chain_time(target_account_e5)
     data['unlimited_basic_storage'] = unlimited_basic_storage
     if(free_default_storage != null && !isNaN(free_default_storage)){
       data['free_default_storage'] = free_default_storage
     }
+    data['target_storage_recipient_accounts'] = target_storage_recipient_accounts
 
-    res.send(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs, payments recipient account ${target_storage_purchase_recipient_account} of E5 ${target_account_e5}`, success:true }));
+    res.send(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs.`, success:true }));
   }
 });//ok -------
 
@@ -3049,27 +3302,27 @@ app.post('/reconfigure_storage', async (req, res) => {
   else if(
     key !== 'max_buyable_capacity' && 
     key !== 'price_per_megabyte' && 
-    key !== 'target_storage_purchase_recipient_account' && 
     key !== 'unlimited_basic_storage' && 
     key !== 'free_default_storage'
   ){
     res.send(JSON.stringify({ message: 'Invalid modify targets', success:false }));
     return;
   }
-  else if(key == 'target_storage_purchase_recipient_account' && !data['e'].includes(e5)){
-    res.send(JSON.stringify({ message: 'You need to specify a valid E5 if you are targeting the target_storage_purchase_recipient_account value', success:false }));
-    return;
-  }
   else{
-    data[key] = value
+    if(key == 'price_per_megabyte'){
+      data['price_per_megabyte'] = value.price_per_megabyte
+      data['target_storage_recipient_accounts'] = value.target_storage_recipient_accounts
+    }else{
+      data[key] = value
+    }
     res.send(JSON.stringify({ message: `node reconfigured with the specified parameter '${key}' to the speicified value`, success:true }));
   }
 });//ok -----
 
 /* endpoint for storing files in the storage service for the node */
 app.post('/store_files', async (req, res) => {
-  const { signature_data, signature, file_datas, file_types } = req.body;
-  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_datas == null || file_types == null || !is_all_file_type_ok(file_types)){
+  const { signature_data, signature, file_datas, file_types, e5 } = req.body;
+  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_datas == null || file_types == null || !is_all_file_type_ok(file_types) || e5 == null || e5 == ''){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
@@ -3081,8 +3334,12 @@ app.post('/store_files', async (req, res) => {
     res.send(JSON.stringify({ message: 'Storage on this node is disabeld', success:false }));
     return;
   }
+  else if(!data['e'].includes(e5)){
+    res.send(JSON.stringify({ message: `That E5 is not being watched.`, success:false }));
+    return;
+  }
   else{
-    var storage_data = await fetch_accounts_available_storage(signature_data, signature)
+    var storage_data = await fetch_accounts_available_storage(signature_data, signature, e5)
     var binaries = get_file_binaries(file_datas)
     var space_utilized = get_length_of_binary_files_in_mbs(binaries)
     // console.log('storage_data', storage_data)
@@ -3102,7 +3359,7 @@ app.post('/store_files', async (req, res) => {
       var success = await store_files_in_storage(binaries, file_types, file_datas, storage_data.account)
       
       if(success == null){
-        record_file_data(success, binaries, storage_data.account)
+        record_file_data(success, binaries, storage_data.account, file_types)
         if(data['storage_data'][storage_data.account.toString()]['uploaded_files'] == null){
           data['storage_data'][storage_data.account.toString()]['uploaded_files'] = []
         }
@@ -3118,8 +3375,8 @@ app.post('/store_files', async (req, res) => {
 });//ok -----
 
 app.post('/reserve_upload', async (req, res) => {
-  const { signature_data, signature, file_length, file_type, upload_extension } = req.body;
-  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_length == null || isNaN(file_length) || file_type == null || !is_all_file_type_ok([file_type])){
+  const { signature_data, signature, file_length, file_type, upload_extension, e5 } = req.body;
+  if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_length == null || isNaN(file_length) || file_type == null || !is_all_file_type_ok([file_type]) || e5 == null || e5 == ''){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
@@ -3130,21 +3387,20 @@ app.post('/reserve_upload', async (req, res) => {
   else if(data['max_buyable_capacity'] == 0){
     res.send(JSON.stringify({ message: 'Storage on this node is disabeld', success:false }));
     return;
-  }else{
-    var storage_data = await fetch_accounts_available_storage(signature_data, signature)
+  }
+  else if(!data['e'].includes(e5)){
+    res.send(JSON.stringify({ message: `That E5 is not being watched.`, success:false }));
+    return;
+  }
+  else{
+    var storage_data = await fetch_accounts_available_storage(signature_data, signature, e5)
     if((storage_data.available_space * (1024 * 1024)) < file_length){
       res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
       return;
     }
-    // else if(data['upload_reservations'][storage_data.account.toString()] != null && data['upload_reservations'][storage_data.account.toString()]['expiry'] < Date.now()){
-    //   res.send(JSON.stringify({ message: 'You cant reserve more than one upload at once.', success:false }));
-    //   return;
-    // }
     else{
-      // const upload_extension = makeid(53)
       const expiry = Date.now() + (1000 * 60 * 60 * 24 * 3)/* 3 days */
       data['upload_reservations'][upload_extension] = {'length':file_length, 'type':file_type, 'expiry':expiry, 'account':storage_data.account.toString(), 'aborted':false}
-      // data['upload_reservations'][storage_data.account.toString()] = {'extension':upload_extension, 'expiry':expiry}
       res.send(JSON.stringify({ message: 'reservation successful.', extension: upload_extension, success:true }));
     }
   }
@@ -3170,8 +3426,6 @@ app.post('/upload/:extension', async (req, res) => {
       return;
     }
     else{
-      // data['upload_reservations'][extension]['aborted'] = true;
-      // delete data['upload_reservations'][reservation_data['account']];
       let receivedBytes = 0;
       const filePath = `storage_data/${extension}.${reservation_data['type']}`;
       var dir = './storage_data'
@@ -3201,7 +3455,7 @@ app.post('/upload/:extension', async (req, res) => {
         data['storage_data'][account]['files'] ++;
         data['metrics']['total_files_stored']++
         
-        data['uploaded_files_data'][extension] = {'size': (receivedBytes/(1024 * 1024)), 'owner':account, 'time':Date.now()}
+        data['uploaded_files_data'][extension] = {'size': (receivedBytes/(1024 * 1024)), 'owner':account, 'time':Date.now(), 'extension':reservation_data['type']}
         if(data['storage_data'][account]['uploaded_files'] == null){
           data['storage_data'][account]['uploaded_files'] = []
         }
@@ -3249,6 +3503,14 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
   }
   else if(final_content_type == null){
     res.send(JSON.stringify({ message: 'Please specify a valid content type', success:false }));
+    return;
+  }
+  else if(!is_file_ok_to_stream(file)){
+    res.send(JSON.stringify({ message: 'The file has not been renewed', success:false }));
+    return;
+  }
+  else if(data['uploaded_files_data'][file]['deleted'] == true){
+    res.send(JSON.stringify({ message: 'The file was deleted', success:false }));
     return;
   }
   else{
@@ -3381,8 +3643,9 @@ app.post('/streams', async (req, res) => {
   try{
     const return_views_data = get_file_views(files)
     const return_streams_data = await get_data_streams_for_files(files)
-    
-    var return_obj = { message: 'Search successful.', views:return_views_data , streams: return_streams_data, success:true }
+    const file_renewal_data = get_file_renewal_data(files)
+    const file_status = get_files_statuses(files)
+    var return_obj = { message: 'Search successful.', renewal_years: file_renewal_data, file_status, views:return_views_data , streams: return_streams_data, success:true }
     var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     res.send(string_obj);
   }
@@ -3509,14 +3772,14 @@ app.post('/count_votes', async (req, res) => {
 
 /* endpoint for calculating income stream datapoints for subscription payments */
 app.post('/subscription_income_stream_datapoints', async (req, res) => {
-  const { subscription_object, steps, filter_value } = req.body;
-  if(subscription_object == null || steps == null || filter_value == null || isNaN(steps) || isNaN(filter_value)){
+  const { subscription_object, steps, filter_value, token_name_data } = req.body;
+  if(subscription_object == null || steps == null || filter_value == null || isNaN(steps) || isNaN(filter_value) || token_name_data == null ){
     res.send(JSON.stringify({ message: 'Invalid arg strings', success:false }));
     return;
   }
   
   try{
-    var data = await calculate_income_stream_data_points(subscription_object, steps, filter_value)
+    var data = await calculate_income_stream_data_points(subscription_object, steps, filter_value, token_name_data)
     if(data.success == false){
       res.send(JSON.stringify({ message: 'Something went wrong', error: data.reason, success:false }));
       return;
@@ -3630,11 +3893,13 @@ setInterval(attempt_loading_failed_ecids, 53*60*1000)
 setInterval(load_events_for_all_e5s, 2*60*1000);
 setInterval(store_back_up_of_data, 2*60*60*1000);
 setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
-setInterval(update_storage_payment_information, 2*60*1000);
+setInterval(start_update_storage_payment_information, 2*60*1000);
 setInterval(backup_event_data_if_large_enough, 2*60*1000)
 setInterval(delete_old_backup_files, 2*60*60*1000)
 setInterval(backup_stream_count_data_if_large_enough, 32*24*60*60*1000)
 setInterval(reset_ip_access_timestamp_object, 5*60*60*1000)
+setInterval(start_update_storage_renewal_payment_information, 2*60*1000)
+setInterval(delete_unrenewed_files, 7*24*60*60*1000)
 
 
 
@@ -3646,4 +3911,8 @@ process.on('SIGHUP', () => when_server_killed('SIGHUP'));   // terminal closed
 // Catch normal exit
 process.on('exit', (code) => {
   console.log(`\nProcess exited with code: ${code}`);
+});
+
+process.on('uncaughtException', (err) => {
+  logStream.write(`[${new Date().toISOString()}] ${err.stack}\n`);
 });
