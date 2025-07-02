@@ -2688,7 +2688,7 @@ function delete_unrenewed_files(){
       var extension = data['uploaded_files_data'][file]['extension']
 
       if(extension != null){
-        var dir = `./storage_data/${file_name}.${extension}`
+        var dir = `./storage_data/${file}.${extension}`
         fs.unlink(dir, (err) => {
           if (err) {
             console.error('Failed to delete file:', err);
@@ -2760,6 +2760,24 @@ function format_account_balance_figure(amount){
     return number_with_commas(amount.toString().substring(0, 9)) +'e'+power
   }
   
+}
+
+function delete_accounts_file(file){
+  if(data['uploaded_files_data'][file] != null && data['uploaded_files_data'][file]['deleted'] == null){
+    data['uploaded_files_data'][file]['deleted'] = true;
+    var extension = data['uploaded_files_data'][file]['extension']
+
+    if(extension != null){
+      var dir = `./storage_data/${file}.${extension}`
+      fs.unlink(dir, (err) => {
+        if (err) {
+          console.error('Failed to delete file:', err);
+        } else {
+          console.log('File deleted successfully.');
+        }
+      });
+    }
+  }
 }
 
 
@@ -3794,6 +3812,7 @@ app.post('/subscription_income_stream_datapoints', async (req, res) => {
   }
 });//ok -----
 
+/* endpoint for calculating payout information for the creators in a creator group */
 app.post('/creator_group_payouts', async (req, res) => {
   const { subscription_objects, steps, filter_value, file_view_data } = req.body;
   if(subscription_objects == null || subscription_objects.length == 0 || steps == null || filter_value == null || isNaN(steps) || isNaN(filter_value) || file_view_data == null || file_view_data.length == 0){
@@ -3812,6 +3831,41 @@ app.post('/creator_group_payouts', async (req, res) => {
       res.send(string_obj);
     }
   }catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    return;
+  }
+});
+
+/* endpoint for deleting an uploaded file from the node permanently */
+app.post('/delete_file', async (req, res) => {
+  const { signature_data, signature, file, e5,  } = req.body;
+  if(file == null && signature_data == null || signature_data == '' || signature == null || signature == '' || e5 == null || e5 == ''){
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    return;
+  }
+  else if(!data['e'].includes(e5)){
+    res.send(JSON.stringify({ message: `That E5 is not being watched.`, success:false }));
+    return;
+  }
+  else if(data['uploaded_files_data'][file]['deleted'] == true){
+    res.send(JSON.stringify({ message: `That file was already deleted.`, success:false }));
+    return;
+  }
+
+  try{
+    const storage_data = await fetch_accounts_available_storage(signature_data, signature, e5)
+    if(data['uploaded_files_data'][file]['owner'] != storage_data.account.toString()){
+      res.send(JSON.stringify({ message: `Youre not the author of that file`, success:false }));
+      return;
+    }
+    else{
+      delete_accounts_file(file)
+      var return_obj = { message: 'Delete complete.',  success:true }
+      var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      res.send(string_obj);
+    }
+  }
+  catch(e){
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
     return;
   }
