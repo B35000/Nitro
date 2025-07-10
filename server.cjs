@@ -550,7 +550,65 @@ async function load_past_events(contract, event, e5, web3, contract_name, latest
     }
   }
   
+  post_event_processing(contract_name, events)
+}
 
+async function load_multiple_past_events(contract, event_names, e5, web3, contract_name, latest){
+  try{
+    var starting_block = data[e5]['current_block'][contract_name+event_names[0]] == null ? data[e5]['first_block'] : data[e5]['current_block'][contract_name+event_names[0]]
+
+    var iteration = data[e5]['iteration']
+    var events = []
+    if(latest - starting_block < iteration){
+      events = await contract.getPastEvents('allEvents', { fromBlock: starting_block, toBlock: latest }, (error, events) => {});
+    }else{
+      var pos = starting_block
+      while (pos < latest) {
+        var to = pos+iteration < latest ? pos+iteration : latest
+        var from = pos
+        events = events.concat(await contract.getPastEvents('allEvents', { fromBlock: from, toBlock: to }, (error, events) => {}))
+        pos = to+1
+      }
+    }
+
+    events.forEach(event => {
+      delete event.address
+      delete event.blockHash
+      delete event.blockNumber
+      delete event.data
+      delete event.raw
+      delete event.signature
+      delete event.topics
+      delete event.transactionHash
+      
+      for(var v=0; v<15; v++){
+        if(event.returnValues[v] != null){
+          delete event.returnValues[v]
+        }
+      }
+    });
+
+    const groups = {}
+    for(var e=0; e<events.length; e++){
+      const focused_event = events[e]
+      const event_name = focused_event["event"]
+      if(groups[event_name] == null){
+        groups[event_name] = []
+      }
+      groups[event_name].push(focused_event)
+    }
+
+    event_names.forEach(event_name => {
+      const event_array = groups[event_name] == null ? [] : groups[event_name]
+      event_data[e5][contract_name][event_name] = event_data[e5][contract_name][event_name].concat(event_array)
+      data[e5]['current_block'][contract_name+event_name] = latest
+    });
+  }catch(e){
+    console.log(e)
+  }
+}
+
+function post_event_processing(contract_name, events){
   if(events.length > 0){
     if(contract_name == 'E52' && event == 'e4'/* Data */){
       //new data events
@@ -598,7 +656,6 @@ async function load_past_events(contract, event, e5, web3, contract_name, latest
       }
     }
   }
-  
 }
 
 /* starts the loading of all the events stored in all the E5 smart contracts for a specified E5 */
@@ -613,82 +670,113 @@ async function set_up_listeners(e5) {
     const h5_contract = new web3.eth.Contract(H5_CONTRACT_ABI, data[e5]['addresses'][5]);
     const h52_contract = new web3.eth.Contract(H52_CONTRACT_ABI, data[e5]['addresses'][6]);
     const latest = Number(await web3.eth.getBlockNumber())
-    const t = 1000
-    //E5
-    load_past_events(e5_contract, 'e1', e5, web3, 'E5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e5_contract, 'e2', e5, web3, 'E5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e5_contract, 'e3', e5, web3, 'E5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e5_contract, 'e4', e5, web3, 'E5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e5_contract, 'e5', e5, web3, 'E5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e5_contract, 'e6', e5, web3, 'E5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e5_contract, 'e7', e5, web3, 'E5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    
+    const t = 3000
 
-    //E52
-    load_past_events(e52_contract, 'e1', e5, web3, 'E52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e52_contract, 'e2', e5, web3, 'E52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e52_contract, 'e3', e5, web3, 'E52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e52_contract, 'e4', e5, web3, 'E52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(e52_contract, 'e5', e5, web3, 'E52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    
+    if(beacon_chain_link != '' && data[e5]['current_block']['E5'+'e1'] == null){
+      //E5
+      load_past_events(e5_contract, 'e1', e5, web3, 'E5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e5_contract, 'e2', e5, web3, 'E5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e5_contract, 'e3', e5, web3, 'E5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e5_contract, 'e4', e5, web3, 'E5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e5_contract, 'e5', e5, web3, 'E5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e5_contract, 'e6', e5, web3, 'E5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e5_contract, 'e7', e5, web3, 'E5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      
 
-    //F5
-    load_past_events(f5_contract, 'e1', e5, web3, 'F5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(f5_contract, 'e2', e5, web3, 'F5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(f5_contract, 'e5', e5, web3, 'F5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(f5_contract, 'e4', e5, web3, 'F5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
+      //E52
+      load_past_events(e52_contract, 'e1', e5, web3, 'E52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e52_contract, 'e2', e5, web3, 'E52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e52_contract, 'e3', e5, web3, 'E52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e52_contract, 'e4', e5, web3, 'E52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(e52_contract, 'e5', e5, web3, 'E52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      
 
-    //G5
-    load_past_events(g5_contract, 'e1', e5, web3, 'G5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(g5_contract, 'e2', e5, web3, 'G5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
+      //F5
+      load_past_events(f5_contract, 'e1', e5, web3, 'F5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(f5_contract, 'e2', e5, web3, 'F5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(f5_contract, 'e5', e5, web3, 'F5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(f5_contract, 'e4', e5, web3, 'F5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
 
-    //G52
-    load_past_events(g52_contract, 'e1', e5, web3, 'G52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(g52_contract, 'e2', e5, web3, 'G52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(g52_contract, 'e3', e5, web3, 'G52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(g52_contract, 'archive', e5, web3, 'G52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
+      //G5
+      load_past_events(g5_contract, 'e1', e5, web3, 'G5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(g5_contract, 'e2', e5, web3, 'G5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
 
-    //H5
-    load_past_events(h5_contract, 'e1', e5, web3, 'H5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(h5_contract, 'e2', e5, web3, 'H5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(h5_contract, 'e3', e5, web3, 'H5', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
+      //G52
+      load_past_events(g52_contract, 'e1', e5, web3, 'G52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(g52_contract, 'e2', e5, web3, 'G52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(g52_contract, 'e3', e5, web3, 'G52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(g52_contract, 'archive', e5, web3, 'G52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
 
-    //H52
-    load_past_events(h52_contract, 'e1', e5, web3, 'H52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(h52_contract, 'e2', e5, web3, 'H52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(h52_contract, 'e3', e5, web3, 'H52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(h52_contract, 'e5', e5, web3, 'H52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
-    load_past_events(h52_contract, 'power', e5, web3, 'H52', latest)
-    await new Promise(resolve => setTimeout(resolve, t))
+      //H5
+      load_past_events(h5_contract, 'e1', e5, web3, 'H5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(h5_contract, 'e2', e5, web3, 'H5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(h5_contract, 'e3', e5, web3, 'H5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+
+      //H52
+      load_past_events(h52_contract, 'e1', e5, web3, 'H52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(h52_contract, 'e2', e5, web3, 'H52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(h52_contract, 'e3', e5, web3, 'H52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(h52_contract, 'e5', e5, web3, 'H52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+      load_past_events(h52_contract, 'power', e5, web3, 'H52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+    }else{
+      //E5
+      load_multiple_past_events(e5_contract, ['e1','e2', 'e3', 'e4', 'e5', 'e6', 'e7'], e5, web3, 'E5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+
+      //E52
+      load_multiple_past_events(e52_contract, ['e1','e2', 'e3', 'e4', 'e5'], e5, web3, 'E52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+
+      //F5
+      load_multiple_past_events(f5_contract, ['e1','e2', 'e5', 'e4'], e5, web3, 'F5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+
+      //G5
+      load_multiple_past_events(g5_contract, ['e1','e2'], e5, web3, 'G5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+
+      //G52
+      load_multiple_past_events(g52_contract, ['e1','e2', 'e3', 'archive'], e5, web3, 'G52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+
+      //H5
+      load_multiple_past_events(h5_contract, ['e1','e2', 'e3'], e5, web3, 'H5', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+
+      //H52
+      load_multiple_past_events(h52_contract, ['e1','e2', 'e3', 'e5', 'power'], e5, web3, 'H52', latest)
+      await new Promise(resolve => setTimeout(resolve, t))
+    }
 
     //load nitro links
     load_nitro_links(e5)
