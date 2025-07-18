@@ -32,7 +32,7 @@ const { Worker } = require('worker_threads');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "100gb" }));
-const version = '1.0'
+const version = '1.1'
 
 const SECRET = process.env.SECRET_KEY;
 const PRIVATE_KEY_RESOURCE = process.env.PRIVATE_KEY_RESOURCE
@@ -49,7 +49,7 @@ var data = {
   'e':['E25',],
   'E25': {
     'addresses':['0xF3895fe95f423A4EBDdD16232274091a320c5284', '0x839C6155383D4a62E31d4d8B5a6c172E6B71979c', '0xD338118A55B5245b9C9F6d5f03BF9d9eA32c5850', '0xec24050b8E3d64c8be3cFE9a40A59060Cb35e57C', '0xFA85d977875092CA69d010d4EFAc5B0E333ce61E', '0x7dcc9570c2e6df2860a518eEE46fA90E13ef6276', '0x0Bb15F960Dbb856f3Eb33DaE6Cc57248a11a4728'],
-    'web3':'https://etc.etcdesktop.com',
+    'web3':['https://etc.etcdesktop.com'], 'url':0,
     'first_block':19151130, 'current_block':{}, 'iteration':400_000,
   },
   // 'file_data_capacity':0,
@@ -661,7 +661,7 @@ function post_event_processing(contract_name, events){
 /* starts the loading of all the events stored in all the E5 smart contracts for a specified E5 */
 async function set_up_listeners(e5) {
   try{
-    const web3 = new Web3(data[e5]['web3']);
+    const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
     const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
     const e52_contract = new web3.eth.Contract(E52_CONTRACT_ABI, data[e5]['addresses'][1]);
     const f5_contract = new web3.eth.Contract(F5_CONTRACT_ABI, data[e5]['addresses'][2]);
@@ -786,16 +786,36 @@ async function set_up_listeners(e5) {
 }
 
 /* starts the loading of all the E5 event data if the app key is defined */
-function load_events_for_all_e5s(){
+async function load_events_for_all_e5s(){
   if(app_key == null || app_key == '') return;
 
   var e5s = data['e']
   for(var i=0; i<e5s.length; i++){ 
     try{
+      await check_and_set_default_rpc(e5s[i])
       set_up_listeners(e5s[i])
     }catch(e){
       console.log(e)
     }
+  }
+}
+
+async function check_and_set_default_rpc(e5){
+  if(data[e5]['url'] == null) return;
+  data[e5]['url'] = 0
+  const web3_url = data[e5]['web3'][data[e5]['url']]
+  const web3 = new Web3(web3_url);
+
+  var is_conn = await web3.eth.net.isListening()
+  if(!is_conn){
+    if(data[e5]['url'] < data[e5]['web3'].length - 1){
+      data[e5]['url'] ++
+      await check_and_set_default_rpc(e5)
+    }else{
+      return;
+    }
+  }else{
+    return;
   }
 }
 
@@ -1118,7 +1138,7 @@ async function search_for_object_ids_by_title(title, target_type){
 
 /* returns the subscription payment information for a specified account */
 async function get_subscription_payment_information(e5, signature_data, subscription, signature){
-  const web3 = new Web3(data[e5]['web3']);
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
   try{
     var original_address = await web3.eth.accounts.recover(signature_data.toString(), signature)
     const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
@@ -1354,7 +1374,7 @@ async function get_round_down_value(web3, blockNumber){
 
 /* returns an accounts available storage in megabytes from their signature */
 async function fetch_accounts_available_storage(signature_data, signature, e5){
-  const web3 = new Web3(data[e5]['web3']);
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
   try{
     // var current_block_number = Number(await web3.eth.getBlockNumber())
     // var round_down_value = await get_round_down_value(web3, (current_block_number))
@@ -1730,7 +1750,7 @@ function number_with_commas(x) {
 
 /* returns the timestamp as by a specified blockchain */
 async function get_e5_chain_time(e5){
-  var provider = data[e5]['web3']
+  var provider = data[e5]['url'] == null ? data[e5]['web3'] : data[e5]['web3'][data[e5]['url']]
   var E5_address = data[e5]['addresses'][0]
   const web3 = new Web3(provider);
   try{
@@ -2065,7 +2085,7 @@ async function get_iTransfer_data(identifier, account, recipient, requested_e5, 
 
 /* hashes data using keccak256 formula in web3 */
 function hash_my_data(h_data){
-  const web3 = new Web3(data['E25']['web3']);
+  const web3 = data['E25']['url'] != null ? new Web3(data['E25']['web3'][data['E25']['url']]): new Web3(data['E25']['web3']);
   var hash = web3.utils.keccak256(h_data.toString())
   return hash
 }
@@ -2114,7 +2134,7 @@ async function calculate_poll_results(static_poll_data, poll_id, file_objects, p
 
 /* verifies that the poll data supplied is valid and matches the original */
 async function verify_poll_data(static_poll_data, file_objects, e5, poll_id){
-  const web3 = new Web3(data[e5]['web3']);/* initialize a web3 object */
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);/* initialize a web3 object */
   const e52_contract = new web3.eth.Contract(E52_CONTRACT_ABI, data[e5]['addresses'][1]);
   var author = await e52_contract.methods.f133(poll_id).call((error, result) => {});/* read the author owner of the poll */
   if(author == 0) return { is_valid: false, message: 'No author found with provided poll id' };/* if the author value is 0, return */
@@ -2698,7 +2718,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
       const user_e5 = user_e5_id.split(':')[0]
       const user_id = user_e5_id.split(':')[1]
 
-      // const web3 = new Web3(data[e5]['web3']);
+      // const web3 = data[user_e5]['url'] != null ? new Web3(data[user_e5]['web3'][data[user_e5]['url']]): new Web3(data[user_e5]['web3']);
       // const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[user_e5]['addresses'][0]);
       // await new Promise(resolve => setTimeout(resolve, 1500))
       // const account_address = await e5_contract.methods.f289(user_id).call((error, result) => {});
@@ -2715,7 +2735,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
 
   for(var m=0; m<subscription_e5s.length; m++){
     const e5 = subscription_e5s[m]
-    const web3 = new Web3(data[e5]['web3']);
+    const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
     const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[user_e5]['addresses'][0]);
     const account_ids = await e5_contract.methods.f167([],user_account_addresses, 2).call((error, result) => {});
     account_ids.forEach((account, index) => {
@@ -3037,14 +3057,100 @@ app.get('/marco', async (req, res) => {
   res.send(string_obj);
 });//ok
 
+/* admin endpoint for booting a new E5 to be tracked by the node */
+app.post('/new_e5', async (req, res) => {
+  const arg_string = req.query.arg_string;
+  console.log(`arg string: ${arg_string}`);
+  try{
+    var arg_obj = JSON.parse(arg_string)
+    const e5 = arg_obj.e5;
+    const backup_key = arg_obj.backup_key;
+    const e5_address = arg_obj.e5_address;
+    const web3 = arg_obj.web3;
+    const web3_backups = arg_obj.web3_backups;
+    const first_block = arg_obj.first_block;
+    const iteration = arg_obj.iteration;
+
+    if(e5 == null || e5 == '' || backup_key == null || backup_key == ''){
+      res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+      return;
+    }
+
+    if(data['key'] !== backup_key){
+      res.send(JSON.stringify({ message: 'Invalid back-up key' , success:false}));
+      return;
+    }
+
+    if(e5_address == null || e5_address == ''){
+      res.send(JSON.stringify({ message: 'An E5 address needs to be specified.', success:false }));
+      return;
+    }
+
+    if(web3 == null || web3 == ''){
+      res.send(JSON.stringify({ message: 'The web3 provider needs to be specified', success:false }));
+      return;
+    }
+
+    if(web3_backups == null){
+      res.send(JSON.stringify({ message: 'You need to provide backup rpcs for your new e5 incase the default stops working', success:false }));
+      return;
+    }
+
+    if(first_block == null || first_block == 0 || isNaN(first_block)){
+      res.send(JSON.stringify({ message: `The first block value cannot be 0 or null. It should be the block that the E5 was deployed in.`, success:false }));
+      return;
+    }
+
+    if(iteration == null || iteration == '' || iteration == 0 || isNaN(iteration)){
+      res.send(JSON.stringify({ message: `The block iteration needs to be specified.`, success:false }));
+      return;
+    }
+
+    if(data['e'].includes(e5)){
+      res.send(JSON.stringify({ message: `The E5 already exists.`, success:false }));
+      return;
+    }
+
+    var contract_addresses = await get_e5_contracts_from_address(web3, e5_address, first_block)
+    if(contract_addresses.length != 7){
+      res.send(JSON.stringify({ message: `The E5 address specified is invalid`, success:false }));
+      return;
+    }
+
+    var status = await test_provider(web3, e5, e5_address, first_block)
+    if(status == false){
+      //bad provider
+      res.send(JSON.stringify({ message: 'That provider is unavailable to use with the E5', success:false }));
+      return;
+    }
+
+    data[e5] = {'addresses':contract_addresses, 'web3':[web3], 'url':0, 'first_block':first_block, 'current_block':{}, 'iteration':iteration}
+
+    web3_backups.forEach(backup_link => {
+      data[e5]['web3'].push(backup_link)
+    });
+
+    add_new_e5_to_event_data(e5)
+    data['e'].push(e5)
+
+    var obj = {message:`The new E5 '${e5}' has been added to the node successfully.`, success:true}
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    res.send(string_obj);
+  }catch(e){
+    console.log(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+});//ok ----
+
 /* enpoint for updating the node's provider for a specified E5 */
 app.post('/update_provider', async (req, res) => {
   try{
     const new_provider = req.query.new_provider;
     const e5 = req.query.e5;
     const backup_key = req.query.backup_key;
+    const new_providers = req.query.new_providers;
 
-    if(new_provider == null || new_provider == '' || backup_key == null || backup_key == '' || e5 == null || e5 == ''){
+    if(new_provider == null || new_provider == '' || new_providers == null || backup_key == null || backup_key == '' || e5 == null || e5 == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
       return;
     }
@@ -3065,7 +3171,15 @@ app.post('/update_provider', async (req, res) => {
       res.send(JSON.stringify({ message: 'That provider is unavailable to use with the E5', success:false }));
       return;
     }else{
-      data[e5]['web3'] = new_provider
+      const new_web3 = [new_provider]
+      new_providers.forEach(provider => {
+        new_web3.push(provider)
+      });
+      data[e5]['web3'] = new_web3
+      if(data[e5]['url'] == null){
+        data[e5]['url'] = 0
+      }
+
       var obj = {message:`Web3 provider for ${e5} updated to '${new_provider}' successfully.`, success:true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       res.send(string_obj);
@@ -3107,80 +3221,6 @@ app.post('/update_content_gateway', async (req, res) => {
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       res.send(string_obj);
     }
-  }catch(e){
-    console.log(e)
-    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
-  }
-});//ok ----
-
-/* admin endpoint for booting a new E5 to be tracked by the node */
-app.post('/new_e5', async (req, res) => {
-  const arg_string = req.query.arg_string;
-  console.log(`arg string: ${arg_string}`);
-  try{
-    var arg_obj = JSON.parse(arg_string)
-    const e5 = arg_obj.e5;
-    const backup_key = arg_obj.backup_key;
-    const e5_address = arg_obj.e5_address;
-    const web3 = arg_obj.web3;
-    const first_block = arg_obj.first_block;
-    const iteration = arg_obj.iteration;
-
-    if(e5 == null || e5 == '' || backup_key == null || backup_key == ''){
-      res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
-      return;
-    }
-
-    if(data['key'] !== backup_key){
-      res.send(JSON.stringify({ message: 'Invalid back-up key' , success:false}));
-      return;
-    }
-
-    if(e5_address == null || e5_address == ''){
-      res.send(JSON.stringify({ message: 'An E5 address needs to be specified.', success:false }));
-      return;
-    }
-
-    if(web3 == null || web3 == ''){
-      res.send(JSON.stringify({ message: 'The web3 provider needs to be specified', success:false }));
-      return;
-    }
-
-    if(first_block == null || first_block == 0 || isNaN(first_block)){
-      res.send(JSON.stringify({ message: `The first block value cannot be 0 or null. It should be the block that the E5 was deployed in.`, success:false }));
-      return;
-    }
-
-    if(iteration == null || iteration == '' || iteration == 0 || isNaN(iteration)){
-      res.send(JSON.stringify({ message: `The block iteration needs to be specified.`, success:false }));
-      return;
-    }
-
-    if(data['e'].includes(e5)){
-      res.send(JSON.stringify({ message: `The E5 already exists.`, success:false }));
-      return;
-    }
-
-    var contract_addresses = await get_e5_contracts_from_address(web3, e5_address, first_block)
-    if(contract_addresses.length != 7){
-      res.send(JSON.stringify({ message: `The E5 address specified is invalid`, success:false }));
-      return;
-    }
-
-    var status = await test_provider(web3, e5, e5_address, first_block)
-    if(status == false){
-      //bad provider
-      res.send(JSON.stringify({ message: 'That provider is unavailable to use with the E5', success:false }));
-      return;
-    }
-
-    data[e5] = {'addresses':contract_addresses, 'web3':web3, 'first_block':first_block, 'current_block':{}, 'iteration':iteration}
-    add_new_e5_to_event_data(e5)
-    data['e'].push(e5)
-
-    var obj = {message:`The new E5 '${e5}' has been added to the node successfully.`, success:true}
-    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-    res.send(string_obj);
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
