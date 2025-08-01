@@ -74,6 +74,7 @@ var data = {
   'uploaded_files_data':{},
   'target_storage_recipient_accounts':{},
   'last_checked_storage_renewal_block':{},
+  'free_default_storage_addresses':{},
 }
 
 const E5_CONTRACT_ABI = [
@@ -1394,14 +1395,17 @@ async function fetch_accounts_available_storage(signature_data, signature, e5){
 
     var payment_data = data['storage_data'][e5_address_account]
     if(payment_data == null){
-      if(data['free_default_storage'] != 0 && address_account != 0){
+      if(data['free_default_storage'] != 0 && address_account != 0 && data['free_default_storage_addresses'][original_address] == null){
         var balance = await web3.eth.getBalance(original_address)
         if(balance != 0){
           data['storage_data'][e5_address_account] = {'files':0, 'acquired_space':parseFloat(data['free_default_storage']), 'utilized_space':0.0};
+          data['free_default_storage_addresses'][original_address] = true;
 
           payment_data = data['storage_data'][e5_address_account]
-
           return { available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: e5_address_account }
+        }
+        else{
+          return { available_space: 0.0, account: e5_address_account };
         }
       }
       return { available_space: 0.0, account: e5_address_account };
