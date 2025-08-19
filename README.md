@@ -36,10 +36,17 @@ PRIVATE_KEY_RESOURCE=/etc/letsencrypt/live/api.mydomain.com/privkey.pem
 CERTIFICATE_RESOURCE=/etc/letsencrypt/live/api.mydomain.com/fullchain.pem
 ```
 
-These certificates can be obtained using the certbot command. Finally, in the `.env` you also need to declare the port number you will be using for the server. This should be port `443`:
+These certificates can be obtained using the certbot command. Then, in the `.env` you also need to declare the port number you will be using for the server. This should be port `443`:
 
 ```
 HTTPS_PORT=443
+```
+
+Finally, youll need to specify in the `.env` if you want the node to automatically renew your certificate and to enable endpoint updates. If these are unset, they will default to false:
+
+```
+AUTO_CERTIFICATE_RENEWAL=true
+ENPOINT_UPDATES_ENABLED=true
 ```
 
 Once this is done, you can start the node by running `pm2 start server.js --no-daemon` if youre using [pm2](https://pm2.io) or `node server.js` if youre debugging.

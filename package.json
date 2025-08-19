@@ -17,10 +17,12 @@
     "crypto-js": "^4.2.0",
     "diskusage": "^1.2.0",
     "dotenv": "^16.4.7",
+    "ecies-geth": "^1.7.5",
     "express": "^4.21.1",
     "mime-types": "^2.1.35",
     "os": "^0.1.2",
     "socket.io": "^4.8.1",
+    "tweetnacl": "^1.0.3",
     "web3": "^4.15.0"
   },
   "type": "module"

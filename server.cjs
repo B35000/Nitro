@@ -28,18 +28,27 @@ const os = require("os");
 const checkDiskSpace = require("check-disk-space").default;
 const mime = require("mime-types");
 const { Worker } = require('worker_threads');
+const { exec } = require('child_process');
+const path = require('path');
+// const CryptoJS = require("crypto-js");
+const nacl = require("tweetnacl");
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "100gb" }));
-const version = '1.1'
+const version = '1.2'
 
 const SECRET = process.env.SECRET_KEY;
 const PRIVATE_KEY_RESOURCE = process.env.PRIVATE_KEY_RESOURCE
 const CERTIFICATE_RESOURCE = process.env.CERTIFICATE_RESOURCE
 const HTTPS_PORT = process.env.HTTPS_PORT
-
-const logStream = fs.createWriteStream('errors.log', { flags: 'a' });
+const AUTO_CERTIFICATE_RENEWAL_ENABLED = process.env.AUTO_CERTIFICATE_RENEWAL == null ? false : (process.env.AUTO_CERTIFICATE_RENEWAL == 'true'); // <---- change this to false if you dont want auto renewal of https certificates using certbot
+const ENPOINT_UPDATES_ENABLED = process.env.ENPOINT_UPDATES_ENABLED == null ? false : (process.env.ENPOINT_UPDATES_ENABLED == 'true'); // <---- change this to false if you prefer manually updating your node
+var logStream;
+var sync_block_number = 0;
+var server_public_key = null;
+const privacy_address = '';
+var server_keys = null;
 
 
 /* data object containing all the E5 data. */
@@ -50,7 +59,7 @@ var data = {
   'E25': {
     'addresses':['0xF3895fe95f423A4EBDdD16232274091a320c5284', '0x839C6155383D4a62E31d4d8B5a6c172E6B71979c', '0xD338118A55B5245b9C9F6d5f03BF9d9eA32c5850', '0xec24050b8E3d64c8be3cFE9a40A59060Cb35e57C', '0xFA85d977875092CA69d010d4EFAc5B0E333ce61E', '0x7dcc9570c2e6df2860a518eEE46fA90E13ef6276', '0x0Bb15F960Dbb856f3Eb33DaE6Cc57248a11a4728'],
     'web3':['https://etc.etcdesktop.com'], 'url':0,
-    'first_block':19151130, 'current_block':{}, 'iteration':400_000,
+    'first_block':19151130, 'current_block':{}, 'iteration':400_000, 'reorgs':[]
   },
   // 'file_data_capacity':0,
   'max_buyable_capacity':0,
@@ -75,6 +84,19 @@ var data = {
   'target_storage_recipient_accounts':{},
   'last_checked_storage_renewal_block':{},
   'free_default_storage_addresses':{},
+  'memory_stats':{},
+  'request_stats':{},
+  'cold_storage_memory_stats':[],
+  'cold_storage_request_stats':[],
+  'cold_storage_trends_records':[],
+  'hash_data_request_limit':1024,
+  'event_data_request_limit':100000,
+  'block_mod':10,
+  'block_record_sync_time_limit': (135*24*60*60),
+  'scheduled_ecids_to_delete':[],
+  'is_ecid_delete_scheduled':false,
+  'ip_request_time_limit': 1000,
+  'certificate_expiry_time':0,
 }
 
 const E5_CONTRACT_ABI = [
@@ -147,6 +169,12 @@ var file_data_steams = {}
 var ipAccessTimestamps = {}
 const RATE_LIMIT_WINDOW = 5*60*60*1000;/* 5hrs */
 const STREAM_DATA_THRESHOLD = 1024*1024*5.3/* 5.3mbs */
+const rateLimitMap = new Map();
+var upload_view_trends_data = {}
+const userKeysMap = new Map();
+const endpoint_info = {}
+let trafficHistory = [];
+const originalFetch = global.fetch;
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -164,6 +192,63 @@ const STREAM_DATA_THRESHOLD = 1024*1024*5.3/* 5.3mbs */
 //   var ciphertext = CryptoJS.AES.encrypt(data, key).toString();
 //   return ciphertext
 // }
+
+async function encrypt_secure_data(text, password){
+  const iv = crypto.getRandomValues(new Uint8Array(12)); // AES-GCM needs 12-byte IV
+  const key = await get_key_from_password(password, 'e');
+  const encoder = new TextEncoder();
+  const encoded = encoder.encode(text);
+
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv: iv },
+    key,
+    encoded
+  );
+
+  const result = new Uint8Array(iv.length + ciphertext.byteLength);
+  result.set(iv, 0);
+  result.set(new Uint8Array(ciphertext), iv.length);
+
+  return uint8ToBase64(result); // return as base64 string
+}
+
+async function decrypt_secure_data(encrypted, password){
+  const data = base64ToUint8(encrypted);
+  const iv   = data.slice(0, 12);
+  const ciphertext = data.slice(12);
+
+  const key = await get_key_from_password(password, 'e');
+  const decrypted = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv: iv },
+    key,
+    ciphertext
+  );
+  const decoder = new TextDecoder();
+  return decoder.decode(decrypted)
+}
+
+async function get_key_from_password(password, final_salt) {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    {
+      name: 'PBKDF2',
+      salt: encoder.encode(final_salt),
+      iterations: 100000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  );
+}
 
 /* generates a random string with a specified length */
 function makeid(length) {
@@ -204,6 +289,11 @@ function add_new_e5_to_event_data(e5){
     },
   }
 }
+
+
+
+
+
 
 
 
@@ -304,8 +394,9 @@ async function fetch_data_from_nitro(cid, depth){
   const params = new URLSearchParams({
     arg_string:JSON.stringify({hashes:[nitro_cid]}),
   });
-  var request = `${nitro_url}/data?${params.toString()}`
+  var request = `${nitro_url}/data/e?${params.toString()}`
   try{
+    await new Promise(resolve => setTimeout(resolve, 1100))
     const response = await fetch(request);
     if (!response.ok) {
       console.log('datas',response)
@@ -414,18 +505,31 @@ async function load_hash_data(cids, ecid_ids){
   var ecids = []
   var included_cids = []
   for(var i=0; i<cids.length; i++){
-    var ecid_obj = get_ecid_obj(cids[i])
-    if(!included_cids.includes(ecid_obj['cid'])){
-      ecids.push(ecid_obj)
-      included_cids.push(ecid_obj['cid'])
+    try{
+      var ecid_obj = get_ecid_obj(cids[i])
+      if(!included_cids.includes(ecid_obj['cid'])){
+        ecids.push(ecid_obj)
+        included_cids.push(ecid_obj['cid'])
+      }
+    }
+    catch(e){
+      log_error({stack:e.toString()})
     }
   }
   if(beacon_chain_link != ''){
-    await load_data_from_beacon_node(included_cids)
+    if(included_cids.length > 35){
+      const split_array_cid = splitIntoChunks(included_cids, 35)
+      for(var i=0; i<split_array_cid.length; i++){
+        await load_data_from_beacon_node(split_array_cid[i])
+      }
+    }else{
+      await load_data_from_beacon_node(included_cids)
+    }
   }else{
     for(var i=0; i<ecids.length; i++){
       var ecid_obj = ecids[i]
-      if(hash_data[ecid_obj['cid']] == null){
+      delete_scheduled_entry_if_exists(ecid_obj['cid'])
+      if(hash_data[ecid_obj['cid']] == null && cold_storage_hash_pointers[ecid_obj['cid']] == null){
         if(ecid_obj['option'] == 'in'){
           await fetch_object_data_from_infura(ecid_obj, 0)
         }
@@ -444,13 +548,22 @@ async function load_hash_data(cids, ecid_ids){
   }
 }
 
+function splitIntoChunks(arr, chunkSize) {
+  const result = [];
+  for (let i = 0; i < arr.length; i += chunkSize) {
+    result.push(arr.slice(i, i + chunkSize));
+  }
+  return result;
+}
+
 /* loads data from the beacon chain if a link to the node is specified */
 async function load_data_from_beacon_node(cids){
   const params = new URLSearchParams({
     arg_string:JSON.stringify({hashes: cids}),
   });
-  var request = `${beacon_chain_link}/data?${params.toString()}`
+  var request = `${beacon_chain_link}/data/e?${params.toString()}`
   try{
+    await new Promise(resolve => setTimeout(resolve, 1100))
     const response = await fetch(request);
     if (!response.ok) {
       console.log('datas',response)
@@ -483,8 +596,9 @@ async function load_events_from_nitro(contract_name, event_id, e5, filter){
   const params = new URLSearchParams({
     arg_string:JSON.stringify({requests:[event_request]}),
   });
-  var request = `${beacon_chain_link}/events?${params.toString()}`
+  var request = `${beacon_chain_link}/events/e?${params.toString()}`
   try{
+    await new Promise(resolve => setTimeout(resolve, 1100))
     const response = await fetch(request);
     if (!response.ok) {
       console.log('all_data2',response)
@@ -530,7 +644,7 @@ async function load_past_events(contract, event, e5, web3, contract_name, latest
       events.forEach(event => {
         delete event.address
         delete event.blockHash
-        delete event.blockNumber
+        // delete event.blockNumber
         delete event.data
         delete event.raw
         delete event.signature
@@ -551,7 +665,7 @@ async function load_past_events(contract, event, e5, web3, contract_name, latest
     }
   }
   
-  post_event_processing(contract_name, events)
+  post_event_processing(contract_name, events, e5, event)
 }
 
 async function load_multiple_past_events(contract, event_names, e5, web3, contract_name, latest){
@@ -575,7 +689,7 @@ async function load_multiple_past_events(contract, event_names, e5, web3, contra
     events.forEach(event => {
       delete event.address
       delete event.blockHash
-      delete event.blockNumber
+      // delete event.blockNumber
       delete event.data
       delete event.raw
       delete event.signature
@@ -603,15 +717,16 @@ async function load_multiple_past_events(contract, event_names, e5, web3, contra
       const event_array = groups[event_name] == null ? [] : groups[event_name]
       event_data[e5][contract_name][event_name] = event_data[e5][contract_name][event_name].concat(event_array)
       data[e5]['current_block'][contract_name+event_name] = latest
+      post_event_processing(contract_name, event_array, e5, event_name)
     });
   }catch(e){
     console.log(e)
   }
 }
 
-function post_event_processing(contract_name, events){
+function post_event_processing(contract_name, events, e5, event_name){
   if(events.length > 0){
-    if(contract_name == 'E52' && event == 'e4'/* Data */){
+    if(contract_name == 'E52' && event_name == 'e4'/* Data */){
       //new data events
       var ecids = []
       for(var i=0; i<events.length; i++){
@@ -622,7 +737,7 @@ function post_event_processing(contract_name, events){
       load_hash_data(ecids)
       add_ecids(ecids)
     }
-    else if(contract_name == 'E52' && event == 'e5'/* Metadata */){
+    else if(contract_name == 'E52' && event_name == 'e5'/* Metadata */){
       //new metadata events
       var ecids = []
       var ecid_ids = []
@@ -634,9 +749,9 @@ function post_event_processing(contract_name, events){
       }
       load_hash_data(ecids, ecid_ids)
       add_ecids(ecids)
-      stage_ids_to_track(ecids, ecid_ids)
+      stage_ids_to_track(ecids, ecid_ids, e5)
     }
-    else if(contract_name == 'H52' && event == 'e5'/* Award */){
+    else if(contract_name == 'H52' && event_name == 'e5'/* Award */){
       //new award events
       var ecids = []
       for(var i=0; i<events.length; i++){
@@ -647,7 +762,7 @@ function post_event_processing(contract_name, events){
       load_hash_data(ecids)
       add_ecids(ecids)
     }
-    if(contract_name == 'E5' && event == 'e1'/* MakeObject */){
+    if(contract_name == 'E5' && event_name == 'e1'/* MakeObject */){
       //record all the object types
       for(var i=0; i<events.length; i++){
         if(object_types[e5] == null){
@@ -793,10 +908,11 @@ async function load_events_for_all_e5s(){
   var e5s = data['e']
   for(var i=0; i<e5s.length; i++){ 
     try{
+      await check_for_reorgs(e5s[i])
       await check_and_set_default_rpc(e5s[i])
       set_up_listeners(e5s[i])
     }catch(e){
-      console.log(e)
+      log_error(e)
     }
   }
 }
@@ -820,6 +936,360 @@ async function check_and_set_default_rpc(e5){
   }
 }
 
+async function check_for_reorgs(e5){
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+  const current_block_number = Number(await web3.eth.getBlockNumber())
+  const current_block = await web3.eth.getBlock(current_block_number);
+  const current_block_hash = current_block.hash == null ? '' : current_block.hash.toString()
+  const current_block_time = parseInt(current_block.timestamp)
+  if(data[e5]['block_hashes'] == null){
+    data[e5]['block_hashes'] = {'e':[]}
+    if(current_block_hash != '') {
+      data[e5]['block_hashes'][current_block_number] = { 'hash': current_block_hash, 'timestamp':current_block_time }
+      data[e5]['block_hashes']['e'].push(current_block_number)
+    }
+  }
+  else if(data[e5]['block_hashes'] != null && current_block_number > 0){
+    const last_block_pos = data[e5]['block_hashes']['e'].length() - 1
+    const last_block_number = data[e5]['block_hashes']['e'][last_block_pos]
+    const last_block = await web3.eth.getBlock(last_block_number);
+    const last_block_hash = last_block.hash == null ? '' : last_block.hash.toString()
+
+    if(last_block_hash != '' && data[e5]['block_hashes'][last_block_number] != null && data[e5]['block_hashes'][last_block_number]['hash'] != last_block_hash){
+      //there was a reorg, so find last matching block
+      var last_matching_block = null
+      var last_matching_block_time = null;
+      var block_being_checked = last_block_pos - 1
+      const blocks_to_delete = []
+      
+      while(last_matching_block == null && block_being_checked >= 0){
+        const focused_block_number = data[e5]['block_hashes']['e'][block_being_checked]
+        const block_being_chekced_block = await web3.eth.getBlock(focused_block_number);
+        const block_being_chekced_block_hash = block_being_chekced_block.hash == null ? '' : block_being_chekced_block.hash.toString()
+        
+        if(data[e5]['block_hashes'][focused_block_number]['hash'] != block_being_chekced_block_hash){
+          //hash doesnt match, move back to previously recorded hash
+          blocks_to_delete.push(focused_block_number)
+          block_being_checked --;
+        }
+        else{
+          last_matching_block = focused_block_number
+          last_matching_block_time = block_being_chekced_block.timestamp
+        }
+      }
+
+      if(last_matching_block == null){
+        last_matching_block = data[e5]['first_block']
+        const first_block = await web3.eth.getBlock(last_matching_block)
+        last_matching_block_time = first_block.timestamp
+      }
+
+      blocks_to_delete.forEach(invalid_block_number => {
+        delete data[e5]['block_hashes'][invalid_block_number]
+      });
+      data[e5]['block_hashes']['e'].splice(block_being_checked + 1);
+      if(data[e5]['current_block'] != null){
+        const keys = Object.keys(data[e5]['current_block'])
+        keys.forEach(key => {
+          data[e5]['current_block'][key] = last_matching_block
+        });
+      }
+      await delete_all_events_after_specific_block(last_matching_block, last_matching_block_time, e5, current_block_number)
+    }else{
+      //record block hash normally
+      if(current_block_hash != '') {
+        data[e5]['block_hashes'][current_block_number] = { 'hash': current_block_hash, 'timestamp':current_block_time }
+        data[e5]['block_hashes']['e'].push(current_block_number)
+      }
+    }
+  }
+}
+
+async function delete_all_events_after_specific_block(block_number, last_matching_block_time, e5, current_block_number){
+  log_error({stack: `Reorg detected in ${e5}! Rolling back node by ${current_block_number - block_number} blocks to ${block_number} validated on ${new Date(last_matching_block_time*1000)}.`})
+
+  if(data[e5]['reorgs'] == null){
+    data[e5]['reorgs'] = []
+  }
+  data[e5]['reorgs'].push({'last_valid_block':block_number, 'affected_blocks':(current_block_number - block_number), 'last_valid_block_timestamp':(last_matching_block_time*1000), 'now':Date.now()})
+
+  for(var i=0; i<cold_storage_event_files.length; i++){
+    const focused_file = cold_storage_event_files[i]
+    if(parseInt(focused_file) > (last_matching_block_time * 1000)){
+      const events_object = await fetch_entire_event_file_from_storage(focused_file)
+      const updated_events_object = delete_all_invalid_event_entries(events_object, e5, block_number)
+      await replace_event_file_after_edit(updated_events_object.events_object, focused_file)
+      await start_delete_event_data_hashes(updated_events_object.deleted_events_object, last_matching_block_time)
+    }
+  }
+  const updated_object_data = delete_all_invalid_event_entries(event_data, e5, block_number)
+  await start_delete_event_data_hashes(updated_object_data.deleted_events_object, last_matching_block_time)
+  event_data = updated_object_data.events_object
+}
+
+function delete_all_invalid_event_entries(object, e5, block_number){
+  const events_object = structuredClone(object)
+  const deleted_events_object = {}
+  Object.keys(events_object).forEach(focused_e5 => {
+    if(focused_e5 == e5){
+      Object.keys(events_object[focused_e5]).forEach(contract => {
+        Object.keys(events_object[focused_e5][contract]).forEach(event_name => {
+          events_object[focused_e5][contract][event_name].forEach((event_item, index) => {
+            if(event_item.blockNumber != null && parseInt(event_item.blockNumber) > block_number){
+              events_object[focused_e5][contract][event_name].splice(index, 1)
+              if(deleted_events_object[contract] == null){
+                deleted_events_object[contract] = {}
+              }
+              if(deleted_events_object[contract][event_name] == null){
+                deleted_events_object[contract][event_name] = []
+              }
+              deleted_events_object[contract][event_name].push(event_item)
+            }
+          });
+        });
+      });
+    }
+  });
+
+  return { events_object, deleted_events_object };
+}
+
+async function start_delete_event_data_hashes(deleted_events_object, last_matching_block_time){
+  const contracts = Object.keys(deleted_events_object)
+  if(contracts.length > 0){
+    for(var c=0; c<contracts.length; c++){
+      const focused_contract = contracts[c]
+      const event_names = Object.keys(deleted_events_object[focused_contract])
+      for(var e=0; e<event_names.length; e++){
+        const event_name = event_names[e]
+        const deleted_events = deleted_events_object[focused_contract][event_name]
+        await delete_invalid_entry_hashes(focused_contract, deleted_events, e5, event_name, last_matching_block_time)
+      }
+    }
+  }
+}
+
+async function delete_invalid_entry_hashes(contract_name, events, e5, event_name, last_matching_block_time){
+  if(events.length > 0){
+    if(contract_name == 'E52' && event_name == 'e4'/* Data */){
+      //new data events
+      var ecids = []
+      for(var i=0; i<events.length; i++){
+        if(!ecids.includes(events[i].returnValues.p4/* string_data */)){
+          ecids.push(events[i].returnValues.p4/* string_data */)
+        }
+      }
+      await schedule_delete_hash_data(ecids)
+      remove_ecids(ecids)
+    }
+    else if(contract_name == 'E52' && event_name == 'e5'/* Metadata */){
+      //new metadata events
+      var ecids = []
+      var ecid_ids = []
+      for(var i=0; i<events.length; i++){
+        if(!ecids.includes(events[i].returnValues.p4/* metadata */)){
+          ecids.push(events[i].returnValues.p4/* metadata */)
+          ecid_ids.push(events[i].returnValues.p1/* target_obj_id */)
+        }
+      }
+      await schedule_delete_hash_data(ecids)
+      remove_ecids(ecids)
+      await reverse_update_staged_hash_data(ecids, last_matching_block_time)
+    }
+    else if(contract_name == 'H52' && event_name == 'e5'/* Award */){
+      //new award events
+      var ecids = []
+      for(var i=0; i<events.length; i++){
+        if(!ecids.includes(events[i].returnValues.p4/* metadata */)){
+          ecids.push(events[i].returnValues.p4/* metadata */)
+        }
+      }
+      await schedule_delete_hash_data(ecids)
+      remove_ecids(ecids)
+    }
+    if(contract_name == 'E5' && event_name == 'e1'/* MakeObject */){
+      //record all the object types
+      for(var i=0; i<events.length; i++){
+        if(object_types[e5] == null){
+          object_types[e5] = {}
+        }
+        delete object_types[e5][parseInt(events[i].returnValues.p1/* object_id */)];
+      }
+    }
+  }
+}
+
+function remove_ecids(ecids){
+  var count = 0
+  ecids.forEach(ecid => {
+    if(ecid.includes('.') || ecid.startsWith('Qm')){
+      count++
+    }
+  });
+  hash_count-=count
+}
+
+async function schedule_delete_hash_data(cids){
+  var included_cids = []
+  for(var i=0; i<cids.length; i++){
+    var ecid_obj = get_ecid_obj(cids[i])
+    if(!included_cids.includes(ecid_obj['cid'])){
+      ecids.push(ecid_obj)
+      included_cids.push(ecid_obj['cid'])
+    }
+  }
+  data['scheduled_ecids_to_delete'] = data['scheduled_ecids_to_delete'].concat(included_cids)
+  if(data['is_ecid_delete_scheduled'] != true){
+    setTimeout(delete_hash_data, 18*24*60*60*1000);
+    data['is_ecid_delete_scheduled'] = true
+  }
+}
+
+async function delete_hash_data(){
+  data['is_ecid_delete_scheduled'] = false
+  const file_mapping = {}
+  data['scheduled_ecids_to_delete'].forEach(cid => {
+    if(cold_storage_hash_pointers[cid] != null){
+      if(file_mapping[cold_storage_hash_pointers[cid]] == null){
+        file_mapping[cold_storage_hash_pointers[cid]] = []
+      }
+      file_mapping[cold_storage_hash_pointers[cid]].push(cid)
+    }else{
+      if(hash_data[cid]!= null){
+        delete_color_metric(hash_data[cid])
+        delete hash_data[cid]
+        delete_scheduled_entry_if_exists(cid)
+      }
+    }
+  });
+
+  const files_to_modify = Object.keys(file_mapping)
+  if(files_to_modify.length > 0){
+    for(var f=0; f<files_to_modify.length; f++){
+      const file_name = files_to_modify[f]
+      const file_object = await fetch_entire_data_file_from_storage(file_name)
+      file_mapping[file_name].forEach(cid_entry => {
+        if(file_object[cid_entry]!= null){
+          delete_color_metric(file_object[cid_entry])
+          delete file_object[cid_entry];
+          delete_scheduled_entry_if_exists(cid_entry)
+        }
+      });
+      await replace_data_file_after_edit(file_object, file_name)
+    }
+  }
+}
+
+function delete_scheduled_entry_if_exists(cid){
+  if(data['scheduled_ecids_to_delete'].includes(cid)){
+    const index = data['scheduled_ecids_to_delete'].indexOf(cid)
+    if(index != -1){
+      data['scheduled_ecids_to_delete'].splice(index, 1)
+    }
+  }
+}
+
+async function fetch_entire_data_file_from_storage(file){
+  var is_loading_file = true
+  var cold_storage_obj = {}
+  fs.readFile(`hash_data/${file}.json`, (error, data) => {
+    if (error) {
+      console.error(error);
+    }else{
+      cold_storage_obj = JSON.parse(data.toString())
+    }
+    is_loading_file = false
+  });
+  while (is_loading_file == true) {
+    if (is_loading_file == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+  return cold_storage_obj
+}
+
+async function replace_data_file_after_edit(data_object, file_name){
+  var is_loading_file = true
+  const write_data = JSON.stringify(data_object, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  var dir = './hash_data'
+  if (!fs.existsSync(dir)){
+    fs.mkdirSync(dir);
+  }
+  fs.writeFile(`hash_data/${file_name}.json`, write_data, (error) => {
+    if (error) {
+      console.log(error)
+    }else{      
+      console.log("hash_data replaced correctly");
+    }
+    is_loading_file = false
+  });
+  while (is_loading_file == true) {
+    if (is_loading_file == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+}
+
+
+function delete_color_metric(hash_data){
+  var set_color = 'g'
+  if(hash_data != null && isJsonObject(hash_data) == true && hash_data['tags'] != null && hash_data['tags']['color'] != null){
+    set_color = hash_data['tags']['color']
+  }
+  try{
+    if(data['color_metrics'][set_color] != null){
+      data['color_metrics'][set_color]--;
+    }
+  }catch(e){
+    console.log(e)
+  }
+}
+
+async function replace_event_file_after_edit(events_object, file_name){
+  var is_loading_file = true
+  const write_data = JSON.stringify(events_object, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  var dir = './event_data'
+  if (!fs.existsSync(dir)){
+    fs.mkdirSync(dir);
+  }
+  fs.writeFile(`event_data/${file_name}.json`, write_data, (error) => {
+    if (error) {
+      console.log(error)
+    }else{      
+      console.log("event_data replaced correctly");
+    }
+    is_loading_file = false
+  });
+  while (is_loading_file == true) {
+    if (is_loading_file == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+}
+
+/* fetches the data stored in a event storage file */
+async function fetch_entire_event_file_from_storage(file){
+  var is_loading_file = true
+  var cold_storage_obj = {}
+  fs.readFile(`event_data/${file}.json`, (error, data) => {
+    if (error) {
+      console.error(error);
+    }else{
+      cold_storage_obj = JSON.parse(data.toString())
+    }
+    is_loading_file = false
+  });
+  while (is_loading_file == true) {
+    if (is_loading_file == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+  return cold_storage_obj
+}
+
+
+
+
+
+
+
+
 /* calculates and records the number of ipfs hashes that have been recorded */
 function add_ecids(ecids){
   var count = 0
@@ -832,9 +1302,9 @@ function add_ecids(ecids){
 }
 
 /* stages specified ecids and object ids into memory to track once loaded via ipfs */
-function stage_ids_to_track(ecids, obj_ids){
+function stage_ids_to_track(ecids, obj_ids, e5){
   ecids.forEach((ecid, index) => {
-    staged_ecids[ecid] = obj_ids[index]
+    staged_ecids[ecid] = { object_id: obj_ids[index], e5: e5 }
   });
 }
 
@@ -855,10 +1325,14 @@ function update_staged_hash_data(){
                 if(key != 'color'){
                   const index_values = container_data['tags'][key]['elements']
                   const item_type = container_data['tags'][key]['type']
+                  const item_lan = container_data['tags'][key]['lan'] == null ? 'en' : container_data['tags'][key]['type']
                   if(pointer_data[item_type] == null){
                     pointer_data[item_type] = []
                   }
-                  pointer_data[item_type].push({'id':staged_ecids[ecid], 'keys':index_values})
+                  const id = isNaN(staged_ecids[ecid]) ? staged_ecids[ecid].object_id : staged_ecids[ecid]
+                  const e5 = isNaN(staged_ecids[ecid]) ? staged_ecids[ecid].e5 : 'E25'
+                  pointer_data[item_type].push({'id':id, 'e5':e5, 'keys':index_values})
+                  record_trend('uploads', index_values, item_lan)
                   delete staged_ecids[ecid]
                 }
               }
@@ -866,13 +1340,140 @@ function update_staged_hash_data(){
           }else{
             delete staged_ecids[ecid]
           }
-        }catch(e){
-          
+        }
+        catch(e){
+          log_error(e)
         }
       }
     }
   }
 }
+
+function record_trend(type, keys, language){
+  const now = new Date();
+  now.setMinutes(0, 0, 0);
+  const timestamp = now.getTime()
+  keys.forEach(tag => {
+    if(upload_view_trends_data[timestamp] == null){
+      upload_view_trends_data[timestamp] = {'uploads':{}, 'views':{} }
+    }
+    if(upload_view_trends_data[timestamp][type][language] == null){
+      upload_view_trends_data[timestamp][type][language] = {}
+    }
+    if(upload_view_trends_data[timestamp][type][language][tag] == null){
+      upload_view_trends_data[timestamp][type][language][tag] = { 'hits':0 }
+    }
+    upload_view_trends_data[timestamp][type][language][tag]['hits'] ++
+  });
+}
+
+
+async function reverse_update_staged_hash_data(staged_ecids_to_remove, last_matching_block_time){
+  // console.log('updating staged hash data...')
+  for(const ecid in staged_ecids_to_remove){
+    if(staged_ecids_to_remove.hasOwnProperty(ecid)){
+      const ecid_obj = get_ecid_obj(ecid)
+      const cid = ecid_obj['cid']
+      const container_data = hash_data[cid]
+      if(container_data != null){
+        try{
+          if(container_data['tags'] != null){
+            // console.log('found an object with tags', container_data['tags'])
+            for(const key in container_data['tags']){
+              if(container_data['tags'].hasOwnProperty(key)){
+                if(key != 'color'){
+                  const index_values = container_data['tags'][key]['elements']
+                  const item_type = container_data['tags'][key]['type']
+                  const item_lan = container_data['tags'][key]['lan'] == null ? 'en' : container_data['tags'][key]['type']
+
+                  if(pointer_data[item_type] != null){
+                    const id = isNaN(staged_ecids_to_remove[ecid]) ? staged_ecids_to_remove[ecid].object_id : staged_ecids_to_remove[ecid]
+                    const e5 = isNaN(staged_ecids_to_remove[ecid]) ? staged_ecids_to_remove[ecid].e5 : 'E25'
+
+                    const index = pointer_data[item_type].findIndex(obj => (obj['id'] == id && obj['e5'] == e5));
+                    if (index != -1) {
+                      pointer_data[item_type].splice(index, 1); // remove 1 item at that index
+                    }
+                  }
+                  await unrecord_trend('uploads', index_values, item_lan, last_matching_block_time)
+                  if(staged_ecids[ecid] != null){
+                    delete staged_ecids[ecid]
+                  }
+                }
+              }
+            }
+          }
+          else{
+            if(staged_ecids[ecid] != null){
+              delete staged_ecids[ecid]
+            }
+          }
+        }
+        catch(e){
+          log_error(e)
+        }
+      }
+    }
+  }
+}
+
+
+async function unrecord_trend(type, keys, language, last_matching_block_time){
+  const recorded_trends_data_files = data['cold_storage_trends_records'].filter(function (time) {
+    return (parseInt(time) >= parseInt(last_matching_block_time))
+  });
+
+  if(recorded_trends_data_files.length > 0){
+    for(var i=0; i<recorded_trends_data_files.length; i++){
+      const focused_file = recorded_trends_data_files[i]
+      const object = await read_file(focused_file, 'trends_stats_history')
+      const updated_object = change_trends_object_file(type, keys, language, last_matching_block_time, object)
+      await rewrite_entire_trend_file_in_storage(focused_file, updated_object)
+    }
+  }
+
+  upload_view_trends_data = change_trends_object_file(type, keys, language, last_matching_block_time, upload_view_trends_data)
+}
+
+function change_trends_object_file(type, keys, language, last_matching_block_time, view_trends_data){
+  const upload_view_trends_data_clone = structuredClone(view_trends_data)
+  Object.keys(upload_view_trends_data_clone).forEach(timestamp => {
+    if(timestamp > last_matching_block_time){
+      if(upload_view_trends_data_clone[timestamp] != null && upload_view_trends_data_clone[timestamp][type] != null && upload_view_trends_data_clone[timestamp][type][language] != null){
+        keys.forEach(tag => {
+          if(upload_view_trends_data_clone[timestamp][type][language][tag] != null){
+            upload_view_trends_data_clone[timestamp][type][language][tag]['hits'] --;
+          }
+        });
+      }
+    }
+  });
+  return upload_view_trends_data_clone
+}
+
+async function rewrite_entire_trend_file_in_storage(file_name, updated_object){
+  var is_loading_file = true
+  const write_data = JSON.stringify(updated_object, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  var dir = './trends_stats_history'
+  if (!fs.existsSync(dir)){
+    fs.mkdirSync(dir);
+  }
+  fs.writeFile(`trends_stats_history/${file_name}.json`, write_data, (error) => {
+    if (error) {
+      console.log(error)
+    }else{      
+      console.log("trends_stats_history replaced correctly");
+    }
+    is_loading_file = false
+  });
+  while (is_loading_file == true) {
+    if (is_loading_file == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+}
+
+
+
 
 
 
@@ -882,9 +1483,9 @@ function update_staged_hash_data(){
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
   var obj = {
-    'data':data, 
+    'data':data,
     'event_data':event_data, 
-    'hash_data':hash_data, 
+    'hash_data':hash_data,
     'object_types':object_types, 
     'cold_storage_hash_pointers':cold_storage_hash_pointers, 
     'cold_storage_event_files':cold_storage_event_files, 
@@ -895,7 +1496,8 @@ async function store_back_up_of_data(){
     'staged_ecids':staged_ecids, 
     'beacon_chain_link': beacon_chain_link, 
     'failed_ecids':failed_ecids, 
-    'file_data_steams':file_data_steams
+    'file_data_steams':file_data_steams,
+    'upload_view_trends_data':upload_view_trends_data,
   }
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -975,6 +1577,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       if(obj['file_data_steams'] != null){
         file_data_steams = obj['file_data_steams']
       }
+      if(obj['upload_view_trends_data'] != null){
+        upload_view_trends_data = obj['upload_view_trends_data']
+      }
       
       console.log('successfully loaded back-up data')
 
@@ -998,37 +1603,7 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
 
 
 /* filters objects by a specified set of tags */
-async function search_for_object_ids_by_tags(tags, target_type){
-  // var all_objects = await get_all_objects(target_type)
-
-  // var filtered_objects = [];
-  // filtered_objects = all_objects.filter(function (object) {
-  //   var object_tags = object['data']['entered_indexing_tags'] == null ? [] : object['data']['entered_indexing_tags']
-  //   const containsAll = tags.some(r=> object_tags.includes(r))
-  //   return (containsAll)
-  // });//first find all the objects that have at least 1 tag from the searched
-
-
-  // var final_filtered_objects = []
-  // final_filtered_objects = filtered_objects.filter(function (object) {
-  //   var object_tags = object['data']['entered_indexing_tags'] == null ? [] : object['data']['entered_indexing_tags']
-  //   const containsAll = tags.every(element => {
-  //     return object_tags.includes(element);
-  //   });
-  //   return (containsAll)
-  // });//then filter those objects for the objects that have all the tags specified
-
-  // filtered_objects.forEach(object => {
-  //   if(!final_filtered_objects.includes(object)){
-  //     final_filtered_objects.push(object)
-  //   }
-  // });
-
-
-  // var ids = []
-  // final_filtered_objects.forEach(object => {
-  //   ids.push(object['id'])
-  // });
+async function search_for_object_ids_by_tags(tags, target_type, language){
   var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
   if(target_type == 0){
     for(var p=17; p<=36; p++){
@@ -1037,7 +1612,7 @@ async function search_for_object_ids_by_tags(tags, target_type){
     }
   }
   var filtered_objects = [];
-  var processed_tags = tags.map(word => word.toLowerCase());
+  var processed_tags = tags.map(word => word.toString());
   filtered_objects = all_objs.filter(function (object) {
     var object_tags = object['keys']
     const containsAll = processed_tags.some(r=> object_tags.includes(r))
@@ -1055,60 +1630,29 @@ async function search_for_object_ids_by_tags(tags, target_type){
 
   var ids = []
   final_filtered_objects.forEach(item => {
-    if(!ids.includes(item['id'])){
-      ids.push(item['id'])
+    const id = item['id']
+    const e5 = item['e5'] == null ? 'E25' : item['e5']
+    const e5_id = e5+':'+id
+    if(!ids.includes(e5_id)){
+      ids.push(e5_id)
     }
   });
   filtered_objects.forEach(item => {
-    if(!ids.includes(item['id'])){
-      ids.push(item['id'])
+    const id = item['id']
+    const e5 = item['e5'] == null ? 'E25' : item['e5']
+    const e5_id = e5+':'+id
+    if(!ids.includes(e5_id)){
+      ids.push(e5_id)
     }
   });
+
+  record_trend('views', tags, language)
 
   return ids;
 }
 
 /* filters objects by a specified title */
 async function search_for_object_ids_by_title(title, target_type){
-  // var all_objects = await get_all_objects(target_type)
-  // var filtered_objects = [];
-  // filtered_objects = all_objects.filter(function (object) {
-  //   var object_title = object['data']['entered_title_text'] == null ? '' : object['data']['entered_title_text']
-  //   const match = object_title.toLowerCase().includes(title.toLowerCase())
-  //   if(target_type == 19/* 19(audio_object) */){
-  //     //its a album being searched, so check the songs in it
-  //     var songs = object['data']['songs']
-  //     var filtered_songs = songs.filter(function (object) {
-  //       var song_title = object['song_title'] == null ? '' : object['song_title']
-  //       var song_composer = object['song_composer'] == null ? '' : object['song_composer']
-  //       return (song_title.toLowerCase().includes(title.toLowerCase()) || song_composer.toLowerCase().includes(title.toLowerCase()))
-  //     });
-  //     if(filtered_songs.length > 0){
-  //       return true
-  //     }
-  //   }
-
-  //   if(target_type == 20/* 20(video_object) */){
-  //     //its a video being searched, check the videos in it
-  //     var videos = object['data']['videos']
-  //     var filtered_videos = videos.filter(function (object) {
-  //       var video_title = object['video_title'] == null ? '' : object['video_title']
-  //       var video_composer = object['video_composer'] == null ? '' : object['video_composer']
-  //       return (video_title.toLowerCase().includes(title.toLowerCase()) || video_composer.toLowerCase().includes(title.toLowerCase()))
-  //     });
-  //     if(filtered_videos.length > 0){
-  //       return true
-  //     }
-  //   }
-
-  //   return (match)
-  // });
-
-  // var ids = []
-  // filtered_objects.forEach(object => {
-  //   ids.push(object['id'])
-  // });
-
   var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
   if(target_type == 0){
     for(var p=17; p<=36; p++){
@@ -1119,14 +1663,17 @@ async function search_for_object_ids_by_title(title, target_type){
   var filtered_objects = [];
   filtered_objects = all_objs.filter(function (object) {
     var object_tags = object['keys']
-    const containsAll = object_tags.includes(title.toLowerCase())
+    const containsAll = object_tags.includes(title.toString())
     return (containsAll)
   });
 
   var ids = []
   filtered_objects.forEach(item => {
-    if(!ids.includes(item['id'])){
-      ids.push(item['id'])
+    const id = item['id']
+    const e5 = item['e5'] == null ? 'E25' : item['e5']
+    const e5_id = e5+':'+id
+    if(!ids.includes(e5_id)){
+      ids.push(e5_id)
     }
   });
 
@@ -1266,7 +1813,7 @@ async function filter_events(requested_e5, requested_contract, requested_event_i
 function store_hashes_in_file_storage_if_memory_full(){
   update_staged_hash_data()
   var keys = Object.keys(hash_data)
-  if(keys.length >= 125){
+  if(get_object_size_in_mbs(hash_data) > 5.3){
     //store all the data in a file
     const now = Date.now()
     const write_data = JSON.stringify(hash_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -1276,7 +1823,7 @@ function store_hashes_in_file_storage_if_memory_full(){
     }
     fs.writeFile(`hash_data/${now}.json`, write_data, (error) => {
       if (error) {
-        console.log(error)
+        log_error(error)
       }else{
         for(var i=0; i<keys.length; i++){
           cold_storage_hash_pointers[keys[i]] = now
@@ -1395,11 +1942,12 @@ async function fetch_accounts_available_storage(signature_data, signature, e5){
 
     var payment_data = data['storage_data'][e5_address_account]
     if(payment_data == null){
-      if(data['free_default_storage'] != 0 && address_account != 0 && data['free_default_storage_addresses'][original_address] == null){
+      if(data['free_default_storage'] != 0 && address_account != 0 && 
+        data['free_default_storage_addresses'][original_address] == null){
         var balance = await web3.eth.getBalance(original_address)
         if(balance != 0){
           data['storage_data'][e5_address_account] = {'files':0, 'acquired_space':parseFloat(data['free_default_storage']), 'utilized_space':0.0};
-          data['free_default_storage_addresses'][original_address] = true;
+          data['free_default_storage_addresses'][original_address] = true
 
           payment_data = data['storage_data'][e5_address_account]
           return { available_space: (payment_data['acquired_space'] - payment_data['utilized_space']), account: e5_address_account }
@@ -1931,7 +2479,7 @@ function delete_old_backup_files(){
 
 /* checks if the event_data object is large enough to back up in storage and backs up if so */
 function backup_event_data_if_large_enough(){
-  if(get_object_size_in_mbs(event_data) > 64){
+  if(get_object_size_in_mbs(event_data) > 5.3){
     //store all the data in a file
     const now = Date.now()
     const write_data = JSON.stringify(event_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -2403,12 +2951,16 @@ function get_price_data_snapshots(modification_events, object){
 
 
 
+
+
+
+
+
 /*  */
 function record_stream_event(file, chunk_length){
-  const date = new Date();
-  const month = date.getMonth() + 1;
-  const year = date.getFullYear(); 
-  const timestamp_id = year.toString()+':'+month.toString()
+  const now = new Date();
+  now.setMinutes(0, 0, 0);
+  const timestamp_id = now.getTime()
 
   if(file_data_steams[timestamp_id] == null){
     file_data_steams[timestamp_id] = {}
@@ -2429,18 +2981,7 @@ function record_view_event(file){
 }
 
 function backup_stream_count_data_if_large_enough(){
-  var stream_keys = Object.keys(file_data_steams)
-  var keys_to_backup = []
-  const date = new Date();
-  const month = date.getMonth() + 1;
-  const year = date.getFullYear();
-  const timestamp_id = year.toString()+':'+month.toString()
-  stream_keys.forEach(key => {
-    if(key != timestamp_id){
-      keys_to_backup.push(key)
-    }
-  });
-
+  var keys_to_backup = Object.keys(file_data_steams)
   if(keys_to_backup.length > 0){
     //stash backup keys
     const now = Date.now()
@@ -2470,7 +3011,6 @@ function backup_stream_count_data_if_large_enough(){
 async function get_data_streams_for_files(files){
   var active_time_keys = Object.keys(file_data_steams)
   var cold_storage_time_keys = data['cold_storage_stream_data_files']['backup_array']
-  var all_keys = active_time_keys.concat(cold_storage_time_keys)
   var file_data_objects = {}
   var file_name_function_memory = {}
   var is_loading_file = false
@@ -2480,11 +3020,20 @@ async function get_data_streams_for_files(files){
     if(file_data_objects[focused_file] == null){
       file_data_objects[focused_file] = {}
     }
-    for(var j=0; j<all_keys.length; j++){
-      var focused_time_key = all_keys[j]
+    for(var k=0; k<active_time_keys.length; k++){
+      var focused_time_key = active_time_keys[k]
+      if(file_data_steams[focused_time_key] != null){
+        file_data_objects[focused_file][focused_time_key] = file_data_steams[focused_time_key][focused_file] || bigInt(0)
+      }
+    }
+    for(var j=0; j<cold_storage_time_keys.length; j++){
+      var focused_time_key = cold_storage_time_keys[j]
       if(file_name_function_memory[focused_time_key] != null){
-        file_data_objects[focused_file][focused_time_key] = file_name_function_memory[focused_time_key][focused_file] || bigInt(0)
-      }else{
+        Object.keys(file_name_function_memory[focused_time_key]).forEach(recorded_time => {
+          file_data_objects[focused_file][recorded_times] = file_name_function_memory[focused_time_key][recorded_time][focused_file] || bigInt(0)
+        });
+      }
+      else{
         var cold_storage_file_name = data['cold_storage_stream_data_files'][focused_time_key]
         is_loading_file = true
         fs.readFile(`stream_data/${cold_storage_file_name}.json`, (error, data) => {
@@ -2492,16 +3041,15 @@ async function get_data_streams_for_files(files){
             console.error(error);
           }else{
             var cold_storage_obj = JSON.parse(data.toString())
-            var cold_storage_object_keys = Object.keys(cold_storage_obj)
-            file_data_objects[focused_file][focused_time_key] = cold_storage_object_keys[focused_time_key][focused_file] || bigInt(0)
-
-            cold_storage_object_keys.forEach(key => {
-              if(get_object_size_in_mbs(file_name_function_memory) < 100){
-                if(file_name_function_memory[key] != null){
-                  file_name_function_memory[key] = cold_storage_object_keys[key]
-                }
-              }
+            Object.keys(cold_storage_obj).forEach(recorded_times => {
+              file_data_objects[focused_file][recorded_times] = cold_storage_obj[recorded_times][focused_file] || bigInt(0)
             });
+
+            if(get_object_size_in_mbs(file_name_function_memory) + get_object_size_in_mbs(cold_storage_obj) < 100){
+              if(file_name_function_memory[focused_time_key] != null){
+                file_name_function_memory[focused_time_key] = cold_storage_obj
+              }
+            }
           }
           is_loading_file = false
         });
@@ -2528,6 +3076,14 @@ function get_file_views(files){
   return return_views_data
 }
 
+
+
+
+
+
+
+
+
 function reset_ip_access_timestamp_object(){
   var keys = Object.keys(ipAccessTimestamps)
   const now = Date.now();
@@ -2538,10 +3094,6 @@ function reset_ip_access_timestamp_object(){
     }
   });
 }
-
-
-
-
 
 async function calculate_income_stream_for_multiple_subscriptions(subscription_objects, steps, filter_value, file_view_data){
   const subscription_object_keys = Object.keys(subscription_objects)
@@ -2790,6 +3342,9 @@ function record_file_data(file_names, binaries, account, file_types){
 
 
 
+
+
+
 function delete_unrenewed_files(){
   const current_month = new Date().getMonth()
   if(current_month != 6) return;
@@ -2861,6 +3416,9 @@ function get_files_statuses(files){
 
 
 
+
+
+
 function format_account_balance_figure(amount){
   if(amount == null){
     amount = 0;
@@ -2892,6 +3450,258 @@ function delete_accounts_file(file){
   }
 }
 
+async function is_privacy_signature_valid(signature){
+  if(signature == null || signature == ''){
+    return false
+  }
+  if(privacy_address == null || privacy_address == ''){
+    return true;
+  }
+  const e5 = 'E25'
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+  try{
+    var current_block_number = sync_block_number != 0 ? sync_block_number : Number(await web3.eth.getBlockNumber())
+    // const block_mod = data['block_mod'] == null ? 10 : data['block_mod']
+    const block_mod = 5;
+    var signature_data = Math.floor(current_block_number/block_mod)
+    var value1 = await check_privacy_signature(signature, web3, signature_data)
+    var value2 = null;
+    if(current_block_number % block_mod <= 3){
+      var signature_data2 = signature_data - 1
+      value2 = await check_privacy_signature(signature, web3, signature_data2)
+    }
+    if(value1 == true || (value2 != null && value2 == true)){
+      return true
+    }
+    else return false
+  }
+  catch(e){
+    log_error(e)
+    return false
+  }
+}
+
+async function check_privacy_signature(signature, web3, signature_data){
+  try{
+    var original_address = await web3.eth.accounts.recover(signature_data.toString(), signature)
+    if(original_address == privacy_address){
+      return true;
+    }
+    return false
+  }
+  catch(e){
+    log_error(e)
+    return false
+  }
+}
+
+function clear_rate_limit_info(){
+  const threshold = Date.now() - 10_000; // Keep only last 10 seconds
+  for (const [ip, time] of rateLimitMap.entries()) {
+    if (time < threshold) {
+      rateLimitMap.delete(ip);
+    }
+  }
+
+  const keys_threshold = Date.now - (7*24*60*60*1000)
+  for (const [ip, key_data] of userKeysMap.entries()) {
+    if (key_data['time'] < keys_threshold) {
+      userKeysMap.delete(ip);
+    }
+  }
+}
+
+async function record_ram_rom_usage(){
+  const rom_usage = await get_maximum_available_disk_space();
+  const network_usage_stats = await get_network_usage_info();
+  const total_streamed_data_traffic = get_total_traffic_stream_info_and_delete_old_data();
+  const consumed = rom_usage.total - rom_usage.free
+  const memoryUsage = process.memoryUsage();
+  const free_ram = os.freemem();
+  const obj = {
+    1/* 'consumed_rom' */:consumed,
+    2/* 'network' */:network_usage_stats,
+    3/* 'rss' */:memoryUsage.rss,
+    4/* 'heapTotal' */:memoryUsage.heapTotal,
+    5/* 'heapUsed' */:memoryUsage.heapUsed,
+    6/* 'external' */:memoryUsage.external,
+    7/* 'free_ram' */:free_ram,
+    8/* 'data_sent' */:total_streamed_data_traffic.sent,
+    9/* 'data_received' */:total_streamed_data_traffic.received,
+  }
+  const now = Date.now();
+  data['memory_stats'][now] = obj
+}
+
+
+
+
+
+
+
+
+function delete_older_ram_rom_usage_stats(){
+  var keys = Object.keys(data['memory_stats'])
+  const threshold = Date.now() - 30*24*60*60*1000;
+  const storage_object = {}
+  keys.forEach(time => {
+    if(time < threshold){
+      storage_object[time] = structuredClone(data['memory_stats'][time])
+      delete data['memory_stats'][time]
+    }
+  });
+  write_stat_to_cold_storage(storage_object, 'memory_stats_history', 'cold_storage_memory_stats', true)
+}
+
+function record_request(endpoint){
+  const timestamp = Math.floor(Date.now() / (5*60*1000)) * (5*60*1000)
+  if(data['request_stats'][timestamp] == null){
+    data['request_stats'][timestamp] = {}
+  }
+  if(data['request_stats'][timestamp][endpoint] == null){
+    data['request_stats'][timestamp][endpoint] = 0
+  }
+  data['request_stats'][timestamp][endpoint] ++
+}
+
+function delete_older_request_stats(){
+  var keys = Object.keys(data['request_stats'])
+  const threshold = Date.now() - 30*24*60*60*1000;
+  const storage_object = {}
+  keys.forEach(time => {
+    if(time < threshold){
+      storage_object[time] = structuredClone(data['request_stats'][time])
+      delete data['request_stats'][time]
+    }
+  });
+  write_stat_to_cold_storage(storage_object, 'request_stats_history', 'cold_storage_request_stats')
+}
+
+function write_stat_to_cold_storage(storage_object, directory, datapoint, should_watch_file = false){
+  const timestamp_id = Date.now()
+  const write_data = JSON.stringify(storage_object, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  var dir = `./${directory}`
+  if (!fs.existsSync(dir)){
+    fs.mkdirSync(dir);
+  }
+  const file_path = `${directory}/${timestamp_id}.json`
+  fs.writeFile(file_path, write_data, (error) => {
+    if (error) {
+      console.log(error)
+    }else{
+      if(data[datapoint] == null){
+        data[datapoint] = []
+      }
+      data[datapoint].push(timestamp_id)
+      if(should_watch_file == true){
+        watch_specific_file(file_path)
+      }
+    }
+  });
+}
+
+async function get_traffic_stats_history(filter_time){
+  const selected_cold_storage_request_stat_files = data['cold_storage_request_stats'].filter(function (time) {
+    return (parseInt(time) >= parseInt(filter_time))
+  });
+  const selected_cold_storage_memory_stat_files = data['cold_storage_memory_stats'].filter(function (time) {
+    return (parseInt(time) >= parseInt(filter_time))
+  });
+
+  var selected_cold_storage_request_stat_obj = {}
+  const request_keys = Object.keys(data['request_stats'])
+  request_keys.forEach(time => {
+    if(time >= filter_time){
+      selected_cold_storage_request_stat_obj[time] = structuredClone(data['request_stats'][time])
+    }
+  });
+  for(var i=0; i<selected_cold_storage_request_stat_files; i++){
+    const focused_file = selected_cold_storage_request_stat_files[i]
+    const object = await read_file(focused_file, 'memory_stats_history')
+    Object.assign(selected_cold_storage_request_stat_obj, object);
+  }
+
+  var selected_cold_storage_memory_stat_obj = {}
+  const memory_keys = Object.keys(data['memory_stats'])
+  memory_keys.forEach(time => {
+    if(time >= filter_time){
+      selected_cold_storage_memory_stat_obj[time] = structuredClone(data['memory_stats'][time])
+    }
+  });
+  for(var e=0; e<selected_cold_storage_memory_stat_files; e++){
+    const focused_file = selected_cold_storage_memory_stat_files[e]
+    const object = await read_file(focused_file, 'request_stats_history')
+    Object.assign(selected_cold_storage_memory_stat_obj, object);
+  }
+
+  return { selected_cold_storage_request_stat_obj, selected_cold_storage_memory_stat_obj }
+}
+
+
+
+
+
+
+
+
+async function read_file(cold_storage_file_name, directory){
+  var is_loading_file = true
+  var cold_storage_obj = {}
+  fs.readFile(`${directory}/${cold_storage_file_name}.json`, (error, data) => {
+    if (error) {
+      console.error(error);
+    }else{
+      cold_storage_obj = JSON.parse(data.toString())
+    }
+    is_loading_file = false
+  });
+  while (is_loading_file == true) {
+    if (is_loading_file == false) break
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  return cold_storage_obj
+}
+
+function ip_limits(ip){
+  if(ip == null){
+    return { message: 'Ip address required', success:false };
+  }
+  const now = Date.now();
+  const lastRequestTime = rateLimitMap.get(ip);
+  const time_difference = data['ip_request_time_limit'] == null ? 1000 : data['ip_request_time_limit']
+  if (lastRequestTime != null && now - lastRequestTime < time_difference) {
+    return { message: 'Rate limit exceeded. Wait a bit.', success:false }
+  }
+  rateLimitMap.set(ip, now);
+  return { message: '', success: true }
+}
+
+function set_up_error_logs_filestream(){
+  const date = new Date();
+  const yyyyMmDd = date.toISOString().split('T')[0];
+  const log_file_name = yyyyMmDd + ':' + Date.now()
+  var dir = `./logs`
+  if (!fs.existsSync(dir)){
+    fs.mkdirSync(dir);
+  }
+  logStream = fs.createWriteStream(`logs/${log_file_name}.log`, { flags: 'a' })
+}
+
+function milliseconds_till_midnight() {
+  const now = new Date();
+  const nextMidnight = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+    0, 0, 0, 0
+  );
+  return nextMidnight - now;
+}
+
+function update_logStream(){
+  set_up_error_logs_filestream();
+  setInterval(set_up_error_logs_filestream, 24*60*60*1000);
+}
 
 
 
@@ -2901,18 +3711,775 @@ function delete_accounts_file(file){
 
 
 
-app.get('/', (req, res) => {
-  res.send('Signaling server is running.');
+
+
+async function check_if_log_file_exists(file) {
+  try {
+    await fs.access(file);
+    return true;
+  } 
+  catch (err) {
+    return false;
+  }
+}
+
+async function schedule_certificate_renewal(){
+  if(AUTO_CERTIFICATE_RENEWAL_ENABLED == false){
+    return;
+  }
+  const now = Date.now()
+  const next_certificate_renewal_time = await fetch_current_certificate_expiry()
+  if(next_certificate_renewal_time == 0){
+    return;
+  }
+  const difference = (next_certificate_renewal_time - now) - 5*60*60*1000
+  setTimeout(renew_https_certificates, difference);
+}
+
+async function renew_https_certificates(){
+  const server_file_name = path.basename(require.main.filename)
+  const final_renew_script = 'sudo certbot renew'
+  const final_restart_script = `sudo pm2 restart ${server_file_name}`
+  
+  exec(final_renew_script, (error, stdout, stderr) => {
+    if (error) {
+      log_error(error)
+      return;
+    }
+
+    exec(`openssl x509 -enddate -noout -in ${CERTIFICATE_RESOURCE}`, (err, stdout) => {
+      if (err){
+        log_error(err)
+        return;
+      }
+      const expiry = stdout.trim().split('=')[1];
+      const expiry_time = new Date(expiry).getTime()
+      
+      // Restart server using PM2
+      exec(final_restart_script, (restartError, restartStdout, restartStderr) => {
+        if (restartError) {
+          log_error(restartError)
+          return;
+        }
+        var return_obj = { message: 'Certificate renewal successful.', restartStdout: restartStdout, stdout: stdout, expiry_time: expiry_time, success:true }
+        log_error({stack: JSON.stringify(return_obj)})
+      });
+    });
+  });
+}
+
+async function fetch_current_certificate_expiry(){
+  var is_loading_file = true;
+  var expiry_time = 0
+  exec(`openssl x509 -enddate -noout -in ${CERTIFICATE_RESOURCE}`, (err, stdout) => {
+    if (err){
+      log_error(err)
+      is_loading_file = false
+    }
+    const expiry = stdout.trim().split('=')[1];
+    expiry_time = new Date(expiry).getTime()
+    is_loading_file = false
+  });
+
+  while (is_loading_file == true) {
+    if (is_loading_file == false) break
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  return expiry_time
+}
+
+function log_error(err){
+  try{
+    if(logStream != null) {
+      const divider = '-------------------------------e-----------------------------------'
+      logStream.write(`${divider}\n \n ${err.stack}\n \n \n`);
+    }
+  }catch(e){
+    console.log(e)
+  }
+}
+
+
+
+
+
+
+
+
+
+/* stores multiple node binary files in file storage */
+async function store_temp_node_files_in_storage(binaries, file_names, temp_id){
+  var successful = true;
+  for(var i=0; i<binaries.length; i++){
+    const binaryData = binaries[i]
+    const temp_file_name = `${temp_id}${file_names[i]}.cjs`
+    const temp_file_directory = path.join(__dirname, temp_file_name);
+    
+    var isloading = true;
+    fs.writeFile(temp_file_directory, binaryData, (error) => {
+      if (error) {
+        log_error(error)
+        successful = false
+      }else{
+        console.log("data written correctly");
+      }
+      isloading = false
+    });
+
+    while (isloading == true) {
+      if (isloading == false) break
+      await new Promise(resolve => setTimeout(resolve, 700))
+    }
+  }
+  return successful;
+}
+
+async function test_temp_node_files_in_storage(file_names){
+  var successful = true;
+  for(var i=0; i<file_names.length; i++){
+    const temp_file_name = `${temp_id}${file_names[i]}.cjs`
+    const temp_file_directory = path.join(__dirname, temp_file_name);
+    var isloading = true;
+
+    exec(`node --check ${temp_file_directory}`, (checkErr, stdout, stderr) => {
+      if (checkErr) {
+        log_error(checkErr)
+        successful = false
+      }
+      isloading = false
+    });
+
+    while (isloading == true) {
+      if (isloading == false) break
+      await new Promise(resolve => setTimeout(resolve, 700))
+    }
+  }
+  return successful
+}
+
+async function copy_temp_node_files_in_storage(file_names, temp_id){
+  var successful = true;
+  for(var i=0; i<file_names.length; i++){
+    const temp_file_name = `${temp_id}${file_names[i]}.cjs`
+    const temp_file_directory = path.join(__dirname, temp_file_name);
+    const file_name = `${file_names[i]}.cjs`
+    var isloading = true;
+
+    fs.copyFile(temp_file_directory, file_name, (copyErr) => {
+      if (copyErr) {
+        log_error(copyErr)
+        successful = false
+      }else{
+        console.log("data copied correctly");
+      }
+      isloading = false
+    });
+
+    while (isloading == true) {
+      if (isloading == false) break
+      await new Promise(resolve => setTimeout(resolve, 700))
+    }
+  }
+  return successful;
+}
+
+async function delete_temp_node_files_in_storage(file_names, temp_id){
+  var successful = true;
+  for(var i=0; i<file_names.length; i++){
+    const temp_file_name = `${temp_id}${file_names[i]}.cjs`
+    const temp_file_directory = path.join(__dirname, temp_file_name);
+    var isloading = true;
+
+    fs.unlink(temp_file_directory, (error) => {
+      if (error) {
+        log_error(error)
+        successful = false
+      }else{
+        console.log("data deleted correctly");
+      }
+      isloading = false
+    });
+
+    while (isloading == true) {
+      if (isloading == false) break
+      await new Promise(resolve => setTimeout(resolve, 700))
+    }
+  }
+  return successful;
+}
+
+
+
+
+
+
+
+async function run_pre_executions(commands){
+  var successful = true;
+  for(var i=0; i<commands.length; i++){
+    const command = commands[i]
+    var isloading = true;
+
+    exec(command, (checkErr, stdout, stderr) => {
+      if (checkErr) {
+        log_error(checkErr)
+        successful = false
+      }
+      isloading = false
+    });
+
+    while (isloading == true) {
+      if (isloading == false) break
+      await new Promise(resolve => setTimeout(resolve, 700))
+    }
+  }
+  return successful
+}
+
+function are_all_script_names_vaid(file_names){
+  var valid = true;
+  file_names.forEach(name => {
+    try{
+      if(name.endsWith('.cjs') || name.endsWith('.js')){
+        valid = false;
+      }
+    }catch(e){
+      valid = false
+    }
+  });
+  return valid;
+}
+
+function are_executions_valid(commands){
+  var valid = true;
+  const knownPMs = ['npm', 'yarn', 'pnpm', 'bun'];
+  commands.forEach(command => {
+    const firstWord = command.trim().split(/\s+/)[0];
+    if(!knownPMs.includes(firstWord)){
+      valid = false
+    }
+  });
+  return valid;
+}
+
+async function write_block_number(){
+  const e5 = 'E25'
+  try{
+    const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+    sync_block_number = Number(await web3.eth.getBlockNumber())
+  }
+  catch(error){
+    log_error(error)
+  }
+}
+
+
+
+
+
+
+
+function stash_old_trends_in_cold_storage(){
+  const keys = Object.keys(upload_view_trends_data)
+  if(keys.length > 0){
+    const record_obj = {}
+    const now = new Date();
+    now.setMonth(now.getMonth() - 1);
+    now.setHours(0, 0, 0, 0);
+    const cutoff_timestamp = now.getTime();
+    keys.forEach(timestamp => {
+      if(parseInt(timestamp) < cutoff_timestamp){
+        record_obj[timestamp] = structuredClone(upload_view_trends_data[timestamp])
+      }
+    });
+
+    if(Object.keys(record_obj).length > 0){
+      write_stat_to_cold_storage(record_obj, 'trends_stats_history', 'cold_storage_trends_records', true)
+    }
+  }
+}
+
+async function get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages){
+  const selected_cold_storage_request_trends_files = data['cold_storage_trends_records'].filter(function (time) {
+    return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
+  });
+
+  var selected_cold_storage_request_trend_obj = {}
+  const keys = Object.keys(upload_view_trends_data)
+  if(keys.length > 0){
+    keys.forEach(timestamp => {
+      if(parseInt(timestamp) >= parseInt(start_time) && parseInt(timestamp) <= parseInt(end_time)){
+        selected_cold_storage_request_trend_obj[timestamp] = structuredClone(upload_view_trends_data[timestamp])
+      }
+    });
+  }
+
+  for(var i=0; i<selected_cold_storage_request_trends_files; i++){
+    const focused_file = selected_cold_storage_request_trends_files[i]
+    const object = await read_file(focused_file, 'trends_stats_history')
+    Object.assign(selected_cold_storage_request_trend_obj, object);
+  }
+
+  const timestamp_ids = Object.keys(selected_cold_storage_request_trend_obj)
+  timestamp_ids.forEach(timestamp_id => {
+    const types = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id])
+    types.forEach(type => {
+      const languages = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id][type])
+      languages.forEach(language => {
+        const original = selected_cold_storage_request_trend_obj[timestamp_id][type][language]
+        const filtered = keywords.length > 0 ? Object.fromEntries(
+          Object.entries(original).filter(([key, _]) =>
+            keywords.includes(key)
+          )
+        ) : structuredClone(original);
+        selected_cold_storage_request_trend_obj[timestamp_id][type][language] = filtered
+        if(filter_languages.length > 0 && !filter_languages.includes(language)){
+          delete selected_cold_storage_request_trend_obj[timestamp_id][type][language]
+        }
+      });
+      if(filter_type != '' && type != filter_type){
+        delete selected_cold_storage_request_trend_obj[timestamp_id][type]
+      }
+    });
+  });
+
+  return selected_cold_storage_request_trend_obj
+}
+
+function trim_block_record_data(){
+  const difference = (isNaN(data['block_record_sync_time_limit']) || data['block_record_sync_time_limit'] > (530*24*60*60)) ? (530*24*60*60) : data['block_record_sync_time_limit']
+  const cutoff_timestamp = (Date.now() / 1000) - difference
+  if(data[e5]['block_hashes'] == null){
+    return;
+  }
+  const block_numbers = Object.keys(data[e5]['block_hashes'])
+  block_numbers.forEach(block_number => {
+    if(data[e5]['block_hashes'][block_number]['timestamp'] < cutoff_timestamp){
+      delete data[e5]['block_hashes'][block_number]
+      const block_index = data[e5]['block_hashes']['e'].indexOf(block_number)
+      if(block_index != -1){
+        data[e5]['block_hashes']['e'].splice(block_index, 1)
+      }
+    }
+  });
+}
+
+async function record_https_certificate_info(){
+  data['certificate_expiry_time'] = await fetch_current_certificate_expiry()
+  get_active_interface((err, interfaceName) => {
+    if (err){
+      return log_error({stack:err.message})
+    }
+
+    get_node_network_speed(interfaceName, (err, result) => {
+      if (err){
+        return log_error({stack:err.message})
+      }
+      data['network_interface'] = result.interface
+      data['network_speed_in_mbps'] = result.speed
+    });
+  });
+}
+
+
+
+
+
+
+
+
+
+function get_node_network_speed(interfaceName, callback) {
+  exec(`ethtool ${interfaceName}`, (err, stdout, stderr) => {
+    if (err || stderr) {
+      return callback(new Error(`Failed to get speed for ${interfaceName}`));
+    }
+
+    const match = stdout.match(/Speed:\s+(\d+)\s*Mb\/s/);
+    if (match) {
+      const speedMbps = parseInt(match[1], 10);
+      return callback(null, { interface: interfaceName, speed: speedMbps });
+    }
+
+    return callback(new Error(`Speed not detected for ${interfaceName}`));
+  });
+}
+
+function get_active_interface(callback) {
+  exec('ip route get 8.8.8.8', (err, stdout, stderr) => {
+    if (err || stderr) {
+      return callback(new Error('Failed to get network interfaces'));
+    }
+    const match = stdout.match(/dev\s+(\S+)/);
+    if (match) {
+      const iface = match[1];
+      return callback(null, iface);
+    } else {
+      return callback(new Error('No active network interface found'));
+    }
+  });
+}
+
+async function get_network_usage_info(){
+  var isloading = true;
+  var return_data = {};
+  const used_network_interface = data['network_interface'];
+  const network_speed_in_mbps = data['network_speed_in_mbps']
+  if(used_network_interface == null){
+    return return_data
+  }
+  exec(`ifstat -i ${used_network_interface} 1 1`, (error, stdout, stderr) => {
+    if (error) return log_error({stack:error.message})
+    if (stderr) return log_error({stack:stderr})
+
+    const lines = stdout.trim().split('\n');
+    const dataLine = lines[2]; // First line is header, second is labels, third is data
+    const [rx, tx] = dataLine.trim().split(/\s+/).map(parseFloat);
+
+    const used_download_speed_in_mbps = (rx * 0.008).toFixed(2);
+    const used_upload_speed_in_mbps = (tx * 0.008).toFixed(2);
+    const utilization = ((used_download_speed_in_mbps+used_upload_speed_in_mbps) / network_speed_in_mbps) * 100;
+
+    return_data = {'received': rx, 'transmitted':tx, 'utilization':utilization}
+    isloading = false;
+  });
+
+  while (isloading == true) {
+    if (isloading == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+  return return_data
+}
+
+function get_total_traffic_stream_info_and_delete_old_data(){
+  const totals = trafficHistory.reduce((sum, entry) => {
+      sum.sent += entry.sent;
+      sum.received += entry.received;
+      return sum;
+    },
+    { sent: 0, received: 0 }
+  );
+
+  trafficHistory = []
+  return totals
+}
+
+
+
+
+
+
+
+async function record_public_key_for_use(){
+  const server_key = data['key']
+  const e5 = 'E25'
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+  var hash = web3.utils.keccak256(server_key.toString()).slice(34)
+  const private_key_to_use = crypto.createHash("sha256").update(hash).digest(); // 32 bytes
+  server_keys = nacl.sign.keyPair.fromSeed(new Uint8Array(private_key_to_use));
+  server_public_key = uint8ToBase64(new Uint8Array(server_keys.publicKey))
+
+  // var private_key_to_use = Buffer.from(hash)
+  // const publicKeyA = await ecies.getPublic(private_key_to_use);
+  // server_public_key = uint8ToBase64(new Uint8Array(publicKeyA))
+}
+
+function uint8ToBase64(uint8){
+  return Buffer.from(uint8).toString('base64')
+}
+
+function base64ToUint8(base64){
+  return new Uint8Array(Buffer.from(base64, 'base64'))
+}
+
+async function register_user_encryption_key(user_temp_hash, encrypted_key, ip_address){
+  if(userKeysMap.get(user_temp_hash.toString()) != null){
+    return { success: false, message: 'user hash already registered'}
+  }
+  try{
+    // const private_key_to_use = Buffer.from(server_public_key, 'base64')
+    // const encrypted_key_as_uint8array = base64ToUint8(encrypted_key)
+    // const my_key = await ecies.decrypt(private_key_to_use, encrypted_key_as_uint8array)
+    // const user_key = my_key.toString()
+
+    const private_key_to_use = server_keys.secretKey
+    const public_key_to_use = base64ToUint8(user_temp_hash)
+    const base64_encoded_cypher = encrypted_key.split('_')[0]
+    const nonce_cypher = encrypted_key.split('_')[1]
+    const encrypted_key_as_uint8array = base64ToUint8(base64_encoded_cypher)
+    const nonce = this.base64ToUint8(nonce_cypher)
+    const decrypted = nacl.box.open(encrypted_key_as_uint8array, nonce, public_key_to_use, private_key_to_use);
+    const decoder = new TextDecoder();
+    const user_key = decoder.decode(decrypted);
+
+    userKeysMap.set(user_temp_hash.toString(), { 'key': user_key, 'ip':ip_address, 'time':Date.now() })
+    return { success: true, message: '' }
+  }
+  catch(e){
+    console.log(e)
+    return { success: false, message: e.toString() }
+  }
+}
+
+
+
+
+
+
+
+
+
+async function process_request_params(data, ip_address){
+  try{
+    const return_obj = structuredClone(data)
+    if(data['privacy_signature'] != null && data['privacy_signature'] != 'e'){
+      const encrypted_signature_data_array = data['privacy_signature'].split('|')
+      const registered_user = encrypted_signature_data_array[0]
+      if(userKeysMap.get(registered_user) == null /* || userKeysMap.get(registered_user)['ip'] != ip_address */){
+        return data
+      }
+      const keys = Object.keys(data)
+      for(var k=0; k<keys.length; k++){
+        const key = keys[k]
+        if(key == 'privacy_signature' && data[key] != 'e'){
+          const encrypted_signature = encrypted_signature_data_array[1]
+          if(userKeysMap.get(registered_user) != null){
+            const registered_users_key = userKeysMap.get(registered_user)['key']
+            return_obj[key] = await decrypt_secure_data(encrypted_signature, registered_users_key)
+          }
+        }
+        else if(key != 'privacy_signature'){
+          if(userKeysMap.get(registered_user) != null){
+            const registered_users_key = userKeysMap.get(registered_user)['key']
+            return_obj[key] = await decrypt_secure_data(data[key], registered_users_key)
+          }
+        }
+      }
+    }
+    return return_obj
+  }
+  catch(e){
+    console.log(e)
+    return data
+  }
+}
+
+async function process_request_body(data){
+  const registered_user = data['registered_user']
+  if(registered_user == null || userKeysMap.get(registered_user) == null){
+    return data
+  }
+  try{
+    const registered_users_key = userKeysMap.get(registered_user)['key']
+    const return_obj = JSON.parse(await decrypt_secure_data(data['encrypted_data'], registered_users_key));
+    return return_obj
+  }
+  catch(e){
+    console.log(e)
+    return data
+  }
+}
+
+function generate_and_record_endpoint_info(){
+  const endpoints = ['tags', 'title', 'restore', 'marco', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'stream_file', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_node'];
+
+  endpoints.forEach(endpoint => {
+    endpoint_info[endpoint] = makeid(35)
+  });
+  endpoint_info['events'] = 'events'
+  endpoint_info['data'] = 'data'
+  endpoint_info['subscription'] = 'subscription'
+  endpoint_info['itransfers'] = 'itransfers'
+  endpoint_info['bill_payments'] = 'bill_payments'
+}
+
+global.fetch = async (url, options = {}) => {
+  const startTime = Date.now();
+
+  // Measure request body size (sent bytes)
+  let sentBytes = 0;
+  if (options.body) {
+    if (typeof options.body === "string") {
+      sentBytes = Buffer.byteLength(options.body);
+    } 
+    else if (Buffer.isBuffer(options.body)) {
+      sentBytes = options.body.length;
+    }
+  }
+
+  const response = await originalFetch(url, options);
+
+  // Measure received bytes
+  const buffer = await response.clone().arrayBuffer();
+  const receivedBytes = buffer.byteLength;
+
+  trafficHistory.push({ time: startTime, sent: sentBytes, received: receivedBytes, url });
+
+  return response; // still return usable Response
+};
+
+generate_and_record_endpoint_info()
+
+
+
+
+
+
+
+
+function set_up_file_watch_times(){
+  const cold_storage_trends_records = data['cold_storage_trends_records'] || []
+  const cold_storage_memory_stats = data['cold_storage_memory_stats'] || []
+
+  cold_storage_trends_records.forEach(file_name => {
+    const file_path = `trends_stats_history/${file_name}.json`
+    watch_specific_file(file_path)
+  });
+
+  cold_storage_memory_stats.forEach(file_name => {
+    const file_path = `memory_stats_history/${file_name}.json`
+    watch_specific_file(file_path)
+  });
+
+  const server_file_name = path.basename(require.main.filename)
+  watch_specific_file(server_file_name)
+}
+
+function watch_specific_file(filePath){
+  fs.watchFile(filePath, { interval: 1000 }, (curr, prev) => {
+    if (curr.mtime > prev.mtime) {
+      log_error({stack:`modification alert!\n file:${filePath}\n Modification time: ${curr.mtime}\n `})
+    }
+  });
+}
+
+async function set_up_ssh_login_requests(){
+  const possible_files = ['/var/log/auth.log', '/var/log/secure', '/var/log/messages'];
+  for(var i=0; i<possible_files.length; i++){
+    const focused_file = possible_files[i]
+    const is_file_accessible = await check_if_log_file_exists(focused_file)
+    if(is_file_accessible == true){
+      read_and_record_ssh_access_events(focused_file)
+    }
+  }
+}
+
+function read_and_record_ssh_access_events(log_file){
+  const stream = fs.createReadStream(log_file, { encoding: "utf8", flags: "r" });
+  const rl = readline.createInterface({ input: stream });
+
+  rl.on("line", (line) => {
+    const date = new Date().toUTCString()
+    if (line.includes("Accepted")) {
+      log_error({stack:`[SSH LOGIN]!\n time:${date}\n ${line}`})
+    } 
+    else if (line.includes("Failed password")) {
+      log_error({stack:`[SSH FAILED]!\n time:${date}\n ${line}`})
+    }
+  });
+}
+
+async function get_all_login_access_time_info(){
+  var isloading = true;
+  var data = ''
+  exec("last", (err, stdout) => {
+    if (err){
+      log_error(err)
+    }
+    else{
+      data = stdout
+    }
+    isloading = false;
+  });
+
+  while (isloading == true) {
+    if (isloading == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+
+  return data
+}
+
+
+
+
+
+
+
+
+
+
+
+app.use((req, res, next) => {
+  let bytesSent = 0;
+  let bytesReceived = 0;
+
+  // Count incoming request data
+  req.on('data', chunk => {
+    bytesReceived += chunk.length;
+  });
+
+  const origWrite = res.write;
+  const origEnd = res.end;
+
+  res.write = function (chunk, ...args) {
+    if (chunk) {
+      bytesSent += chunk.length;
+    }
+    return origWrite.call(this, chunk, ...args);
+  };
+
+  res.end = function (chunk, ...args) {
+    if (chunk) {
+      bytesSent += chunk.length;
+    }
+    // Log this request/response traffic
+    trafficHistory.push({ time: Date.now(), sent: bytesSent, received: bytesReceived });
+    return origEnd.call(this, chunk, ...args);
+  };
+
+  next();
+});
+
+app.get('/:privacy_signature', async (req, res) => {
+  const { privacy_signature } = req.params
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true }))
+  }
+  else{
+    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true, directory: endpoint_info }))
+  }
 });
 
 /* endpoint for returning E5 event data tracked by the node */
-app.get('/events', async (req, res) => {
+app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
   const arg_string = req.query.arg_string;
+  const load_limit = (req.query.load_limit == null || isNaN(req.query.load_limit)) ? 100_000_000 : parseInt(req.query.load_limit)
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  var limit = data['event_data_request_limit'];
+  if(privacy_signature == 'e'){
+    //apply rate limits
+    const rate_limit_results = ip_limits(req.ip)
+    if(rate_limit_results.success == false){
+      return res.status(429).json({ message: rate_limit_results.message});
+    }
+    limit = 35
+  }
+  else{
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+  }
   try{
     var arg_obj = JSON.parse(arg_string)
     var requests = arg_obj.requests
     var filtered_events_array = []
     var block_heights = []
+    if(requests.length > limit){
+      res.send(JSON.stringify({ message: 'request count exceeded limit', success:false }));
+      return;
+    }
     for(var i=0; i<requests.length; i++){
       var requested_e5 = requests[i]['requested_e5']
       var requested_contract = requests[i]['requested_contract']
@@ -2921,13 +4488,14 @@ app.get('/events', async (req, res) => {
       var from_filter = requests[i]['from_filter']
 
       var filtered_events = await filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter)
-      filtered_events_array.push(filtered_events)
+      filtered_events_array.push(0, filtered_events.slice(load_limit))
       var block_id = data[requested_e5]['current_block'][requested_contract+requested_event_id]
       block_heights.push(block_id)
     }
     
     var obj = {'data':filtered_events_array, 'block_heights':block_heights, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/events')
     return res.send(string_obj);
   }
   catch(e){
@@ -2936,15 +4504,37 @@ app.get('/events', async (req, res) => {
   }
 });//ok
 
-/* endpoint for returning E5 hash data stored in ipfs */
-app.get('/data', async (req, res) => {
+/* endpoint for returning E5 hash data stored */
+app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
   const arg_string = req.query.arg_string;
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  var limit = data['hash_data_request_limit'];
+  if(privacy_signature == 'e'){
+    //apply rate limits
+    const rate_limit_results = ip_limits(req.ip)
+    if(rate_limit_results.success == false){
+      return res.status(429).json({ message: rate_limit_results.message});
+    }
+    limit = 35
+  }
+  else{
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+  }
+  
   try{
     var arg_obj = JSON.parse(arg_string)
     var hashes = arg_obj.hashes
+    if(hashes.length > limit){
+      res.send(JSON.stringify({ message: 'request count exceeded limit', success:false }));
+      return;
+    }
     var data = await fetch_hashes_from_file_storage_or_memory(hashes)
     var obj = {'data':data, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/data')
     res.send(string_obj);
   }catch(e){
     console.log(e)
@@ -2953,16 +4543,22 @@ app.get('/data', async (req, res) => {
 });//ok
 
 /* endpoint for filtering tracked E5 objects by specified tags */
-app.get('/tags', async (req, res) => {
+app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
   const arg_string = req.query.arg_string;
-  // console.log(`arg string: ${arg_string}`);
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
   try{
     var arg_obj = JSON.parse(arg_string)
     var tags = arg_obj.tags
     var target_type = arg_obj.target_type
-    var ids = await search_for_object_ids_by_tags(tags, target_type)
+    var language = arg_obj.language == null ? 'en' : arg_obj.language
+    var ids = await search_for_object_ids_by_tags(tags, target_type, language)
     var obj = {'data':ids, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/tags')
     res.send(string_obj);
   }catch(e){
     console.log(e)
@@ -2971,9 +4567,13 @@ app.get('/tags', async (req, res) => {
 });//ok
 
 /* endpoint for filtering tracked E5 objects by specified a title */
-app.get('/title', async (req, res) => {
+app.get(`/${endpoint_info['title']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
   const arg_string = req.query.arg_string;
-  // console.log(`arg string: ${arg_string}`);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
   try{
     var arg_obj = JSON.parse(arg_string)
     var title = arg_obj.title
@@ -2981,6 +4581,7 @@ app.get('/title', async (req, res) => {
     var ids = await search_for_object_ids_by_title(title, target_type)
     var obj = {'data':ids, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/title')
     res.send(string_obj);
   }catch(e){
     console.log(e)
@@ -2989,7 +4590,7 @@ app.get('/title', async (req, res) => {
 });//ok
 
 /* admin endpoint for restoring the node to a backed up version */
-app.post('/restore', async (req, res) => {
+app.post(`/${endpoint_info['restore']}`, async (req, res) => {
   try{
     const file_name = req.query.file_name;
     const backup_key = req.query.backup_key;//the current key for the server
@@ -3021,7 +4622,12 @@ app.post('/restore', async (req, res) => {
 });//ok ------
 
 /* enpoint for checking if node is online */
-app.get('/marco', async (req, res) => {
+app.get(`/${endpoint_info['marco']}`, async (req, res) => {
+  //apply rate limits
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
   var ipfs_hashes = load_count
   var storage_accounts_length = Object.keys(data['storage_data']).length
   var booted = app_key != '' && app_key != null
@@ -3030,12 +4636,14 @@ app.get('/marco', async (req, res) => {
     e5_data[e5] = data[e5]
   });
   
-  var dir = './backup_data/'
-  var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
-  var files_obj = {'data':files}
+  var files = fs.existsSync('./backup_data/') ? fs.readdirSync('./backup_data/') : []
+  var log_files = fs.existsSync('./logs/') ? fs.readdirSync('./logs/') : []
+  var files_obj = { 'data':files, 'log_data':log_files }
   var encrypted_files_obj = JSON.stringify(files_obj)
+  const total_ram = Math.floor(os.totalmem() / (1024 * 1024))
+  
   var obj = {
-    'ipfs_hashes':`${number_with_commas(ipfs_hashes)} out of ${number_with_commas(hash_count)}`, 
+    'ipfs_hashes':`${number_with_commas(ipfs_hashes)} out of ${number_with_commas(hash_count)}`,
     'tracked_E5s':data['e'],//
     'storage_accounts':storage_accounts_length,// 
     'target_storage_purchase_recipient_account':data['target_storage_purchase_recipient_account'],// 
@@ -3055,16 +4663,119 @@ app.get('/marco', async (req, res) => {
     'free_default_storage':data['free_default_storage'],
     'target_storage_recipient_accounts':data['target_storage_recipient_accounts'],
     'version':version,
+    'privacy_address':privacy_address,
+    'total_ram':total_ram,
+    'cold_storage_memory_stats':data['cold_storage_memory_stats'],
+    'cold_storage_request_stats':data['cold_storage_request_stats'],
+    'platform':os.platform(),
+    'hash_data_request_limit':data['hash_data_request_limit'],
+    'event_data_request_limit':data['event_data_request_limit'],
+    'block_mod':data['block_mod'],
+    'ip_request_time_limit':data['ip_request_time_limit'],
+    'block_record_sync_time_limit':data['block_record_sync_time_limit'],
+    'auto_certificte_renewal_enabled': AUTO_CERTIFICATE_RENEWAL_ENABLED,
+    'endpoint_updates_enabled': ENPOINT_UPDATES_ENABLED,
+    'certificate_expiry_time':data['certificate_expiry_time'],
+    'network_speed_in_mbps':data['network_speed_in_mbps'],
+    'network_interface':data['network_interface'],
+    'node_public_key':server_public_key,
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  record_request('/marco')
   res.send(string_obj);
 });//ok
 
+/* register a user endpoint with specified encryption keys */
+app.post(`/${endpoint_info['register']}`, async (req, res) => {
+  //apply rate limits
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
+  const { user_temp_hash, encrypted_key } = req.body
+  if(user_temp_hash == null || encrypted_key == null || user_temp_hash == '' || encrypted_key == ''){
+    res.send(JSON.stringify({ message: 'Invalid args', success:false }));
+    return;
+  }
+  try{
+    const obj = await register_user_encryption_key(user_temp_hash, encrypted_key, req.ip)
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    res.send(string_obj);
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
+  }
+});
+
+/* enpoint for loading traffic stats */
+app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, async (req, res) => {
+  const { filter_time, privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  if(filter_time == null || isNaN(filter_time) || parseInt(filter_time) > 0){
+    res.send(JSON.stringify({ message: 'Invalid filter time', success:false }));
+    return;
+  }
+  try{
+    const history_data = await get_traffic_stats_history(filter_time)
+    const access_info = await get_all_login_access_time_info()
+    var obj = {
+      'memory_stats': history_data.selected_cold_storage_memory_stat_obj,
+      'request_stats': history_data.selected_cold_storage_request_stat_obj,
+      'access_info':access_info,
+      success:true
+    }
+
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/traffic_stats')
+    res.send(string_obj);
+  }
+  catch(e){
+    console.log(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
+  }
+  
+});
+
+/* enpoint for loading trends */
+app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { start_time, end_time, keywords, filter_type, filter_languages } = await process_request_body(req.body)
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  else if(start_time == null || isNaN(start_time) || end_time == null || isNaN(end_time) || keywords == null || filter_type == null || filter_languages == null){
+    res.send(JSON.stringify({ message: 'Invalid filter time', success:false }));
+    return;
+  }
+  else if((parseInt(end_time) - parseInt(start_time)) < 10_000){
+    res.send(JSON.stringify({ message: 'start time value cannot be greater than end time value', success:false }));
+    return;
+  }
+  try{
+    var obj = {
+      'trends': await get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages),
+      success:true
+    }
+
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/trends')
+    res.send(string_obj);
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
+  }
+});
+
 /* admin endpoint for booting a new E5 to be tracked by the node */
-app.post('/new_e5', async (req, res) => {
+app.post(`/${endpoint_info['new_e5']}`, async (req, res) => {
   const arg_string = req.query.arg_string;
-  console.log(`arg string: ${arg_string}`);
   try{
     var arg_obj = JSON.parse(arg_string)
     const e5 = arg_obj.e5;
@@ -3147,7 +4858,7 @@ app.post('/new_e5', async (req, res) => {
 });//ok ----
 
 /* enpoint for updating the node's provider for a specified E5 */
-app.post('/update_provider', async (req, res) => {
+app.post(`/${endpoint_info['update_provider']}`, async (req, res) => {
   try{
     const new_provider = req.query.new_provider;
     const e5 = req.query.e5;
@@ -3195,7 +4906,7 @@ app.post('/update_provider', async (req, res) => {
 });//ok -------
 
 /* endpoint for updating the node's gateway provider for E5 data. */
-app.post('/update_content_gateway', async (req, res) => {
+app.post(`/${endpoint_info['update_content_gateway']}`, async (req, res) => {
   try{
     const new_provider = req.query.new_provider;
     const backup_key = req.query.backup_key;
@@ -3232,7 +4943,7 @@ app.post('/update_content_gateway', async (req, res) => {
 });//ok ----
 
 /* admin endpoint for removing tracked data for a specified E5 */
-app.post('/delete_e5', (req, res) => {
+app.post(`/${endpoint_info['delete_e5']}`, (req, res) => {
   try{
     const e5 = req.query.e5;
     const backup_key = req.query.backup_key;
@@ -3265,12 +4976,15 @@ app.post('/delete_e5', (req, res) => {
 });//ok ----
 
 /* endpoint for checking the subscription payment information for a specified account */
-app.get('/subscription', async (req, res) => {
+app.get(`/${endpoint_info['subscription']}`, async (req, res) => {
   const subscription = req.query.object_id;
   const e5 = req.query.e5
   const signature_data = req.query.data;
   const signature = req.query.signature
-
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
   try{
     if(e5 == null || e5 == '' || subscription == null || signature_data == null || signature_data == '' || signature == null || signature == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -3291,6 +5005,7 @@ app.get('/subscription', async (req, res) => {
       return;
     }else{
       var string_obj = JSON.stringify(return_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      record_request('/subscription')
       res.send(string_obj);
     }
   }catch(e){
@@ -3301,7 +5016,7 @@ app.get('/subscription', async (req, res) => {
 });//ok
 
 /* admin endpoint for manually backing up your nodes data */
-app.post('/backup', async (req, res) => {
+app.post(`/${endpoint_info['backup']}`, async (req, res) => {
   try{
     const backup_key = req.query.backup_key;
     if(data['key'] !== backup_key){
@@ -3323,7 +5038,7 @@ app.post('/backup', async (req, res) => {
 });//ok ------
 
 /* admin endpoint for updating the iteration value for a specified E5 and its corresponding chain */
-app.post('/update_iteration', (req, res) => {
+app.post(`/${endpoint_info['update_iteration']}`, (req, res) => {
   try{
     const new_iteration = req.query.new_iteration;
     const e5 = req.query.e5;
@@ -3360,7 +5075,7 @@ app.post('/update_iteration', (req, res) => {
 });//ok ------
 
 /* admin endpoint for booting the entire node with the required app_key */
-app.post('/boot', (req, res) => {
+app.post(`/${endpoint_info['boot']}`, (req, res) => {
   try{
     const new_beacon_chain_link = req.query.beacon_chain_link;
     const backup_key = req.query.backup_key;
@@ -3383,8 +5098,8 @@ app.post('/boot', (req, res) => {
 });//ok ------
 
 /* admin endpoint for booting the node's storage services for paid users */
-app.post('/boot_storage', async (req, res) => {
-  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage, target_storage_recipient_accounts } = req.body;
+app.post(`/${endpoint_info['boot_storage']}`, async (req, res) => {
+  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage, target_storage_recipient_accounts } = await process_request_body(req.body);
   // var available_space = await get_maximum_available_disk_space()
   
   if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || /* target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account) || */ unlimited_basic_storage == null || target_storage_recipient_accounts == null){
@@ -3438,9 +5153,8 @@ app.post('/boot_storage', async (req, res) => {
 });//ok -------
 
 /* admin endpoint for reconfiguring the storage settings for the node's storage services */
-app.post('/reconfigure_storage', async (req, res) => {
-  const { backup_key, key, value, e5 } = req.body; // Extract arguments from req.body
-  
+app.post(`/${endpoint_info['reconfigure_storage']}`, async (req, res) => {
+  const { backup_key, key, value, e5 } = await process_request_body(req.body);
   if(backup_key == null || backup_key == '' || key == null || key == '' || value == null){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
@@ -3449,12 +5163,10 @@ app.post('/reconfigure_storage', async (req, res) => {
     res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
     return;
   }
-  else if(
-    key !== 'max_buyable_capacity' && 
-    key !== 'price_per_megabyte' && 
-    key !== 'unlimited_basic_storage' && 
-    key !== 'free_default_storage'
-  ){
+  
+  const accepted_keys = ['max_buyable_capacity', 'price_per_megabyte', 'unlimited_basic_storage', 'free_default_storage', 'hash_data_request_limit', 'event_data_request_limit', 'block_mod', 'block_record_sync_time_limit', 'ip_request_time_limit']
+  
+  if(!accepted_keys.includes(key)){
     res.send(JSON.stringify({ message: 'Invalid modify targets', success:false }));
     return;
   }
@@ -3470,8 +5182,13 @@ app.post('/reconfigure_storage', async (req, res) => {
 });//ok -----
 
 /* endpoint for storing files in the storage service for the node */
-app.post('/store_files', async (req, res) => {
-  const { signature_data, signature, file_datas, file_types, e5 } = req.body;
+app.post(`/${endpoint_info['store_files']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { signature_data, signature, file_datas, file_types, e5 } = await process_request_body(req.body);
   if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_datas == null || file_types == null || !is_all_file_type_ok(file_types) || e5 == null || e5 == ''){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
@@ -3492,7 +5209,6 @@ app.post('/store_files', async (req, res) => {
     var storage_data = await fetch_accounts_available_storage(signature_data, signature, e5)
     var binaries = get_file_binaries(file_datas)
     var space_utilized = get_length_of_binary_files_in_mbs(binaries)
-    // console.log('storage_data', storage_data)
     if(storage_data.available_space < space_utilized){
       res.send(JSON.stringify({ message: 'Insufficient storage acquired for speficied account.', success:false }));
       return;
@@ -3509,6 +5225,8 @@ app.post('/store_files', async (req, res) => {
       var success = await store_files_in_storage(binaries, file_types, file_datas, storage_data.account)
       
       if(success == null){
+        res.send(JSON.stringify({ message: 'Files stored Unsucessfully, internal server error', success:false }));
+      }else{
         record_file_data(success, binaries, storage_data.account, file_types)
         if(data['storage_data'][storage_data.account.toString()]['uploaded_files'] == null){
           data['storage_data'][storage_data.account.toString()]['uploaded_files'] = []
@@ -3516,16 +5234,21 @@ app.post('/store_files', async (req, res) => {
         success.forEach(file => {
           data['storage_data'][storage_data.account.toString()]['uploaded_files'].push(file)
         });
-        res.send(JSON.stringify({ message: 'Files stored Unsucessfully, internal server error', success:false }));
-      }else{
+        record_request('/store_files')
         res.send(JSON.stringify({ message: 'Files stored Successfully', files: success, success:true }));
       }
     }
   }
 });//ok -----
 
-app.post('/reserve_upload', async (req, res) => {
-  const { signature_data, signature, file_length, file_type, upload_extension, e5 } = req.body;
+/* reserve a right to stream a file into storage */
+app.post(`/${endpoint_info['reserve_upload']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { signature_data, signature, file_length, file_type, upload_extension, e5 } = await process_request_body(req.body);
   if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_length == null || isNaN(file_length) || file_type == null || !is_all_file_type_ok([file_type]) || e5 == null || e5 == ''){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
@@ -3542,6 +5265,10 @@ app.post('/reserve_upload', async (req, res) => {
     res.send(JSON.stringify({ message: `That E5 is not being watched.`, success:false }));
     return;
   }
+  else if(req.ip == null){
+    res.send(JSON.stringify({ message: `Ip address required for reserving upload`, success:false }));
+    return;
+  }
   else{
     var storage_data = await fetch_accounts_available_storage(signature_data, signature, e5)
     if((storage_data.available_space * (1024 * 1024)) < file_length){
@@ -3550,14 +5277,20 @@ app.post('/reserve_upload', async (req, res) => {
     }
     else{
       const expiry = Date.now() + (1000 * 60 * 60 * 24 * 3)/* 3 days */
-      data['upload_reservations'][upload_extension] = {'length':file_length, 'type':file_type, 'expiry':expiry, 'account':storage_data.account.toString(), 'aborted':false}
+      data['upload_reservations'][upload_extension] = {'length':file_length, 'type':file_type, 'expiry':expiry, 'account':storage_data.account.toString(), 'aborted':false, 'ip_address':req.ip}
+      record_request('/reserve_upload')
       res.send(JSON.stringify({ message: 'reservation successful.', extension: upload_extension, success:true }));
     }
   }
 });//ok -----
 
-app.post('/upload/:extension', async (req, res) => {
-  const { extension } = req.params;
+/* stream data into a file under a specified reservation */
+app.post(`/${endpoint_info['upload']}/:extension/:privacy_signature`, async (req, res) => {
+  const { extension, privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
   if(extension == null || extension == ''){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
@@ -3573,6 +5306,10 @@ app.post('/upload/:extension', async (req, res) => {
     }
     else if(reservation_data['aborted'] == true){
       res.send(JSON.stringify({ message: 'Reservation is invalid, please make another reservation.', success:false }));
+      return;
+    }
+    else if(reservation_data['ip_address'] != req.ip){
+      res.send(JSON.stringify({ message: 'Only the ip address that made the reservation can stream the upload', success:false }));
       return;
     }
     else{
@@ -3612,6 +5349,7 @@ app.post('/upload/:extension', async (req, res) => {
         data['storage_data'][account]['uploaded_files'].push(extension)
 
         data['upload_reservations'][extension]['aborted'] = true;
+        record_request('/upload')
         res.send(JSON.stringify({ message: 'Upload Successful.', success:true }));
       });
 
@@ -3627,8 +5365,12 @@ app.post('/upload/:extension', async (req, res) => {
 })//ok -----
 
 /* endpoint for obtaining the storage space utilized by an account */
-app.get('/account_storage_data/:account', (req, res) => {
-  const { account } = req.params;
+app.get(`/${endpoint_info['account_storage_data']}/:account/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, account } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
   if(account == '' || account == null){
     res.send(JSON.stringify({ message: 'Please specify an account', success:false }));
     return;
@@ -3636,16 +5378,16 @@ app.get('/account_storage_data/:account', (req, res) => {
     var payment_data = data['storage_data'][account.toString()]
     if(payment_data == null){
       res.send(JSON.stringify({ message: 'That account does not exist in this node.', success:false }));
-      return;
     }else{
       res.send(JSON.stringify({ message: 'Account found.', account: payment_data, success:true }));
     }
+    record_request('/account_storage_data')
   }
 });//ok -----
 
 /* endpoint for streaming a file stored in the node. */
-app.get('/stream_file/:content_type/:file', (req, res) => {
-  const { file, content_type } = req.params;
+app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature`, async (req, res) => {
+  const { file, content_type, privacy_signature } = await process_request_params(req.params, req.ip);
   const final_content_type = get_final_content_type(content_type)
   if(file == '' || file == null || content_type == '' || content_type == null){
     res.send(JSON.stringify({ message: 'Please specify a file to stream and content type', success:false }));
@@ -3653,6 +5395,10 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
   }
   else if(final_content_type == null){
     res.send(JSON.stringify({ message: 'Please specify a valid content type', success:false }));
+    return;
+  }
+  else if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
   else if(!is_file_ok_to_stream(file)){
@@ -3734,6 +5480,7 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
       });
 
       stream.pipe(res);
+      record_request('/stream_file')
     }
     else{
       if(should_count_stream == true){
@@ -3748,14 +5495,20 @@ app.get('/stream_file/:content_type/:file', (req, res) => {
         'Content-Type': final_content_type,
       });
       fs.createReadStream(filePath).pipe(res);
+      record_request('/stream_file')
     }
 
   }
 });//ok -----
 
 /* endpoint for storing basic E5 run data. */
-app.post('/store_data', async (req, res) => {
-  const { signature_data, signature, file_datas } = req.body;
+app.post(`/${endpoint_info['store_data']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { signature_data, signature, file_datas } = await process_request_body(req.body);
   if(signature_data == null || signature_data == '' || signature == null || signature == '' || file_datas == null){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
@@ -3777,14 +5530,20 @@ app.post('/store_data', async (req, res) => {
     if(success == null){
       res.send(JSON.stringify({ message: 'Files stored Unsucessfully, internal server error', success:false }));
     }else{
+      record_request('/store_data')
       res.send(JSON.stringify({ message: 'Files stored Successfully', files: success, success:true }));
     }
   }
 });//ok -----
 
 /* returns the view count for a given file */
-app.post('/streams', async (req, res) => {
-  const { files } = req.body;
+app.post(`/${endpoint_info['streams']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { files } = await process_request_body(req.body);
   if(files == null || files.length == 0){
     res.send(JSON.stringify({ message: 'Please speficy an array of file names.', success:false }));
     return;
@@ -3797,6 +5556,7 @@ app.post('/streams', async (req, res) => {
     const file_status = get_files_statuses(files)
     var return_obj = { message: 'Search successful.', renewal_years: file_renewal_data, file_status, views:return_views_data , streams: return_streams_data, success:true }
     var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/streams')
     res.send(string_obj);
   }
   catch(e){
@@ -3806,8 +5566,13 @@ app.post('/streams', async (req, res) => {
 });
 
 /* endpoint for fetching itransfers with a specified identifier */
-app.get('/iTransfers', async (req, res) => {
+app.post(`/${endpoint_info['itransfers']}`, async (req, res) => {
   const { identifier, account, recipient, e5 } = req.body;
+  //apply rate limits
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
   if(identifier == null || identifier == ''){
     res.send(JSON.stringify({ message: 'Please speficy an identifier', success:false }));
     return;
@@ -3829,6 +5594,7 @@ app.get('/iTransfers', async (req, res) => {
 
   var return_obj = { message: 'Search successful.', payment_data: itransfer_data, success:true }
   var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  record_request('/iTransfers')
   res.send(string_obj);
   /* 
     {
@@ -3849,8 +5615,13 @@ app.get('/iTransfers', async (req, res) => {
 });
 
 /* endpoint for fetching bill payment data with a specified identifier */
-app.get('/bill_payments', async (req, res) => {
+app.post(`/${endpoint_info['bill_payments']}`, async (req, res) => {
   //identifier, account, recipient, requested_e5, type
+  //apply rate limits
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
   const { identifier, account, recipient, e5 } = req.body;
   if(identifier == null || identifier == ''){
     res.send(JSON.stringify({ message: 'Please speficy an identifier', success:false }));
@@ -3876,6 +5647,7 @@ app.get('/bill_payments', async (req, res) => {
 
   var return_obj = { message: 'Search successful.', payment_data: itransfer_data, success:true }
   var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  record_request('/bill_payments')
   res.send(string_obj);
   /* 
     {
@@ -3896,9 +5668,14 @@ app.get('/bill_payments', async (req, res) => {
 });
 
 /* endpoint for calculating and tallying consensus info for a specified poll */
-app.post('/count_votes', async (req, res) => {
+app.post(`/${endpoint_info['count_votes']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
   try{
-    const { static_poll_data, poll_id, file_objects, poll_e5 } = req.body;
+    const { static_poll_data, poll_id, file_objects, poll_e5 } = await process_request_body(req.body);
     if(!data['e'].includes(poll_e5)){
       res.send(JSON.stringify({ message: 'The poll e5 value provided is invalid', success:false }));
       return;
@@ -3911,6 +5688,7 @@ app.post('/count_votes', async (req, res) => {
     if(success_obj.success == true){
       var obj = {message:`Vote counted successfully.`, results: success_obj.results, success: true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      record_request('/count_votes')
       res.send(string_obj);
     }else{
       res.send(JSON.stringify({ message: success_obj.message, success:false, error:success_obj.error}));
@@ -3921,8 +5699,13 @@ app.post('/count_votes', async (req, res) => {
 });//ok -----
 
 /* endpoint for calculating income stream datapoints for subscription payments */
-app.post('/subscription_income_stream_datapoints', async (req, res) => {
-  const { subscription_object, steps, filter_value, token_name_data } = req.body;
+app.post(`/${endpoint_info['subscription_income_stream_datapoints']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { subscription_object, steps, filter_value, token_name_data } = await process_request_body(req.body);
   if(subscription_object == null || steps == null || filter_value == null || isNaN(steps) || isNaN(filter_value) || token_name_data == null ){
     res.send(JSON.stringify({ message: 'Invalid arg strings', success:false }));
     return;
@@ -3936,6 +5719,7 @@ app.post('/subscription_income_stream_datapoints', async (req, res) => {
     }else{
       var return_obj = { message: 'Calculation successful.', data: data.data, success:true }
       var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      record_request('/subscription_income_stream_datapoints')
       res.send(string_obj);
     }
   }catch(e){
@@ -3945,8 +5729,13 @@ app.post('/subscription_income_stream_datapoints', async (req, res) => {
 });//ok -----
 
 /* endpoint for calculating payout information for the creators in a creator group */
-app.post('/creator_group_payouts', async (req, res) => {
-  const { subscription_objects, steps, filter_value, file_view_data } = req.body;
+app.post(`/${endpoint_info['creator_group_payouts']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { subscription_objects, steps, filter_value, file_view_data } = await process_request_body(req.body);
   if(subscription_objects == null || subscription_objects.length == 0 || steps == null || filter_value == null || isNaN(steps) || isNaN(filter_value) || file_view_data == null || file_view_data.length == 0){
     res.send(JSON.stringify({ message: 'Invalid arg strings', success:false }));
     return;
@@ -3960,6 +5749,7 @@ app.post('/creator_group_payouts', async (req, res) => {
     }else{
       var return_obj = { message: 'Calculation successful.', data: data.data, success:true }
       var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      record_request('/creator_group_payouts')
       res.send(string_obj);
     }
   }catch(e){
@@ -3969,8 +5759,13 @@ app.post('/creator_group_payouts', async (req, res) => {
 });
 
 /* endpoint for deleting an uploaded file from the node permanently */
-app.post('/delete_file', async (req, res) => {
-  const { signature_data, signature, file, e5,  } = req.body;
+app.post(`/${endpoint_info['delete_files']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { signature_data, signature, file, e5,  } = await process_request_body(req.body);
   if(file == null && signature_data == null || signature_data == '' || signature == null || signature == '' || e5 == null || e5 == ''){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
@@ -3994,6 +5789,7 @@ app.post('/delete_file', async (req, res) => {
       delete_accounts_file(file)
       var return_obj = { message: 'Delete complete.',  success:true }
       var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      record_request('/delete_file')
       res.send(string_obj);
     }
   }
@@ -4003,6 +5799,242 @@ app.post('/delete_file', async (req, res) => {
   }
 });
 
+/* endpoint for streaming the log file stored in the node. */
+app.get(`/${endpoint_info['stream_logs']}/:file/:backup_key/:privacy_signature`, async (req, res) => {
+  const { file, backup_key, privacy_signature } = await process_request_params(req.params, req.ip);
+  if(file == '' || file == null || !file.endsWith('.log')){
+    res.send(JSON.stringify({ message: 'Please specify a valid file to stream', success:false }));
+    return;
+  }
+  else if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  else if(data['key'] !== backup_key){
+    res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
+    return;
+  }
+  else if(!await check_if_log_file_exists(`logs/${file}`)){
+    res.send(JSON.stringify({ message: 'File does not exist', success:false }));
+    return;
+  }
+  else{
+    const filePath = `logs/${file}`
+    const stats = fs.statSync(filePath);
+    const fileSize = stats.size;
+    const ip = req.ip;
+    const final_content_type = 'text/plain'
+
+    if(ip != null){
+      const range = req.headers.range;
+      if (range) {
+        const [start, end] = range
+          .replace(/bytes=/, '')
+          .split('-')
+          .map(Number);
+        
+        const chunkStart = start || 0;
+        const chunkEnd = end || fileSize - 1;
+
+        const stream = fs.createReadStream(filePath, {
+          start: chunkStart,
+          end: chunkEnd,
+        });
+
+        res.writeHead(206, {
+          'Content-Range': `bytes ${chunkStart}-${chunkEnd}/${fileSize}`,
+          'Accept-Ranges': 'bytes',
+          'Content-Length': chunkEnd - chunkStart + 1,
+          'Content-Type': final_content_type,
+        });
+
+        stream.pipe(res);
+      }
+      else{
+        res.writeHead(200, {
+          'Content-Length': fileSize,
+          'Content-Type': final_content_type,
+        });
+        fs.createReadStream(filePath).pipe(res);
+      }
+    }
+  }
+});
+
+/* endpoint for updating the nodes https certificates */
+app.post(`/${endpoint_info['update_certificates']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { backup_key } = await process_request_body(req.body);
+  if(backup_key == null || backup_key == '' || data['key'] !== backup_key){
+    res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
+    return;
+  }
+  const is_root = process.getuid || process.getuid();
+  if(is_root == null){
+    res.send(JSON.stringify({ message: 'Endpoint only available for Linux/macOS systems', success:false }));
+    return;
+  }
+
+  const server_file_name = path.basename(require.main.filename)
+  const final_renew_script =  'sudo certbot renew';
+  const final_restart_script = `sudo pm2 restart ${server_file_name}`;
+
+  try{
+    exec(final_renew_script, (error, stdout, stderr) => {
+      if (error) {
+        res.send(JSON.stringify({ message: `Something went wrong`, error: error.message, success:false }));
+        return;
+      }
+
+      exec(`openssl x509 -enddate -noout -in ${CERTIFICATE_RESOURCE}`, (err, stdout) => {
+        if (err){
+          res.send(JSON.stringify({ message: `Something went wrong`, error: err.message, success:false }));
+          return;
+        }
+        const expiry = stdout.trim().split('=')[1];
+        const expiry_time = new Date(expiry).getTime()
+        
+        // Restart server using PM2
+        exec(final_restart_script, (restartError, restartStdout, restartStderr) => {
+          if (restartError) {
+            res.send(JSON.stringify({ message: `Something went wrong with the restart`, error: restartError.message, success:false }));
+            return;
+          }
+          var return_obj = { message: 'Certificate renewal successful.', restartStdout: restartStdout, stdout: stdout, expiry_time: expiry_time, success:true }
+          res.send(JSON.stringify(return_obj));
+        });
+      });
+    });
+  }
+  catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    return;
+  }
+});
+
+/* endpoint for updating and restarting the node */
+app.post(`/${endpoint_info['update_nodes']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { backup_key, file_datas, file_names, commands } = await process_request_body(req.body);
+  if(file_datas == null || file_names == null || backup_key == null || backup_key == '' || commands == null){
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    return;
+  }
+  else if(file_datas.length == 0){
+    res.send(JSON.stringify({ message: 'You need to speicify some script files to write', success:false }));
+    return;
+  }
+  else if(file_datas.length != file_names.length){
+    res.send(JSON.stringify({ message: 'The script files and the file names dont match', success:false }));
+    return;
+  }
+  else if(data['key'] !== backup_key){
+    res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
+    return;
+  }
+  else if(!are_all_script_names_vaid(file_names)){
+    res.send(JSON.stringify({ message: 'Invalid file names', success:false }));
+    return;
+  }
+  else if(!are_executions_valid(commands)){
+    res.send(JSON.stringify({ message: 'Invalid executions passed. You can only run package manager commands.', success:false }));
+    return;
+  }
+  else if(ENPOINT_UPDATES_ENABLED == false){
+    res.send(JSON.stringify({ message: 'Over the air updates disabled', success:false }));
+    return;
+  }
+  const is_root = process.getuid || process.getuid();
+  if(is_root == null){
+    res.send(JSON.stringify({ message: 'Endpoint only available for Linux/macOS systems', success:false }));
+    return;
+  }
+  const server_file_name = path.basename(require.main.filename)
+  const final_restart_script = `sudo pm2 restart ${server_file_name}`
+  const temp_id = Date.now()+'temp_';
+  try{
+    var binaries = get_file_binaries(file_datas)
+    const success = await store_temp_node_files_in_storage(binaries, file_names, temp_id)
+    if(success == false){
+      res.send(JSON.stringify({ message: 'Something went wrong while writing temp files', success:false }));
+      return;
+    }
+    const check_success = await test_temp_node_files_in_storage(file_names)
+    if(check_success == false){
+      res.send(JSON.stringify({ message: 'Something went wrong while validating temp files', success:false }));
+      return;
+    }
+    const copy_success = await copy_temp_node_files_in_storage(file_names, temp_id)
+    if(copy_success == false){
+      res.send(JSON.stringify({ message: 'Something went wrong while copying temp files', success:false }));
+      return;
+    }
+    const delete_success = await delete_temp_node_files_in_storage(file_names, temp_id)
+    if(delete_success == false){
+      res.send(JSON.stringify({ message: 'Something went wrong while deleting temp files', success:false }));
+      return;
+    }
+    const executions_success = await run_pre_executions(commands)
+    if(executions_success == false){
+      res.send(JSON.stringify({ message: 'Something went wrong while deleting temp files', success:false }));
+      return;
+    }
+
+    // Restart server using PM2
+    exec(final_restart_script, (restartError, restartStdout, restartStderr) => {
+      if (restartError) {
+        res.send(JSON.stringify({ message: `Something went wrong with the restart`, error: restartError.message, success:false }));
+        return;
+      }
+      var return_obj = { message: 'Server update successful.', restartStdout: restartStdout, success:true }
+      res.send(JSON.stringify(return_obj));
+    });
+  }
+  catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    return;
+  }
+});
+
+/* endpoint for posting e5 runs */
+app.post(`/${endpoint_info['run_transaction']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { e5, rawTransaction } = await process_request_body(req.body);
+  if(e5 == null || run_data == null){
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    return;
+  }
+  if(!data['e'].includes(e5)){
+    res.send(JSON.stringify({ message: 'That e5 doesnt exist', success:false }));
+    return;
+  }
+  
+  try{
+    const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+
+    web3.eth.sendSignedTransaction(rawTransaction).on('receipt', (receipt) => {
+      res.send(JSON.stringify({ message: 'Transaction complete', receipt: receipt, success:true }));
+    })
+    .on('error', (error) => {
+      res.send(JSON.stringify({ message: 'Something went wrong', error: error.message, success:false }));
+    });
+  }
+  catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+  }
+});
 
 
 
@@ -4021,12 +6053,20 @@ const when_server_started = () => {
   console.log(key)
   console.log('------------------------e----------------------------')
   console.log('')
-  console.log(`Back-ups for the node's data are encrypted and stored periodically. Make sure to keep that nitro key safe incase you need to reboot the node with a backup file. The nitro key will be available in the /marco endpoint for the next five minutes.`)
+  console.log(`Back-ups for the node's data are stored periodically. Make sure to keep that nitro key safe incase you need to reboot the node.`)
   console.log('')
   console.log('')
   console.log('')
 
   get_list_of_server_files_and_auto_backup()
+  record_https_certificate_info()
+  record_public_key_for_use()
+
+  setTimeout(function() {
+    log_error({stack: `~~~~~~~~~~~~~~~~~~~~ Node rebooted on ${new Date(start_up_time)} ~~~~~~~~~~~~~~~~~~~~`});
+    set_up_file_watch_times()
+    set_up_ssh_login_requests()
+  }, (5 * 1000));
 }
 
 async function when_server_killed(){
@@ -4055,6 +6095,7 @@ var options = {
 //npm install check-disk-space
 //npm install mime-types
 //npm install dotenv
+//npm install tweetnacl
 
 //pm2 start server.js --no-daemon
 //pm2 ls
@@ -4072,7 +6113,7 @@ var options = {
 
 
 // Start server
-// app.listen(4000, when_server_started); <-------- use this if youre testing, then comment 'options'
+// app.listen(4000, when_server_started); <-------- use this if youre testing, then comment out 'options'
 https.createServer(options, app).listen(HTTPS_PORT, when_server_started);
 
 setInterval(attempt_loading_failed_ecids, 53*60*1000)
@@ -4086,6 +6127,19 @@ setInterval(backup_stream_count_data_if_large_enough, 32*24*60*60*1000)
 setInterval(reset_ip_access_timestamp_object, 5*60*60*1000)
 setInterval(start_update_storage_renewal_payment_information, 2*60*1000)
 setInterval(delete_unrenewed_files, 7*24*60*60*1000)
+setInterval(clear_rate_limit_info, 2*60*1000)
+setInterval(record_ram_rom_usage, 5*60*1000)
+setInterval(delete_older_ram_rom_usage_stats, 30*24*60*60*1000)
+setInterval(delete_older_request_stats, 30*24*60*60*1000)
+setTimeout(update_logStream, milliseconds_till_midnight());
+setInterval(write_block_number, 11*1000)
+setInterval(stash_old_trends_in_cold_storage, 30*24*60*60*1000)
+setInterval(trim_block_record_data, 3*24*60*60*1000)
+
+
+
+set_up_error_logs_filestream()
+schedule_certificate_renewal()
 
 
 
@@ -4100,5 +6154,5 @@ process.on('exit', (code) => {
 });
 
 process.on('uncaughtException', (err) => {
-  logStream.write(`[${new Date().toISOString()}] ${err.stack}\n`);
+  log_error(err)
 });
