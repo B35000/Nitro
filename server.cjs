@@ -3462,7 +3462,7 @@ async function is_privacy_signature_valid(signature){
   try{
     var current_block_number = sync_block_number != 0 ? sync_block_number : Number(await web3.eth.getBlockNumber())
     // const block_mod = data['block_mod'] == null ? 10 : data['block_mod']
-    const block_mod = 5;
+    const block_mod = 10;
     var signature_data = Math.floor(current_block_number/block_mod)
     var value1 = await check_privacy_signature(signature, web3, signature_data)
     var value2 = null;
@@ -4246,12 +4246,14 @@ async function process_request_params(data, ip_address){
           if(userKeysMap.get(registered_user) != null){
             const registered_users_key = userKeysMap.get(registered_user)['key']
             return_obj[key] = await decrypt_secure_data(encrypted_signature, registered_users_key)
+            return_obj['registered_users_key'] = registered_users_key
           }
         }
         else if(key != 'privacy_signature'){
           if(userKeysMap.get(registered_user) != null){
             const registered_users_key = userKeysMap.get(registered_user)['key']
             return_obj[key] = await decrypt_secure_data(data[key], registered_users_key)
+            return_obj['registered_users_key'] = registered_users_key
           }
         }
       }
@@ -4272,6 +4274,7 @@ async function process_request_body(data){
   try{
     const registered_users_key = userKeysMap.get(registered_user)['key']
     const return_obj = JSON.parse(await decrypt_secure_data(data['encrypted_data'], registered_users_key));
+    return_obj['registered_users_key'] = registered_users_key
     return return_obj
   }
   catch(e){
@@ -4281,7 +4284,7 @@ async function process_request_body(data){
 }
 
 function generate_and_record_endpoint_info(){
-  const endpoints = ['tags', 'title', 'restore', 'marco', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'stream_file', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_node'];
+  const endpoints = ['tags', 'title', 'restore', 'marco', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'stream_file', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call'];
 
   endpoints.forEach(endpoint => {
     endpoint_info[endpoint] = makeid(35)
@@ -4405,6 +4408,33 @@ async function get_all_login_access_time_info(){
 
 
 
+function get_contract_abi_and_address_from_id(contract_id, e5){
+  const abi_obj = {
+    'E5': E5_CONTRACT_ABI,
+    'E52': E52_CONTRACT_ABI,
+    'F5': F5_CONTRACT_ABI,
+    'G5': G5_CONTRACT_ABI,
+    'G52': G52_CONTRACT_ABI,
+    'H5': H5_CONTRACT_ABI,
+    'H52': F5_CONTRACT_ABI,
+  }
+  const address_obj = {
+    'E5': data[e5]['addresses'][0],
+    'E52': data[e5]['addresses'][1],
+    'F5': data[e5]['addresses'][2],
+    'G5': data[e5]['addresses'][3],
+    'G52': data[e5]['addresses'][4],
+    'H5': data[e5]['addresses'][5],
+    'H52': data[e5]['addresses'][6],
+  }
+  return { abi: abi_obj[contract_id], address: address_obj[contract_id] }
+}
+
+
+
+
+
+
 
 
 
@@ -4453,9 +4483,7 @@ app.get('/:privacy_signature', async (req, res) => {
 
 /* endpoint for returning E5 event data tracked by the node */
 app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
-  const arg_string = req.query.arg_string;
-  const load_limit = (req.query.load_limit == null || isNaN(req.query.load_limit)) ? 100_000_000 : parseInt(req.query.load_limit)
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_users_key } = await process_request_params(req.params, req.ip);
   var limit = data['event_data_request_limit'];
   if(privacy_signature == 'e'){
     //apply rate limits
@@ -4472,8 +4500,12 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
     }
   }
   try{
+    const arg_string = privacy_signature == 'e' ? req.query.arg_string: await decrypt_secure_data(req.query.arg_string, registered_users_key)
+
     var arg_obj = JSON.parse(arg_string)
     var requests = arg_obj.requests
+    const load_limit = (arg_obj.load_limit == null || isNaN(arg_obj.load_limit)) ? 100_000_000 : parseInt(arg_obj.load_limit)
+    
     var filtered_events_array = []
     var block_heights = []
     if(requests.length > limit){
@@ -4506,8 +4538,7 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
 
 /* endpoint for returning E5 hash data stored */
 app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
-  const arg_string = req.query.arg_string;
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_users_key } = await process_request_params(req.params, req.ip);
   var limit = data['hash_data_request_limit'];
   if(privacy_signature == 'e'){
     //apply rate limits
@@ -4525,6 +4556,8 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
   }
   
   try{
+    const arg_string = privacy_signature == 'e' ? req.query.arg_string: await decrypt_secure_data(req.query.arg_string, registered_users_key)
+
     var arg_obj = JSON.parse(arg_string)
     var hashes = arg_obj.hashes
     if(hashes.length > limit){
@@ -4544,13 +4577,13 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
 
 /* endpoint for filtering tracked E5 objects by specified tags */
 app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
-  const arg_string = req.query.arg_string;
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
   try{
+    const arg_string = await decrypt_secure_data(req.query.arg_string, registered_users_key)
     var arg_obj = JSON.parse(arg_string)
     var tags = arg_obj.tags
     var target_type = arg_obj.target_type
@@ -4568,13 +4601,13 @@ app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
 
 /* endpoint for filtering tracked E5 objects by specified a title */
 app.get(`/${endpoint_info['title']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
-  const arg_string = req.query.arg_string;
+  const { privacy_signature, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
   try{
+    const arg_string = await decrypt_secure_data(req.query.arg_string, registered_users_key)
     var arg_obj = JSON.parse(arg_string)
     var title = arg_obj.title
     var target_type = arg_obj.target_type
@@ -4588,38 +4621,6 @@ app.get(`/${endpoint_info['title']}/:privacy_signature`, async (req, res) => {
     res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
   }
 });//ok
-
-/* admin endpoint for restoring the node to a backed up version */
-app.post(`/${endpoint_info['restore']}`, async (req, res) => {
-  try{
-    const file_name = req.query.file_name;
-    const backup_key = req.query.backup_key;//the current key for the server
-    const data_key = req.query.data_key//the old key for the server
-    const should_restore_key = req.query.should_restore_key
-    if(file_name == null || file_name == '' || backup_key == null || backup_key == '' || data_key == null || data_key == ''){
-      res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
-      return;
-    }
-
-    if(data['key'] !== backup_key){
-      res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
-      return;
-    }
-    const success = await restore_backed_up_data_from_storage(file_name, data_key, backup_key, should_restore_key)
-    if(success == true){
-      var obj = {message:`Backup restoration of ${file_name} successful.`, success:true}
-      var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-      res.send(string_obj);
-    }else{
-      var obj = {message:`Backup restoration of ${file_name} unsuccessful. Please ensure the file was not corrupted and the back up key is valid`, success:false}
-      var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-      res.send(string_obj);
-    }
-  }catch(e){
-    console.log(e)
-    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
-  }
-});//ok ------
 
 /* enpoint for checking if node is online */
 app.get(`/${endpoint_info['marco']}`, async (req, res) => {
@@ -4774,17 +4775,14 @@ app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
 });
 
 /* admin endpoint for booting a new E5 to be tracked by the node */
-app.post(`/${endpoint_info['new_e5']}`, async (req, res) => {
-  const arg_string = req.query.arg_string;
+app.post(`/${endpoint_info['new_e5']}/:privacy_signature`, async (req, res) => {
   try{
-    var arg_obj = JSON.parse(arg_string)
-    const e5 = arg_obj.e5;
-    const backup_key = arg_obj.backup_key;
-    const e5_address = arg_obj.e5_address;
-    const web3 = arg_obj.web3;
-    const web3_backups = arg_obj.web3_backups;
-    const first_block = arg_obj.first_block;
-    const iteration = arg_obj.iteration;
+    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const { backup_key, e5, e5_address, web3, web3_backups, first_block, iteration } = await process_request_body(req.body)
 
     if(e5 == null || e5 == '' || backup_key == null || backup_key == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -4858,12 +4856,14 @@ app.post(`/${endpoint_info['new_e5']}`, async (req, res) => {
 });//ok ----
 
 /* enpoint for updating the node's provider for a specified E5 */
-app.post(`/${endpoint_info['update_provider']}`, async (req, res) => {
+app.post(`/${endpoint_info['update_provider']}/:privacy_signature`, async (req, res) => {
   try{
-    const new_provider = req.query.new_provider;
-    const e5 = req.query.e5;
-    const backup_key = req.query.backup_key;
-    const new_providers = req.query.new_providers;
+    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const { new_provider, backup_key, e5, new_providers } = await process_request_body(req.body)
 
     if(new_provider == null || new_provider == '' || new_providers == null || backup_key == null || backup_key == '' || e5 == null || e5 == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -4906,21 +4906,22 @@ app.post(`/${endpoint_info['update_provider']}`, async (req, res) => {
 });//ok -------
 
 /* endpoint for updating the node's gateway provider for E5 data. */
-app.post(`/${endpoint_info['update_content_gateway']}`, async (req, res) => {
+app.post(`/${endpoint_info['update_content_gateway']}/:privacy_signature`, async (req, res) => {
   try{
-    const new_provider = req.query.new_provider;
-    const backup_key = req.query.backup_key;
-
+    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const { new_provider, backup_key } = await process_request_body(req.body)
     if(new_provider == null || new_provider == '' || backup_key == null || backup_key == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
       return;
     }
-
     if(data['key'] !== backup_key){
       res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
       return;
     }
-
     if(!new_provider.includes('cid')){
       res.send(JSON.stringify({ message: `That gateway provider is invalid. You need to specify a url that contains the keyword 'cid'.`, success:false }));
       return;
@@ -4943,11 +4944,14 @@ app.post(`/${endpoint_info['update_content_gateway']}`, async (req, res) => {
 });//ok ----
 
 /* admin endpoint for removing tracked data for a specified E5 */
-app.post(`/${endpoint_info['delete_e5']}`, (req, res) => {
+app.post(`/${endpoint_info['delete_e5']}/:privacy_signature`, async (req, res) => {
   try{
-    const e5 = req.query.e5;
-    const backup_key = req.query.backup_key;
-
+    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const { e5, backup_key } = await process_request_body(req.body)
     if(!data['e'].includes(e5)){
       res.send(JSON.stringify({ message: `That E5 doesn't exist.` , success:false}));
       return;
@@ -4975,50 +4979,15 @@ app.post(`/${endpoint_info['delete_e5']}`, (req, res) => {
   }
 });//ok ----
 
-/* endpoint for checking the subscription payment information for a specified account */
-app.get(`/${endpoint_info['subscription']}`, async (req, res) => {
-  const subscription = req.query.object_id;
-  const e5 = req.query.e5
-  const signature_data = req.query.data;
-  const signature = req.query.signature
-  const rate_limit_results = ip_limits(req.ip)
-  if(rate_limit_results.success == false){
-    return res.status(429).json({ message: rate_limit_results.message});
-  }
-  try{
-    if(e5 == null || e5 == '' || subscription == null || signature_data == null || signature_data == '' || signature == null || signature == ''){
-      res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
-      return;
-    }
-    if(!data['e'].includes(e5)){
-      res.send(JSON.stringify({ message: 'That E5 is not being tracked by the node.', success:false }));
-      return;
-    }
-    if(object_types[e5][subscription] != 33/* 33(subscription_object) */){
-      res.send(JSON.stringify({ message: 'That object id is not a subscription object.', success:false }));
-      return;
-    }
-
-    var return_data = await get_subscription_payment_information(e5, signature_data, subscription, signature)
-    if(return_data == null){
-      res.send(JSON.stringify({ message: 'The data or signature is invalid.', success:false}));
-      return;
-    }else{
-      var string_obj = JSON.stringify(return_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-      record_request('/subscription')
-      res.send(string_obj);
-    }
-  }catch(e){
-    console.log(e)
-    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
-  }
-
-});//ok
-
 /* admin endpoint for manually backing up your nodes data */
-app.post(`/${endpoint_info['backup']}`, async (req, res) => {
+app.post(`/${endpoint_info['backup']}/:privacy_signature`, async (req, res) => {
   try{
-    const backup_key = req.query.backup_key;
+    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const { backup_key } = await process_request_body(req.body)
     if(data['key'] !== backup_key){
       res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
       return;
@@ -5037,13 +5006,49 @@ app.post(`/${endpoint_info['backup']}`, async (req, res) => {
   }
 });//ok ------
 
-/* admin endpoint for updating the iteration value for a specified E5 and its corresponding chain */
-app.post(`/${endpoint_info['update_iteration']}`, (req, res) => {
+/* admin endpoint for restoring the node to a backed up version */
+app.post(`/${endpoint_info['restore']}/:privacy_signature`, async (req, res) => {
   try{
-    const new_iteration = req.query.new_iteration;
-    const e5 = req.query.e5;
-    const backup_key = req.query.backup_key;
+    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const { backup_key, file_name, data_key, should_restore_key } = await process_request_body(req.body)
+    if(file_name == null || file_name == '' || backup_key == null || backup_key == '' || data_key == null || data_key == ''){
+      res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+      return;
+    }
 
+    if(data['key'] !== backup_key){
+      res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
+      return;
+    }
+    const success = await restore_backed_up_data_from_storage(file_name, data_key, backup_key, should_restore_key)
+    if(success == true){
+      var obj = {message:`Backup restoration of ${file_name} successful.`, success:true}
+      var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      res.send(string_obj);
+    }else{
+      var obj = {message:`Backup restoration of ${file_name} unsuccessful. Please ensure the file was not corrupted and the back up key is valid`, success:false}
+      var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      res.send(string_obj);
+    }
+  }catch(e){
+    console.log(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+});//ok ------
+
+/* admin endpoint for updating the iteration value for a specified E5 and its corresponding chain */
+app.post(`/${endpoint_info['update_iteration']}/:privacy_signature`, async (req, res) => {
+  try{
+    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const { new_iteration, e5, backup_key } = await process_request_body(req.body)
     if(new_iteration == null || new_iteration == '' || backup_key == null || backup_key == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
       return;
@@ -5075,10 +5080,14 @@ app.post(`/${endpoint_info['update_iteration']}`, (req, res) => {
 });//ok ------
 
 /* admin endpoint for booting the entire node with the required app_key */
-app.post(`/${endpoint_info['boot']}`, (req, res) => {
+app.post(`/${endpoint_info['boot']}/:privacy_signature`, async (req, res) => {
   try{
-    const new_beacon_chain_link = req.query.beacon_chain_link;
-    const backup_key = req.query.backup_key;
+    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const { new_beacon_chain_link, backup_key } = await process_request_body(req.body)
     if(new_beacon_chain_link == null || new_beacon_chain_link == '' || backup_key == null || backup_key == ''){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
       return;
@@ -5098,7 +5107,12 @@ app.post(`/${endpoint_info['boot']}`, (req, res) => {
 });//ok ------
 
 /* admin endpoint for booting the node's storage services for paid users */
-app.post(`/${endpoint_info['boot_storage']}`, async (req, res) => {
+app.post(`/${endpoint_info['boot_storage']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
   const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage, target_storage_recipient_accounts } = await process_request_body(req.body);
   // var available_space = await get_maximum_available_disk_space()
   
@@ -5153,7 +5167,12 @@ app.post(`/${endpoint_info['boot_storage']}`, async (req, res) => {
 });//ok -------
 
 /* admin endpoint for reconfiguring the storage settings for the node's storage services */
-app.post(`/${endpoint_info['reconfigure_storage']}`, async (req, res) => {
+app.post(`/${endpoint_info['reconfigure_storage']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
   const { backup_key, key, value, e5 } = await process_request_body(req.body);
   if(backup_key == null || backup_key == '' || key == null || key == '' || value == null){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -5566,8 +5585,8 @@ app.post(`/${endpoint_info['streams']}/:privacy_signature`, async (req, res) => 
 });
 
 /* endpoint for fetching itransfers with a specified identifier */
-app.post(`/${endpoint_info['itransfers']}`, async (req, res) => {
-  const { identifier, account, recipient, e5 } = req.body;
+app.get(`/${endpoint_info['itransfers']}`, async (req, res) => {
+  const { identifier, account, recipient, e5 } = req.query;
   //apply rate limits
   const rate_limit_results = ip_limits(req.ip)
   if(rate_limit_results.success == false){
@@ -5615,14 +5634,14 @@ app.post(`/${endpoint_info['itransfers']}`, async (req, res) => {
 });
 
 /* endpoint for fetching bill payment data with a specified identifier */
-app.post(`/${endpoint_info['bill_payments']}`, async (req, res) => {
+app.get(`/${endpoint_info['bill_payments']}`, async (req, res) => {
   //identifier, account, recipient, requested_e5, type
   //apply rate limits
   const rate_limit_results = ip_limits(req.ip)
   if(rate_limit_results.success == false){
     return res.status(429).json({ message: rate_limit_results.message});
   }
-  const { identifier, account, recipient, e5 } = req.body;
+  const { identifier, account, recipient, e5 } = req.query;
   if(identifier == null || identifier == ''){
     res.send(JSON.stringify({ message: 'Please speficy an identifier', success:false }));
     return;
@@ -5666,6 +5685,46 @@ app.post(`/${endpoint_info['bill_payments']}`, async (req, res) => {
     }
   */
 });
+
+/* endpoint for checking the subscription payment information for a specified account */
+app.get(`/${endpoint_info['subscription']}`, async (req, res) => {
+  const subscription = req.query.object_id;
+  const e5 = req.query.e5
+  const signature_data = req.query.data;
+  const signature = req.query.signature
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
+  try{
+    if(e5 == null || e5 == '' || subscription == null || signature_data == null || signature_data == '' || signature == null || signature == ''){
+      res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+      return;
+    }
+    if(!data['e'].includes(e5)){
+      res.send(JSON.stringify({ message: 'That E5 is not being tracked by the node.', success:false }));
+      return;
+    }
+    if(object_types[e5][subscription] != 33/* 33(subscription_object) */){
+      res.send(JSON.stringify({ message: 'That object id is not a subscription object.', success:false }));
+      return;
+    }
+
+    var return_data = await get_subscription_payment_information(e5, signature_data, subscription, signature)
+    if(return_data == null){
+      res.send(JSON.stringify({ message: 'The data or signature is invalid.', success:false}));
+      return;
+    }else{
+      var string_obj = JSON.stringify(return_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+      record_request('/subscription')
+      res.send(string_obj);
+    }
+  }catch(e){
+    console.log(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+
+});//ok
 
 /* endpoint for calculating and tallying consensus info for a specified poll */
 app.post(`/${endpoint_info['count_votes']}/:privacy_signature`, async (req, res) => {
@@ -6012,7 +6071,7 @@ app.post(`/${endpoint_info['run_transaction']}/:privacy_signature`, async (req, 
     return;
   }
   const { e5, rawTransaction } = await process_request_body(req.body);
-  if(e5 == null || run_data == null){
+  if(e5 == null || rawTransaction == null){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
@@ -6025,11 +6084,44 @@ app.post(`/${endpoint_info['run_transaction']}/:privacy_signature`, async (req, 
     const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
 
     web3.eth.sendSignedTransaction(rawTransaction).on('receipt', (receipt) => {
+      record_request('/run_transaction')
       res.send(JSON.stringify({ message: 'Transaction complete', receipt: receipt, success:true }));
     })
     .on('error', (error) => {
+      record_request('/run_transaction')
       res.send(JSON.stringify({ message: 'Something went wrong', error: error.message, success:false }));
     });
+  }
+  catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+  }
+});
+
+/* endpoint for running contract calls */
+app.post(`/${endpoint_info['run_contract_call']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { e5, contract_id, function_name, parameters } = await process_request_body(req.body);
+  if(e5 == null || contract_id == null || function_name == null || parameters == null || !Array.isArray(parameters)){
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    return;
+  }
+  if(!data['e'].includes(e5)){
+    res.send(JSON.stringify({ message: 'That e5 doesnt exist', success:false }));
+    return;
+  }
+  
+  try{
+    const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+    const { abi, address } = get_contract_abi_and_address_from_id(contract_id, e5)
+    const focused_contract = new web3.eth.Contract(abi, address);
+    const return_data = await focused_contract.methods[function_name](...parameters).call();
+    
+    record_request('/run_contract_call')
+    res.send(JSON.stringify({ message: 'Call complete', return_data: return_data, success:true }));
   }
   catch(e){
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
