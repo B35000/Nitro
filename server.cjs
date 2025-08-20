@@ -4430,6 +4430,96 @@ function get_contract_abi_and_address_from_id(contract_id, e5){
   return { abi: abi_obj[contract_id], address: address_obj[contract_id] }
 }
 
+async function calculate_price_info_for_specified_tokens(token_ids, filter_start, filter_end){
+  const return_data = {}
+  for(var i=0; i<token_ids.length; i++){
+    const focused_token_id = token_ids[i]
+    const token_id = focused_token_id.split(':')[1]
+    const token_e5 = focused_token_id.split(':')[0]
+
+    const all_exchange_ratio_data = await filter_events(token_e5, 'H5', 'e1', { p1/* target_id */: token_id}, null)
+
+    const targeted_exchange_ratio_data = all_exchange_ratio_data.filter(function (event) {
+      return (event.returnValues.p9/* timestamp */ >= filter_start && event.returnValues.p9/* timestamp */ <= filter_end)
+    })
+    const token_type = get_token_type(all_exchange_ratio_data)
+    const price_data = []
+
+    targeted_exchange_ratio_data.forEach(event => {
+      const input_amount = 1
+      const input_reserve_ratio = event.returnValues.p5/* exchange_ratio_x */
+      const output_reserve_ratio = event.returnValues.p6/* exchange_ratio_y */
+      const price = calculate_price(input_amount, input_reserve_ratio, output_reserve_ratio, token_type)
+      price_data.push({'time':event.returnValues.p9/* timestamp */, 'price':price})
+    });
+
+    if(token_type == 3 && all_exchange_ratio_data.length > 0){
+      const initial_supply = bigInt(all_exchange_ratio_data[0].returnValues.p5/* updated_exchange_ratio_x */).plus(bigInt(all_exchange_ratio_data[0].returnValues.p8/* amount */))
+      const total_minted_as_auth = await get_total_minted_as_auth(token_id, token_e5, filter_end)
+      const final_supply = bigInt(initial_supply).plus(total_minted_as_auth)
+
+      return_data[focused_token_id] = { 'price_change_history':price_data, 'total_supply': final_supply }
+    }
+    else if(token_type == 5 && targeted_exchange_ratio_data.length > 0){
+      const latest_exchange_ratio_event = targeted_exchange_ratio_data[targeted_exchange_ratio_data.length -1]
+      const input_amount = latest_exchange_ratio_event.returnValues.p7/* parent_tokens_balance */
+      const input_reserve_ratio = latest_exchange_ratio_event.returnValues.p5/* exchange_ratio_x */
+      const output_reserve_ratio = latest_exchange_ratio_event.returnValues.p6/* exchange_ratio_y */
+      const final_supply = calculate_price(input_amount, input_reserve_ratio, output_reserve_ratio, token_type);
+
+      return_data[focused_token_id] = { 'price_change_history':price_data, 'total_supply': final_supply }
+    }
+  }
+
+  return return_data
+}
+
+async function get_total_minted_as_auth(token_id, e5, filter_end){
+  const all_auth_mint_data = await filter_events(e5, 'H52', 'power', { p1/* target_id */: token_id, p2/* action */: 2/* depth_auth_mint */}, null)
+
+  const targeted_auth_mint_data = all_auth_mint_data.filter(function (event) {
+    return (event.returnValues.p7/* timestamp */ <= filter_end)
+  })
+
+  var total = bigInt(0)
+  targeted_auth_mint_data.forEach(event => {
+    total = bigInt(total).plus(get_actual_number(event.returnValues.p5/* amount */, event.returnValues.p4/* depth_val */))
+  });
+  return total
+}
+
+function get_token_type(all_exchange_ratio_data){
+  if(all_exchange_ratio_data.length >= 2){
+    const first_event = all_exchange_ratio_data[0]
+    const last_event = all_exchange_ratio_data[1]
+    if(first_event.returnValues.p6/* updated_exchange_ratio_y */ == last_event.returnValues.p6/* updated_exchange_ratio_y */){
+      return 5
+    }
+    else{
+      return 3
+    }
+  }
+  else{
+    return 5
+  }
+}
+
+function calculate_price(input_amount, input_reserve_ratio, output_reserve_ratio, token_type){
+  if(token_type == 3){
+      var price = (bigInt(input_amount).times(bigInt(output_reserve_ratio))).divide(bigInt(input_reserve_ratio).plus(input_amount))
+      if(price == 0){
+          price = (input_amount * output_reserve_ratio) / (input_reserve_ratio + input_amount)
+      }
+      return price
+  }else{
+      var price = (bigInt(input_amount).times(bigInt(output_reserve_ratio))).divide(bigInt(input_reserve_ratio))
+      if(price == 0){
+          price = (input_amount * output_reserve_ratio) / (input_reserve_ratio)
+      }
+      return price
+  }
+}
+
 
 
 
@@ -6126,6 +6216,32 @@ app.post(`/${endpoint_info['run_contract_call']}/:privacy_signature`, async (req
   catch(e){
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
   }
+});
+
+/* endpoint for obtaining the price info for specified tokens */
+app.get(`/${endpoint_info['token_price']}`, async (req, res) => {
+  const token_ids = req.query.token_ids;
+  const from = req.query.from;
+  const to = req.query.to;
+
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
+  try{
+    if(token_ids == null || Array.isArray(token_ids) || isNaN(from) || isNaN(to)){
+      res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+      return;
+    }
+    const return_data = await calculate_price_info_for_specified_tokens(token_ids, from, to)
+    const string_obj = JSON.stringify(return_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/token_price')
+    res.send(string_obj);
+  }catch(e){
+    console.log(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+
 });
 
 
