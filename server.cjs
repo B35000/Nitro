@@ -167,7 +167,7 @@ var staged_ecids = {}
 var failed_ecids = {'in':[], 'nf':[], 'ni':[], 'ar':[]}
 var file_data_steams = {}
 var ipAccessTimestamps = {}
-const RATE_LIMIT_WINDOW = 5*60*60*1000;/* 5hrs */
+const RATE_LIMIT_WINDOW = 24*60*60*1000;/* 24hrs */
 const STREAM_DATA_THRESHOLD = 1024*1024*5.3/* 5.3mbs */
 const rateLimitMap = new Map();
 var upload_view_trends_data = {}
@@ -2957,7 +2957,7 @@ function get_price_data_snapshots(modification_events, object){
 
 
 /*  */
-function record_stream_event(file, chunk_length){
+function record_stream_event(file, chunk_length, ip){
   const now = new Date();
   now.setMinutes(0, 0, 0);
   const timestamp_id = now.getTime()
@@ -2971,6 +2971,8 @@ function record_stream_event(file, chunk_length){
   }
 
   file_data_steams[timestamp_id][file] = bigInt(file_data_steams[timestamp_id][file]).plus(bigInt(chunk_length))
+
+  ipAccessTimestamps[ip+file]['bytes'] = bigInt(file_data_steams[timestamp_id][file]).plus(bigInt(chunk_length))
 }
 
 function record_view_event(file){
@@ -4194,7 +4196,7 @@ function base64ToUint8(base64){
 
 async function register_user_encryption_key(user_temp_hash, encrypted_key, ip_address){
   if(userKeysMap.get(user_temp_hash.toString()) != null){
-    return { success: false, message: 'user hash already registered'}
+    return { success: false, message: 'user hash already registered', existing: true }
   }
   try{
     // const private_key_to_use = Buffer.from(server_public_key, 'base64')
@@ -4238,6 +4240,7 @@ async function process_request_params(data, ip_address){
       if(userKeysMap.get(registered_user) == null /* || userKeysMap.get(registered_user)['ip'] != ip_address */){
         return data
       }
+      return_obj['registered_user'] = registered_user
       const keys = Object.keys(data)
       for(var k=0; k<keys.length; k++){
         const key = keys[k]
@@ -4274,7 +4277,6 @@ async function process_request_body(data){
   try{
     const registered_users_key = userKeysMap.get(registered_user)['key']
     const return_obj = JSON.parse(await decrypt_secure_data(data['encrypted_data'], registered_users_key));
-    return_obj['registered_users_key'] = registered_users_key
     return return_obj
   }
   catch(e){
@@ -4584,7 +4586,7 @@ app.get('/:privacy_signature', async (req, res) => {
 
 /* endpoint for returning E5 event data tracked by the node */
 app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
   var limit = data['event_data_request_limit'];
   if(privacy_signature == 'e'){
     //apply rate limits
@@ -4639,7 +4641,7 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
 
 /* endpoint for returning E5 hash data stored */
 app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
   var limit = data['hash_data_request_limit'];
   if(privacy_signature == 'e'){
     //apply rate limits
@@ -4678,7 +4680,7 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
 
 /* endpoint for filtering tracked E5 objects by specified tags */
 app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -4702,7 +4704,7 @@ app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
 
 /* endpoint for filtering tracked E5 objects by specified a title */
 app.get(`/${endpoint_info['title']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -4813,7 +4815,7 @@ app.post(`/${endpoint_info['register']}`, async (req, res) => {
 
 /* enpoint for loading traffic stats */
 app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, async (req, res) => {
-  const { filter_time, privacy_signature } = await process_request_params(req.params, req.ip);
+  const { filter_time, privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -4845,7 +4847,7 @@ app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, as
 
 /* enpoint for loading trends */
 app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   const { start_time, end_time, keywords, filter_type, filter_languages } = await process_request_body(req.body)
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
@@ -4878,7 +4880,7 @@ app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
 /* admin endpoint for booting a new E5 to be tracked by the node */
 app.post(`/${endpoint_info['new_e5']}/:privacy_signature`, async (req, res) => {
   try{
-    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
     if(!await is_privacy_signature_valid(privacy_signature)){
       res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
       return;
@@ -4959,7 +4961,7 @@ app.post(`/${endpoint_info['new_e5']}/:privacy_signature`, async (req, res) => {
 /* enpoint for updating the node's provider for a specified E5 */
 app.post(`/${endpoint_info['update_provider']}/:privacy_signature`, async (req, res) => {
   try{
-    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
     if(!await is_privacy_signature_valid(privacy_signature)){
       res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
       return;
@@ -5009,7 +5011,7 @@ app.post(`/${endpoint_info['update_provider']}/:privacy_signature`, async (req, 
 /* endpoint for updating the node's gateway provider for E5 data. */
 app.post(`/${endpoint_info['update_content_gateway']}/:privacy_signature`, async (req, res) => {
   try{
-    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
     if(!await is_privacy_signature_valid(privacy_signature)){
       res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
       return;
@@ -5047,7 +5049,7 @@ app.post(`/${endpoint_info['update_content_gateway']}/:privacy_signature`, async
 /* admin endpoint for removing tracked data for a specified E5 */
 app.post(`/${endpoint_info['delete_e5']}/:privacy_signature`, async (req, res) => {
   try{
-    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
     if(!await is_privacy_signature_valid(privacy_signature)){
       res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
       return;
@@ -5083,7 +5085,7 @@ app.post(`/${endpoint_info['delete_e5']}/:privacy_signature`, async (req, res) =
 /* admin endpoint for manually backing up your nodes data */
 app.post(`/${endpoint_info['backup']}/:privacy_signature`, async (req, res) => {
   try{
-    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
     if(!await is_privacy_signature_valid(privacy_signature)){
       res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
       return;
@@ -5110,7 +5112,7 @@ app.post(`/${endpoint_info['backup']}/:privacy_signature`, async (req, res) => {
 /* admin endpoint for restoring the node to a backed up version */
 app.post(`/${endpoint_info['restore']}/:privacy_signature`, async (req, res) => {
   try{
-    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
     if(!await is_privacy_signature_valid(privacy_signature)){
       res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
       return;
@@ -5144,7 +5146,7 @@ app.post(`/${endpoint_info['restore']}/:privacy_signature`, async (req, res) => 
 /* admin endpoint for updating the iteration value for a specified E5 and its corresponding chain */
 app.post(`/${endpoint_info['update_iteration']}/:privacy_signature`, async (req, res) => {
   try{
-    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
     if(!await is_privacy_signature_valid(privacy_signature)){
       res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
       return;
@@ -5183,7 +5185,7 @@ app.post(`/${endpoint_info['update_iteration']}/:privacy_signature`, async (req,
 /* admin endpoint for booting the entire node with the required app_key */
 app.post(`/${endpoint_info['boot']}/:privacy_signature`, async (req, res) => {
   try{
-    const { privacy_signature } = await process_request_params(req.params, req.ip);
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
     if(!await is_privacy_signature_valid(privacy_signature)){
       res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
       return;
@@ -5209,7 +5211,7 @@ app.post(`/${endpoint_info['boot']}/:privacy_signature`, async (req, res) => {
 
 /* admin endpoint for booting the node's storage services for paid users */
 app.post(`/${endpoint_info['boot_storage']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5269,7 +5271,7 @@ app.post(`/${endpoint_info['boot_storage']}/:privacy_signature`, async (req, res
 
 /* admin endpoint for reconfiguring the storage settings for the node's storage services */
 app.post(`/${endpoint_info['reconfigure_storage']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5303,7 +5305,7 @@ app.post(`/${endpoint_info['reconfigure_storage']}/:privacy_signature`, async (r
 
 /* endpoint for storing files in the storage service for the node */
 app.post(`/${endpoint_info['store_files']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5363,7 +5365,7 @@ app.post(`/${endpoint_info['store_files']}/:privacy_signature`, async (req, res)
 
 /* reserve a right to stream a file into storage */
 app.post(`/${endpoint_info['reserve_upload']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5406,7 +5408,7 @@ app.post(`/${endpoint_info['reserve_upload']}/:privacy_signature`, async (req, r
 
 /* stream data into a file under a specified reservation */
 app.post(`/${endpoint_info['upload']}/:extension/:privacy_signature`, async (req, res) => {
-  const { extension, privacy_signature } = await process_request_params(req.params, req.ip);
+  const { extension, privacy_signature, registered_user, registered_users_key} = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5486,7 +5488,7 @@ app.post(`/${endpoint_info['upload']}/:extension/:privacy_signature`, async (req
 
 /* endpoint for obtaining the storage space utilized by an account */
 app.get(`/${endpoint_info['account_storage_data']}/:account/:privacy_signature`, async (req, res) => {
-  const { privacy_signature, account } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, account, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5507,7 +5509,7 @@ app.get(`/${endpoint_info['account_storage_data']}/:account/:privacy_signature`,
 
 /* endpoint for streaming a file stored in the node. */
 app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature`, async (req, res) => {
-  const { file, content_type, privacy_signature } = await process_request_params(req.params, req.ip);
+  const { file, content_type, privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   const final_content_type = get_final_content_type(content_type)
   if(file == '' || file == null || content_type == '' || content_type == null){
     res.send(JSON.stringify({ message: 'Please specify a file to stream and content type', success:false }));
@@ -5534,26 +5536,29 @@ app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature
     const stats = fs.statSync(filePath);
     const fileSize = stats.size;
 
-    const ip = req.ip;
+    const ip = registered_user;
     const now = Date.now();
     var should_count_view = true
     var should_count_stream = true
 
     var stream_proportion_target = fileSize > STREAM_DATA_THRESHOLD ? 
-    file_size / STREAM_DATA_THRESHOLD : 96.0
+    fileSize / STREAM_DATA_THRESHOLD : 96.0
 
     if(ip != null){
       if(ipAccessTimestamps[ip+file] == null){
-        ipAccessTimestamps[ip+file] = { 'time': now, 'bytes': 0 }
+        ipAccessTimestamps[ip+file] = { 'time': now, 'bytes': 0, 'view_counted':false }
       }
-      const lastAccess = ipAccessTimestamps[ip+file]['time'];
+      else{
+        ipAccessTimestamps[ip+file]['time'] = now
+      }
+
       var stream_proportion = ipAccessTimestamps[ip+file]['bytes'] == 0 ? 0 : (ipAccessTimestamps[ip+file]['bytes'] / fileSize)
 
-      if(now - lastAccess < RATE_LIMIT_WINDOW && stream_proportion > stream_proportion_target){
+      if(stream_proportion > stream_proportion_target){
         should_count_view = false
       }
-      if(stream_proportion > stream_proportion_target){
-        should_count_stream = true
+      if(ipAccessTimestamps[ip+file]['bytes'] >= fileSize){
+        should_count_stream = false
       }
     }else{
       should_count_view = false
@@ -5575,18 +5580,16 @@ app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature
         end: chunkEnd,
       });
 
-      var has_view_been_recorded = false
       let bytesSent = 0;
-
       stream.on('data', (chunk) => {
         if(should_count_stream == true){
-          record_stream_event(file, chunk.length)
+          record_stream_event(file, chunk.length, ip)
         }
         if(should_count_view == true){
           bytesSent += chunk.length;
           const streamed_proportion = bytesSent / fileSize
-          if(!has_view_been_recorded && streamed_proportion >= stream_proportion_target){
-            has_view_been_recorded = true
+          if(!ipAccessTimestamps[ip+file]['view_counted'] && streamed_proportion >= stream_proportion_target){
+            ipAccessTimestamps[ip+file]['view_counted'] = true
             record_view_event(file)
           }
         }
@@ -5604,10 +5607,11 @@ app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature
     }
     else{
       if(should_count_stream == true){
-        record_stream_event(file, fileSize)
+        record_stream_event(file, fileSize, ip)
       }
-      if(should_count_view == true){
+      if(should_count_view == true && !ipAccessTimestamps[ip+file]['view_counted']){
         record_view_event(file)
+        ipAccessTimestamps[ip+file]['view_counted'] = true;
       }
 
       res.writeHead(200, {
@@ -5623,7 +5627,7 @@ app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature
 
 /* endpoint for storing basic E5 run data. */
 app.post(`/${endpoint_info['store_data']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5658,7 +5662,7 @@ app.post(`/${endpoint_info['store_data']}/:privacy_signature`, async (req, res) 
 
 /* returns the view count for a given file */
 app.post(`/${endpoint_info['streams']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5829,7 +5833,7 @@ app.get(`/${endpoint_info['subscription']}`, async (req, res) => {
 
 /* endpoint for calculating and tallying consensus info for a specified poll */
 app.post(`/${endpoint_info['count_votes']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5860,7 +5864,7 @@ app.post(`/${endpoint_info['count_votes']}/:privacy_signature`, async (req, res)
 
 /* endpoint for calculating income stream datapoints for subscription payments */
 app.post(`/${endpoint_info['subscription_income_stream_datapoints']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5890,7 +5894,7 @@ app.post(`/${endpoint_info['subscription_income_stream_datapoints']}/:privacy_si
 
 /* endpoint for calculating payout information for the creators in a creator group */
 app.post(`/${endpoint_info['creator_group_payouts']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5920,7 +5924,7 @@ app.post(`/${endpoint_info['creator_group_payouts']}/:privacy_signature`, async 
 
 /* endpoint for deleting an uploaded file from the node permanently */
 app.post(`/${endpoint_info['delete_files']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -5961,7 +5965,7 @@ app.post(`/${endpoint_info['delete_files']}/:privacy_signature`, async (req, res
 
 /* endpoint for streaming the log file stored in the node. */
 app.get(`/${endpoint_info['stream_logs']}/:file/:backup_key/:privacy_signature`, async (req, res) => {
-  const { file, backup_key, privacy_signature } = await process_request_params(req.params, req.ip);
+  const { file, backup_key, privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(file == '' || file == null || !file.endsWith('.log')){
     res.send(JSON.stringify({ message: 'Please specify a valid file to stream', success:false }));
     return;
@@ -6023,7 +6027,7 @@ app.get(`/${endpoint_info['stream_logs']}/:file/:backup_key/:privacy_signature`,
 
 /* endpoint for updating the nodes https certificates */
 app.post(`/${endpoint_info['update_certificates']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -6078,7 +6082,7 @@ app.post(`/${endpoint_info['update_certificates']}/:privacy_signature`, async (r
 
 /* endpoint for updating and restarting the node */
 app.post(`/${endpoint_info['update_nodes']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -6166,7 +6170,7 @@ app.post(`/${endpoint_info['update_nodes']}/:privacy_signature`, async (req, res
 
 /* endpoint for posting e5 runs */
 app.post(`/${endpoint_info['run_transaction']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
@@ -6200,7 +6204,7 @@ app.post(`/${endpoint_info['run_transaction']}/:privacy_signature`, async (req, 
 
 /* endpoint for running contract calls */
 app.post(`/${endpoint_info['run_contract_call']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature } = await process_request_params(req.params, req.ip);
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
