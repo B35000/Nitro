@@ -3505,7 +3505,7 @@ function clear_rate_limit_info(){
     }
   }
 
-  const keys_threshold = Date.now - (7*24*60*60*1000)
+  const keys_threshold = Date.now() - (5*60*60*1000)
   for (const [ip, key_data] of userKeysMap.entries()) {
     if (key_data['time'] < keys_threshold) {
       userKeysMap.delete(ip);
@@ -4261,12 +4261,18 @@ async function process_request_params(data, ip_address){
         }
       }
     }
+    update_registered_user_time(registered_user)
     return return_obj
   }
   catch(e){
     console.log(e)
     return data
   }
+}
+
+function update_registered_user_time(registered_user){
+  let obj = userKeysMap.get(registered_user);
+  obj['time'] = Date.now()
 }
 
 async function process_request_body(data){
@@ -4277,6 +4283,7 @@ async function process_request_body(data){
   try{
     const registered_users_key = userKeysMap.get(registered_user)['key']
     const return_obj = JSON.parse(await decrypt_secure_data(data['encrypted_data'], registered_users_key));
+    update_registered_user_time(registered_user)
     return return_obj
   }
   catch(e){
@@ -6361,7 +6368,7 @@ setInterval(backup_stream_count_data_if_large_enough, 32*24*60*60*1000)
 setInterval(reset_ip_access_timestamp_object, 5*60*60*1000)
 setInterval(start_update_storage_renewal_payment_information, 2*60*1000)
 setInterval(delete_unrenewed_files, 7*24*60*60*1000)
-setInterval(clear_rate_limit_info, 2*60*1000)
+setInterval(clear_rate_limit_info, 5*60*1000)
 setInterval(record_ram_rom_usage, 5*60*1000)
 setInterval(delete_older_ram_rom_usage_stats, 30*24*60*60*1000)
 setInterval(delete_older_request_stats, 30*24*60*60*1000)
