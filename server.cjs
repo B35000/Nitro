@@ -4434,8 +4434,15 @@ async function calculate_price_info_for_specified_tokens(token_ids, filter_start
   const return_data = {}
   for(var i=0; i<token_ids.length; i++){
     const focused_token_id = token_ids[i]
+    if(!focused_token_id.includes(':') || countChar(focused_token_id, ':') > 1){
+      continue;
+    }
+    const token_e5 = focused_token_id.split(':')[0].toUpperCase()
     const token_id = focused_token_id.split(':')[1]
-    const token_e5 = focused_token_id.split(':')[0]
+
+    if(!data['e'].includes(token_e5) || isNaN(token_id) || parseInt(token_id) < 1000 || object_types[token_e5][token_id] != 31/* 31(exchange_object) */){
+      continue;
+    }
 
     const all_exchange_ratio_data = await filter_events(token_e5, 'H5', 'e1', { p1/* target_id */: token_id}, null)
 
@@ -4472,6 +4479,10 @@ async function calculate_price_info_for_specified_tokens(token_ids, filter_start
   }
 
   return return_data
+}
+
+function countChar(str, char) {
+  return str.split(char).length - 1;
 }
 
 async function get_total_minted_as_auth(token_id, e5, filter_end){
@@ -6224,6 +6235,13 @@ app.get(`/${endpoint_info['token_price']}`, async (req, res) => {
   const from = req.query.from;
   const to = req.query.to;
 
+  /*
+    example:
+    token_ids ---> ['E25:10032', 'E25:54039', 'E35:22019', 'E25:100293']
+    
+    //invalid values wont be processed
+  */
+
   const rate_limit_results = ip_limits(req.ip)
   if(rate_limit_results.success == false){
     return res.status(429).json({ message: rate_limit_results.message});
@@ -6231,6 +6249,10 @@ app.get(`/${endpoint_info['token_price']}`, async (req, res) => {
   try{
     if(token_ids == null || Array.isArray(token_ids) || isNaN(from) || isNaN(to)){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+      return;
+    }
+    else if(token_ids.length > 100){
+      res.send(JSON.stringify({ message: 'You can only check up to 100 tokens', success:false }));
       return;
     }
     const return_data = await calculate_price_info_for_specified_tokens(token_ids, from, to)
