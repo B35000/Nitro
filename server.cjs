@@ -1326,13 +1326,14 @@ function update_staged_hash_data(){
                   const index_values = container_data['tags'][key]['elements']
                   const item_type = container_data['tags'][key]['type']
                   const item_lan = container_data['tags'][key]['lan'] == null ? 'en' : container_data['tags'][key]['type']
+                  const item_state = container_data['tags']['key']['state'] == null ? '0x' : container_data['tags']['key']['state']
                   if(pointer_data[item_type] == null){
                     pointer_data[item_type] = []
                   }
                   const id = isNaN(staged_ecids[ecid]) ? staged_ecids[ecid].object_id : staged_ecids[ecid]
                   const e5 = isNaN(staged_ecids[ecid]) ? staged_ecids[ecid].e5 : 'E25'
                   pointer_data[item_type].push({'id':id, 'e5':e5, 'keys':index_values})
-                  record_trend('uploads', index_values, item_lan)
+                  record_trend('uploads', index_values, item_lan, item_state)
                   delete staged_ecids[ecid]
                 }
               }
@@ -1349,7 +1350,7 @@ function update_staged_hash_data(){
   }
 }
 
-function record_trend(type, keys, language){
+function record_trend(type, keys, language, state){
   const now = new Date();
   now.setMinutes(0, 0, 0);
   const timestamp = now.getTime()
@@ -1361,9 +1362,12 @@ function record_trend(type, keys, language){
       upload_view_trends_data[timestamp][type][language] = {}
     }
     if(upload_view_trends_data[timestamp][type][language][tag] == null){
-      upload_view_trends_data[timestamp][type][language][tag] = { 'hits':0 }
+      upload_view_trends_data[timestamp][type][language][tag] = {}
     }
-    upload_view_trends_data[timestamp][type][language][tag]['hits'] ++
+    if(upload_view_trends_data[timestamp][type][language][tag][state] == null){
+      upload_view_trends_data[timestamp][type][language][tag][state] = { 'hits':0 }
+    }
+    upload_view_trends_data[timestamp][type][language][tag][state]['hits'] ++
   });
 }
 
@@ -1442,7 +1446,10 @@ function change_trends_object_file(type, keys, language, last_matching_block_tim
       if(upload_view_trends_data_clone[timestamp] != null && upload_view_trends_data_clone[timestamp][type] != null && upload_view_trends_data_clone[timestamp][type][language] != null){
         keys.forEach(tag => {
           if(upload_view_trends_data_clone[timestamp][type][language][tag] != null){
-            upload_view_trends_data_clone[timestamp][type][language][tag]['hits'] --;
+            const states = Object.keys(upload_view_trends_data_clone[timestamp][type][language][tag])
+            states.forEach(state => {
+              upload_view_trends_data_clone[timestamp][type][language][tag][state]['hits'] --;
+            });
           }
         });
       }
@@ -1603,7 +1610,7 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
 
 
 /* filters objects by a specified set of tags */
-async function search_for_object_ids_by_tags(tags, target_type, language){
+async function search_for_object_ids_by_tags(tags, target_type, language, state){
   var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
   if(target_type == 0){
     for(var p=17; p<=36; p++){
@@ -1646,7 +1653,7 @@ async function search_for_object_ids_by_tags(tags, target_type, language){
     }
   });
 
-  record_trend('views', tags, language)
+  record_trend('views', tags, language, state)
 
   return ids;
 }
@@ -4001,7 +4008,7 @@ function stash_old_trends_in_cold_storage(){
   }
 }
 
-async function get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages){
+async function get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states){
   const selected_cold_storage_request_trends_files = data['cold_storage_trends_records'].filter(function (time) {
     return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
   });
@@ -4034,6 +4041,18 @@ async function get_old_trends_history_data(start_time, end_time, keywords, filte
             keywords.includes(key)
           )
         ) : structuredClone(original);
+
+        if(filter_states.length > 0){
+          Object.keys(filtered).forEach(tag => {
+            const filtered_by_states = Object.fromEntries(
+              Object.entries(filtered[tag]).filter(([key, _]) =>
+                filter_states.includes(key)
+              )
+            )
+            filtered[tag] = filtered_by_states;
+          });
+        }
+        
         selected_cold_storage_request_trend_obj[timestamp_id][type][language] = filtered
         if(filter_languages.length > 0 && !filter_languages.includes(language)){
           delete selected_cold_storage_request_trend_obj[timestamp_id][type][language]
@@ -4698,7 +4717,8 @@ app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
     var tags = arg_obj.tags
     var target_type = arg_obj.target_type
     var language = arg_obj.language == null ? 'en' : arg_obj.language
-    var ids = await search_for_object_ids_by_tags(tags, target_type, language)
+    var state = arg_obj.state == null ? '0x' : arg_obj.state
+    var ids = await search_for_object_ids_by_tags(tags, target_type, language, state)
     var obj = {'data':ids, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/tags')
@@ -4855,12 +4875,12 @@ app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, as
 /* enpoint for loading trends */
 app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
-  const { start_time, end_time, keywords, filter_type, filter_languages } = await process_request_body(req.body)
+  const { start_time, end_time, keywords, filter_type, filter_languages, filter_states } = await process_request_body(req.body)
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  else if(start_time == null || isNaN(start_time) || end_time == null || isNaN(end_time) || keywords == null || filter_type == null || filter_languages == null){
+  else if(start_time == null || isNaN(start_time) || end_time == null || isNaN(end_time) || keywords == null || filter_type == null || filter_languages == null || !Array.isArray(filter_languages) || filter_states == null || !Array.isArray(filter_states)){
     res.send(JSON.stringify({ message: 'Invalid filter time', success:false }));
     return;
   }
@@ -4870,7 +4890,7 @@ app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
   }
   try{
     var obj = {
-      'trends': await get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages),
+      'trends': await get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states),
       success:true
     }
 
