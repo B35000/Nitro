@@ -1333,7 +1333,7 @@ function update_staged_hash_data(){
                   const id = isNaN(staged_ecids[ecid]) ? staged_ecids[ecid].object_id : staged_ecids[ecid]
                   const e5 = isNaN(staged_ecids[ecid]) ? staged_ecids[ecid].e5 : 'E25'
                   pointer_data[item_type].push({'id':id, 'e5':e5, 'keys':index_values})
-                  record_trend('uploads', index_values, item_lan, item_state)
+                  record_trend('uploads', index_values, item_lan, item_state, item_type, {})
                   delete staged_ecids[ecid]
                 }
               }
@@ -1350,11 +1350,11 @@ function update_staged_hash_data(){
   }
 }
 
-function record_trend(type, keys, language, state){
+function record_trend(type, keys, language, state, object_type, tag_type_mapping){
   const now = new Date();
   now.setMinutes(0, 0, 0);
   const timestamp = now.getTime()
-  keys.forEach(tag => {
+  keys.forEach((tag, index) => {
     if(upload_view_trends_data[timestamp] == null){
       upload_view_trends_data[timestamp] = {'uploads':{}, 'views':{} }
     }
@@ -1365,9 +1365,26 @@ function record_trend(type, keys, language, state){
       upload_view_trends_data[timestamp][type][language][tag] = {}
     }
     if(upload_view_trends_data[timestamp][type][language][tag][state] == null){
-      upload_view_trends_data[timestamp][type][language][tag][state] = { 'hits':0 }
+      upload_view_trends_data[timestamp][type][language][tag][state] = {}
     }
-    upload_view_trends_data[timestamp][type][language][tag][state]['hits'] ++
+    if(object_type == 0){
+      const targeted_object_ids_to_update = tag_type_mapping[tag] || [];
+      targeted_object_ids_to_update.forEach(object_e5_id => {
+        const object_e5 = object_e5_id.split(':')[0]
+        const object_id = object_e5_id.split(':')[1]
+        const final_object_type = object_types[object_e5][object_id]
+        if(upload_view_trends_data[timestamp][type][language][tag][state][final_object_type] == null){
+          upload_view_trends_data[timestamp][type][language][tag][state][final_object_type] = { 'hits':0 }
+        }
+        upload_view_trends_data[timestamp][type][language][tag][state][final_object_type]['hits'] ++
+      });
+    }else{
+      if(upload_view_trends_data[timestamp][type][language][tag][state][object_type] == null){
+        upload_view_trends_data[timestamp][type][language][tag][state][object_type] = { 'hits':0 }
+      }
+      upload_view_trends_data[timestamp][type][language][tag][state][object_type]['hits'] ++
+    }
+    
   });
 }
 
@@ -1620,20 +1637,45 @@ async function search_for_object_ids_by_tags(tags, target_type, language, state)
   }
   var filtered_objects = [];
   var processed_tags = tags.map(word => word.toString());
+  const tag_type_mapping = {}
   filtered_objects = all_objs.filter(function (object) {
     var object_tags = object['keys']
     const containsAll = processed_tags.some(r=> object_tags.includes(r))
+    if(containsAll == true){
+      object_tags.forEach(tag => {
+        if(tag_type_mapping[tag] == null){
+          tag_type_mapping[tag] = []
+        }
+        const id = object['id']
+        const e5 = object['e5'] == null ? 'E25' : object['e5']
+        const e5_id = e5+':'+id
+        if(!tag_type_mapping[tag].includes(e5_id)){
+          tag_type_mapping[tag].push(e5_id)
+        }
+      });
+    }
     return (containsAll)
   });
   var final_filtered_objects = []
   final_filtered_objects = filtered_objects.filter(function (object) {
     var object_tags = object['keys']
     const containsAll = processed_tags.every(element => {
-      return object_tags.includes(element);
+      const includes = object_tags.includes(element);
+      if(includes == true){
+        if(tag_type_mapping[element] == null){
+          tag_type_mapping[element] = []
+        }
+        const id = object['id']
+        const e5 = object['e5'] == null ? 'E25' : object['e5']
+        const e5_id = e5+':'+id
+        if(!tag_type_mapping[element].includes(e5_id)){
+          tag_type_mapping[element].push(e5_id)
+        }
+      }
+      return includes
     });
     return (containsAll)
   });
-  
 
   var ids = []
   final_filtered_objects.forEach(item => {
@@ -1653,7 +1695,7 @@ async function search_for_object_ids_by_tags(tags, target_type, language, state)
     }
   });
 
-  record_trend('views', tags, language, state)
+  record_trend('views', tags, language, state, target_type, tag_type_mapping)
 
   return ids;
 }
@@ -4008,7 +4050,7 @@ function stash_old_trends_in_cold_storage(){
   }
 }
 
-async function get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states){
+async function get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states, filter_object_types){
   const selected_cold_storage_request_trends_files = data['cold_storage_trends_records'].filter(function (time) {
     return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
   });
@@ -4050,6 +4092,18 @@ async function get_old_trends_history_data(start_time, end_time, keywords, filte
               )
             )
             filtered[tag] = filtered_by_states;
+          });
+        }
+        if(filter_object_types.length > 0){
+          Object.keys(filtered).forEach(tag => {
+            Object.keys(filtered[tag]).forEach(state => {
+                const filtered_by_object_type = Object.fromEntries(
+                  Object.entries(filtered[tag][state]).filter(([key, _]) =>
+                    filter_object_types.includes(key)
+                  )
+              );
+              filtered[tag][state] = filtered_by_object_type;
+            });
           });
         }
         
@@ -4875,12 +4929,12 @@ app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, as
 /* enpoint for loading trends */
 app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
-  const { start_time, end_time, keywords, filter_type, filter_languages, filter_states } = await process_request_body(req.body)
+  const { start_time, end_time, keywords, filter_type, filter_languages, filter_states, filter_object_types } = await process_request_body(req.body)
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  else if(start_time == null || isNaN(start_time) || end_time == null || isNaN(end_time) || keywords == null || filter_type == null || filter_languages == null || !Array.isArray(filter_languages) || filter_states == null || !Array.isArray(filter_states)){
+  else if(start_time == null || isNaN(start_time) || end_time == null || isNaN(end_time) || keywords == null || filter_type == null || filter_languages == null || !Array.isArray(filter_languages) || filter_states == null || !Array.isArray(filter_states) || filter_object_types == null || !Array.isArray(filter_object_types)){
     res.send(JSON.stringify({ message: 'Invalid filter time', success:false }));
     return;
   }
@@ -4890,7 +4944,7 @@ app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
   }
   try{
     var obj = {
-      'trends': await get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states),
+      'trends': await get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states, filter_object_types),
       success:true
     }
 
