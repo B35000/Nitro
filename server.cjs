@@ -1388,7 +1388,6 @@ function record_trend(type, keys, language, state, object_type, tag_type_mapping
   });
 }
 
-
 async function reverse_update_staged_hash_data(staged_ecids_to_remove, last_matching_block_time){
   // console.log('updating staged hash data...')
   for(const ecid in staged_ecids_to_remove){
@@ -1437,7 +1436,6 @@ async function reverse_update_staged_hash_data(staged_ecids_to_remove, last_matc
     }
   }
 }
-
 
 async function unrecord_trend(type, keys, language, last_matching_block_time){
   const recorded_trends_data_files = data['cold_storage_trends_records'].filter(function (time) {
@@ -1701,33 +1699,33 @@ async function search_for_object_ids_by_tags(tags, target_type, language, state)
 }
 
 /* filters objects by a specified title */
-async function search_for_object_ids_by_title(title, target_type){
-  var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
-  if(target_type == 0){
-    for(var p=17; p<=36; p++){
-      var p_objs = pointer_data[p] == null ? [] : pointer_data[p]
-      all_objs = all_objs.concat(p_objs)
-    }
-  }
-  var filtered_objects = [];
-  filtered_objects = all_objs.filter(function (object) {
-    var object_tags = object['keys']
-    const containsAll = object_tags.includes(title.toString())
-    return (containsAll)
-  });
+// async function search_for_object_ids_by_title(title, target_type){
+//   var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
+//   if(target_type == 0){
+//     for(var p=17; p<=36; p++){
+//       var p_objs = pointer_data[p] == null ? [] : pointer_data[p]
+//       all_objs = all_objs.concat(p_objs)
+//     }
+//   }
+//   var filtered_objects = [];
+//   filtered_objects = all_objs.filter(function (object) {
+//     var object_tags = object['keys']
+//     const containsAll = object_tags.includes(title.toString())
+//     return (containsAll)
+//   });
 
-  var ids = []
-  filtered_objects.forEach(item => {
-    const id = item['id']
-    const e5 = item['e5'] == null ? 'E25' : item['e5']
-    const e5_id = e5+':'+id
-    if(!ids.includes(e5_id)){
-      ids.push(e5_id)
-    }
-  });
+//   var ids = []
+//   filtered_objects.forEach(item => {
+//     const id = item['id']
+//     const e5 = item['e5'] == null ? 'E25' : item['e5']
+//     const e5_id = e5+':'+id
+//     if(!ids.includes(e5_id)){
+//       ids.push(e5_id)
+//     }
+//   });
 
-  return ids;
-}
+//   return ids;
+// }
 
 
 
@@ -4784,27 +4782,27 @@ app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
 });//ok
 
 /* endpoint for filtering tracked E5 objects by specified a title */
-app.get(`/${endpoint_info['title']}/:privacy_signature`, async (req, res) => {
-  const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
-  if(!await is_privacy_signature_valid(privacy_signature)){
-    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
-    return;
-  }
-  try{
-    const arg_string = await decrypt_secure_data(req.query.arg_string, registered_users_key)
-    var arg_obj = JSON.parse(arg_string)
-    var title = arg_obj.title
-    var target_type = arg_obj.target_type
-    var ids = await search_for_object_ids_by_title(title, target_type)
-    var obj = {'data':ids, success:true}
-    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-    record_request('/title')
-    res.send(string_obj);
-  }catch(e){
-    console.log(e)
-    res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
-  }
-});//ok
+// app.get(`/${endpoint_info['title']}/:privacy_signature`, async (req, res) => {
+//   const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
+//   if(!await is_privacy_signature_valid(privacy_signature)){
+//     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+//     return;
+//   }
+//   try{
+//     const arg_string = await decrypt_secure_data(req.query.arg_string, registered_users_key)
+//     var arg_obj = JSON.parse(arg_string)
+//     var title = arg_obj.title
+//     var target_type = arg_obj.target_type
+//     var ids = await search_for_object_ids_by_title(title, target_type)
+//     var obj = {'data':ids, success:true}
+//     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+//     record_request('/title')
+//     res.send(string_obj);
+//   }catch(e){
+//     console.log(e)
+//     res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
+//   }
+// });//ok
 
 /* enpoint for checking if node is online */
 app.get(`/${endpoint_info['marco']}`, async (req, res) => {
