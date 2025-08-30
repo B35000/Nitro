@@ -97,6 +97,7 @@ var data = {
   'is_ecid_delete_scheduled':false,
   'ip_request_time_limit': 1000,
   'certificate_expiry_time':0,
+  'target_minimum_balance_amounts':{}
 }
 
 const E5_CONTRACT_ABI = [
@@ -155,8 +156,7 @@ var hash_data = {'e':'test'}
 /* object containing pointers to the ipfs data stored in files */
 var cold_storage_hash_pointers = {}
 var cold_storage_event_files = []
-/* object containing all the data types for all the objects tracked in the node */
-var object_types = {}
+var object_types = {} /* object containing all the data types for all the objects tracked in the node */
 var start_up_time = Date.now()/* start up time */
 var hash_count = 0/* number of ipfs hashes being tracked */
 var load_count = 0/* number of ipfs hashes loaded by the node */
@@ -1698,35 +1698,6 @@ async function search_for_object_ids_by_tags(tags, target_type, language, state)
   return ids;
 }
 
-/* filters objects by a specified title */
-// async function search_for_object_ids_by_title(title, target_type){
-//   var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
-//   if(target_type == 0){
-//     for(var p=17; p<=36; p++){
-//       var p_objs = pointer_data[p] == null ? [] : pointer_data[p]
-//       all_objs = all_objs.concat(p_objs)
-//     }
-//   }
-//   var filtered_objects = [];
-//   filtered_objects = all_objs.filter(function (object) {
-//     var object_tags = object['keys']
-//     const containsAll = object_tags.includes(title.toString())
-//     return (containsAll)
-//   });
-
-//   var ids = []
-//   filtered_objects.forEach(item => {
-//     const id = item['id']
-//     const e5 = item['e5'] == null ? 'E25' : item['e5']
-//     const e5_id = e5+':'+id
-//     if(!ids.includes(e5_id)){
-//       ids.push(e5_id)
-//     }
-//   });
-
-//   return ids;
-// }
-
 
 
 
@@ -1991,8 +1962,9 @@ async function fetch_accounts_available_storage(signature_data, signature, e5){
     if(payment_data == null){
       if(data['free_default_storage'] != 0 && address_account != 0 && 
         data['free_default_storage_addresses'][original_address] == null){
-        var balance = await web3.eth.getBalance(original_address)
-        if(balance != 0){
+        const balance = await web3.eth.getBalance(original_address)
+        const required_balance = bigInt(data['target_minimum_balance_amounts'][e5]) || bigInt(1)
+        if(!bigInt(balance).isZero() && bigInt(balance).greaterOrEquals(required_balance)){
           data['storage_data'][e5_address_account] = {'files':0, 'acquired_space':parseFloat(data['free_default_storage']), 'utilized_space':0.0};
           data['free_default_storage_addresses'][original_address] = true
 
@@ -4781,29 +4753,6 @@ app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
   }
 });//ok
 
-/* endpoint for filtering tracked E5 objects by specified a title */
-// app.get(`/${endpoint_info['title']}/:privacy_signature`, async (req, res) => {
-//   const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
-//   if(!await is_privacy_signature_valid(privacy_signature)){
-//     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
-//     return;
-//   }
-//   try{
-//     const arg_string = await decrypt_secure_data(req.query.arg_string, registered_users_key)
-//     var arg_obj = JSON.parse(arg_string)
-//     var title = arg_obj.title
-//     var target_type = arg_obj.target_type
-//     var ids = await search_for_object_ids_by_title(title, target_type)
-//     var obj = {'data':ids, success:true}
-//     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-//     record_request('/title')
-//     res.send(string_obj);
-//   }catch(e){
-//     console.log(e)
-//     res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
-//   }
-// });//ok
-
 /* enpoint for checking if node is online */
 app.get(`/${endpoint_info['marco']}`, async (req, res) => {
   //apply rate limits
@@ -4862,6 +4811,7 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     'network_speed_in_mbps':data['network_speed_in_mbps'],
     'network_interface':data['network_interface'],
     'node_public_key':server_public_key,
+    'target_minimum_balance_amounts':data['target_minimum_balance_amounts'],
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -5295,10 +5245,10 @@ app.post(`/${endpoint_info['boot_storage']}/:privacy_signature`, async (req, res
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage, target_storage_recipient_accounts } = await process_request_body(req.body);
+  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage, target_storage_recipient_accounts, target_minimum_balance_amounts } = await process_request_body(req.body);
   // var available_space = await get_maximum_available_disk_space()
   
-  if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || /* target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account) || */ unlimited_basic_storage == null || target_storage_recipient_accounts == null){
+  if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || /* target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account) || */ unlimited_basic_storage == null || target_storage_recipient_accounts == null || target_minimum_balance_amounts == null){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
@@ -5343,6 +5293,7 @@ app.post(`/${endpoint_info['boot_storage']}/:privacy_signature`, async (req, res
       data['free_default_storage'] = free_default_storage
     }
     data['target_storage_recipient_accounts'] = target_storage_recipient_accounts
+    data['target_minimum_balance_amounts'] = target_minimum_balance_amounts
 
     res.send(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs.`, success:true }));
   }
@@ -5375,6 +5326,7 @@ app.post(`/${endpoint_info['reconfigure_storage']}/:privacy_signature`, async (r
     if(key == 'price_per_megabyte'){
       data['price_per_megabyte'] = value.price_per_megabyte
       data['target_storage_recipient_accounts'] = value.target_storage_recipient_accounts
+      data['target_minimum_balance_amounts'] = value.target_minimum_balance_amounts
     }else{
       data[key] = value
     }
@@ -6393,7 +6345,7 @@ async function when_server_killed(){
 
 
 
-var options = {
+const options = {
   key: fs.readFileSync(`${PRIVATE_KEY_RESOURCE}`), 
   cert: fs.readFileSync(`${CERTIFICATE_RESOURCE}`)
   // set the directory for the keys and cerificates your using here
