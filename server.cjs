@@ -47,7 +47,7 @@ const ENPOINT_UPDATES_ENABLED = process.env.ENPOINT_UPDATES_ENABLED == null ? fa
 var logStream;
 var sync_block_number = 0;
 var server_public_key = null;
-const privacy_address = '';
+const privacy_address = '0xdC97d6dD8FF673f2A9D7569AcBb0A5df22f70276';
 var server_keys = null;
 
 
@@ -2442,6 +2442,7 @@ function get_all_sorted_objects_mappings(object){
   return all_objects
 }
 
+
 /* automatically restore the node to the most recent backup */
 function get_list_of_server_files_and_auto_backup(){
   var dir = './backup_data/'
@@ -3566,11 +3567,12 @@ function delete_older_ram_rom_usage_stats(){
   const threshold = Date.now() - 30*24*60*60*1000;
   const storage_object = {}
   keys.forEach(time => {
-    if(time < threshold){
+    if(parseInt(time) < threshold){
       storage_object[time] = structuredClone(data['memory_stats'][time])
       delete data['memory_stats'][time]
     }
   });
+  if(Object.keys(storage_object).length == 0) return;
   write_stat_to_cold_storage(storage_object, 'memory_stats_history', 'cold_storage_memory_stats', true)
 }
 
@@ -3590,11 +3592,12 @@ function delete_older_request_stats(){
   const threshold = Date.now() - 30*24*60*60*1000;
   const storage_object = {}
   keys.forEach(time => {
-    if(time < threshold){
+    if(parseInt(time) < threshold){
       storage_object[time] = structuredClone(data['request_stats'][time])
       delete data['request_stats'][time]
     }
   });
+  if(Object.keys(storage_object).length == 0) return;
   write_stat_to_cold_storage(storage_object, 'request_stats_history', 'cold_storage_request_stats')
 }
 
@@ -4335,19 +4338,6 @@ async function process_request_body(data){
   }
 }
 
-function generate_and_record_endpoint_info(){
-  const endpoints = ['tags', 'title', 'restore', 'marco', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'stream_file', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call'];
-
-  endpoints.forEach(endpoint => {
-    endpoint_info[endpoint] = makeid(35)
-  });
-  endpoint_info['events'] = 'events'
-  endpoint_info['data'] = 'data'
-  endpoint_info['subscription'] = 'subscription'
-  endpoint_info['itransfers'] = 'itransfers'
-  endpoint_info['bill_payments'] = 'bill_payments'
-}
-
 global.fetch = async (url, options = {}) => {
   const startTime = Date.now();
 
@@ -4373,7 +4363,19 @@ global.fetch = async (url, options = {}) => {
   return response; // still return usable Response
 };
 
-generate_and_record_endpoint_info()
+
+const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'stream_file', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call'];
+
+for(var end=0; end<endpoints.length; end++){
+  const endpoint = endpoints[end]
+  endpoint_info[endpoint] = makeid(35)
+}
+endpoint_info['events'] = 'events'
+endpoint_info['data'] = 'data'
+endpoint_info['subscription'] = 'subscription'
+endpoint_info['itransfers'] = 'itransfers'
+endpoint_info['bill_payments'] = 'bill_payments'
+endpoint_info['marco'] = 'marco'
 
 
 
@@ -4598,46 +4600,6 @@ async function encrypt_call_result(result_string, key){
 
 
 
-app.use((req, res, next) => {
-  let bytesSent = 0;
-  let bytesReceived = 0;
-
-  // Count incoming request data
-  req.on('data', chunk => {
-    bytesReceived += chunk.length;
-  });
-
-  const origWrite = res.write;
-  const origEnd = res.end;
-
-  res.write = function (chunk, ...args) {
-    if (chunk) {
-      bytesSent += chunk.length;
-    }
-    return origWrite.call(this, chunk, ...args);
-  };
-
-  res.end = function (chunk, ...args) {
-    if (chunk) {
-      bytesSent += chunk.length;
-    }
-    // Log this request/response traffic
-    trafficHistory.push({ time: Date.now(), sent: bytesSent, received: bytesReceived });
-    return origEnd.call(this, chunk, ...args);
-  };
-
-  next();
-});
-
-app.get('/:privacy_signature', async (req, res) => {
-  const { privacy_signature } = req.params
-  if(!await is_privacy_signature_valid(privacy_signature)){
-    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true }))
-  }
-  else{
-    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true, directory: endpoint_info }))
-  }
-});
 
 /* endpoint for returning E5 event data tracked by the node */
 app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
@@ -6314,6 +6276,47 @@ app.get(`/${endpoint_info['token_price']}`, async (req, res) => {
 
 });
 
+app.get('/:privacy_signature', async (req, res) => {
+  const { privacy_signature } = req.params
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true }))
+  }
+  else{
+    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true, directory: endpoint_info }))
+  }
+});
+
+app.use((req, res, next) => {
+  let bytesSent = 0;
+  let bytesReceived = 0;
+
+  // Count incoming request data
+  req.on('data', chunk => {
+    bytesReceived += chunk.length;
+  });
+
+  const origWrite = res.write;
+  const origEnd = res.end;
+
+  res.write = function (chunk, ...args) {
+    if (chunk) {
+      bytesSent += chunk.length;
+    }
+    return origWrite.call(this, chunk, ...args);
+  };
+
+  res.end = function (chunk, ...args) {
+    if (chunk) {
+      bytesSent += chunk.length;
+    }
+    // Log this request/response traffic
+    trafficHistory.push({ time: Date.now(), sent: bytesSent, received: bytesReceived });
+    return origEnd.call(this, chunk, ...args);
+  };
+
+  next();
+});
+
 
 
 
@@ -6358,11 +6361,11 @@ async function when_server_killed(){
 
 
 
-const options = {
-  key: fs.readFileSync(`${PRIVATE_KEY_RESOURCE}`), 
-  cert: fs.readFileSync(`${CERTIFICATE_RESOURCE}`)
-  // set the directory for the keys and cerificates your using here
-};
+// const options = {
+//   key: fs.readFileSync(`${PRIVATE_KEY_RESOURCE}`), 
+//   cert: fs.readFileSync(`${CERTIFICATE_RESOURCE}`)
+//   // set the directory for the keys and cerificates your using here
+// };
 
 
 //npm install express web3 crypto-js
@@ -6379,7 +6382,7 @@ const options = {
 //pm2 ls
 //pm2 stop all | 0
 //sudo pm2 kill
-//sudo pm2 start server.js --no-daemon
+//sudo pm2 start server2.cjs --no-daemon
 
 //client-cert.pem  contract-listener  package-lock.json
 //client-key.pem   hash_data          package.json
@@ -6391,8 +6394,8 @@ const options = {
 
 
 // Start server
-// app.listen(4000, when_server_started); <-------- use this if youre testing, then comment out 'options'
-https.createServer(options, app).listen(HTTPS_PORT, when_server_started);
+app.listen(4000, when_server_started);// <-------- use this if youre testing, then comment out 'options'
+// https.createServer(options, app).listen(HTTPS_PORT, when_server_started);
 
 setInterval(attempt_loading_failed_ecids, 53*60*1000)
 setInterval(load_events_for_all_e5s, 2*60*1000);
