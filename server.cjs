@@ -950,7 +950,7 @@ async function check_for_reorgs(e5){
     }
   }
   else if(data[e5]['block_hashes'] != null && current_block_number > 0){
-    const last_block_pos = data[e5]['block_hashes']['e'].length() - 1
+    const last_block_pos = data[e5]['block_hashes']['e'].length - 1
     const last_block_number = data[e5]['block_hashes']['e'][last_block_pos]
     const last_block = await web3.eth.getBlock(last_block_number);
     const last_block_hash = last_block.hash == null ? '' : last_block.hash.toString()
@@ -3702,7 +3702,7 @@ function ip_limits(ip){
 
 function set_up_error_logs_filestream(){
   const date = new Date();
-  const yyyyMmDd = date.toISOString().split('T')[0];
+  const yyyyMmDd = date.toISOString();
   const log_file_name = yyyyMmDd + ':' + Date.now()
   var dir = `./logs`
   if (!fs.existsSync(dir)){
