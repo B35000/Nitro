@@ -179,7 +179,7 @@ const originalFetch = global.fetch;
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
 //   try{
-//     var bytes  = CryptoJS.AES.decrypt(data, key);
+//     var bytes = CryptoJS.AES.decrypt(data, key);
 //     var originalText = bytes.toString(CryptoJS.enc.Utf8);
 //     return originalText
 //   }catch(e){
@@ -214,10 +214,10 @@ async function encrypt_secure_data(text, password){
 
 async function decrypt_secure_data(encrypted, password){
   const data = base64ToUint8(encrypted);
-  const iv   = data.slice(0, 12);
+  const iv = data.slice(0, 12);
   const ciphertext = data.slice(12);
 
-  const key = await get_key_from_password(password, 'e');
+  const key = await get_key_from_password(password, 'f');
   const decrypted = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: iv },
     key,
@@ -3487,15 +3487,18 @@ async function is_privacy_signature_valid(signature){
     const block_mod = 10;
     var signature_data = Math.floor(current_block_number/block_mod)
     var value1 = await check_privacy_signature(signature, web3, signature_data)
+    if(value1 == true){
+      return true
+    }
     var value2 = null;
     if(current_block_number % block_mod <= 3){
       var signature_data2 = signature_data - 1
       value2 = await check_privacy_signature(signature, web3, signature_data2)
+      if(value2 == true){
+        return true
+      }
     }
-    if(value1 == true || (value2 != null && value2 == true)){
-      return true
-    }
-    else return false
+    return false
   }
   catch(e){
     log_error(e)
@@ -3505,8 +3508,8 @@ async function is_privacy_signature_valid(signature){
 
 async function check_privacy_signature(signature, web3, signature_data){
   try{
-    var original_address = await web3.eth.accounts.recover(signature_data.toString(), signature)
-    if(original_address == privacy_address){
+    const derived_address = await web3.eth.accounts.recover(signature_data.toString(), signature)
+    if(derived_address.toString() == privacy_address.toString()){
       return true;
     }
     return false
@@ -4283,9 +4286,9 @@ async function register_user_encryption_key(user_temp_hash, encrypted_key, ip_ad
 
 async function process_request_params(data, ip_address){
   try{
-    const return_obj = structuredClone(data)
+    const return_obj = {}
     if(data['privacy_signature'] != null && data['privacy_signature'] != 'e'){
-      const encrypted_signature_data_array = data['privacy_signature'].split('|')
+      const encrypted_signature_data_array = decodeURIComponent(data['privacy_signature']).split('|')
       const registered_user = encrypted_signature_data_array[0]
       if(userKeysMap.get(registered_user) == null /* || userKeysMap.get(registered_user)['ip'] != ip_address */){
         return data
@@ -4310,8 +4313,8 @@ async function process_request_params(data, ip_address){
           }
         }
       }
+      update_registered_user_time(registered_user)
     }
-    update_registered_user_time(registered_user)
     return return_obj
   }
   catch(e){
@@ -4619,7 +4622,7 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
   }
   else{
     if(!await is_privacy_signature_valid(privacy_signature)){
-      res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Invalid signature', success:false })));
+      res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid signature', success:false })));
       return;
     }
   }
@@ -4633,7 +4636,7 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
     var filtered_events_array = []
     var block_heights = []
     if(requests.length > limit){
-      res.send(await this.encrypt_call_result(JSON.stringify({ message: 'request count exceeded limit', success:false }), registered_users_key));
+      res.send(await encrypt_call_result(JSON.stringify({ message: 'request count exceeded limit', success:false }), registered_users_key));
       return;
     }
     for(var i=0; i<requests.length; i++){
@@ -4652,11 +4655,11 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
     var obj = {'data':filtered_events_array, 'block_heights':block_heights, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/events')
-    return res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    return res.send(await encrypt_call_result(string_obj, registered_users_key));
   }
   catch(e){
     console.log(e)
-    res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Invalid arg string', success:false }), registered_users_key));
+    res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid arg string', success:false }), registered_users_key));
   }
 });//ok
 
@@ -4674,7 +4677,7 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
   }
   else{
     if(!await is_privacy_signature_valid(privacy_signature)){
-      res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Invalid signature', success:false }), registered_users_key));
+      res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid signature', success:false }), registered_users_key));
       return;
     }
   }
@@ -4685,17 +4688,17 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
     var arg_obj = JSON.parse(arg_string)
     var hashes = arg_obj.hashes
     if(hashes.length > limit){
-      res.send(await this.encrypt_call_result(JSON.stringify({ message: 'request count exceeded limit', success:false }), registered_users_key));
+      res.send(await encrypt_call_result(JSON.stringify({ message: 'request count exceeded limit', success:false }), registered_users_key));
       return;
     }
     var data = await fetch_hashes_from_file_storage_or_memory(hashes)
     var obj = {'data':data, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/data')
-    res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
   }catch(e){
     console.log(e)
-    res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Invalid arg string', success:false }), registered_users_key));
+    res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid arg string', success:false }), registered_users_key));
   }
 });//ok
 
@@ -4703,7 +4706,7 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
 app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
-    res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Invalid signature', success:false }), registered_users_key));
+    res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid signature', success:false }), registered_users_key));
     return;
   }
   try{
@@ -4717,10 +4720,10 @@ app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
     var obj = {'data':ids, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/tags')
-    res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
   }catch(e){
     console.log(e)
-    res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Invalid arg string' , success:false}), registered_users_key));
+    res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid arg string' , success:false}), registered_users_key));
   }
 });//ok
 
@@ -4838,7 +4841,7 @@ app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, as
 
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/traffic_stats')
-    res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
   }
   catch(e){
     console.log(e)
@@ -4871,7 +4874,7 @@ app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
 
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/trends')
-    res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
   }
   catch(e){
     log_error(e)
@@ -4953,7 +4956,7 @@ app.post(`/${endpoint_info['new_e5']}/:privacy_signature`, async (req, res) => {
 
     var obj = {message:`The new E5 '${e5}' has been added to the node successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-    res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -5002,7 +5005,7 @@ app.post(`/${endpoint_info['update_provider']}/:privacy_signature`, async (req, 
 
       var obj = {message:`Web3 provider for ${e5} updated to '${new_provider}' successfully.`, success:true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-      res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+      res.send(await encrypt_call_result(string_obj, registered_users_key));
     }
   }catch(e){
     console.log(e)
@@ -5040,7 +5043,7 @@ app.post(`/${endpoint_info['update_content_gateway']}/:privacy_signature`, async
       data['custom_gateway'] = new_provider
       var obj = {message:`Custom gateway updated to '${new_provider}' successfully.`, success:true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-      res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+      res.send(await encrypt_call_result(string_obj, registered_users_key));
     }
   }catch(e){
     console.log(e)
@@ -5077,7 +5080,7 @@ app.post(`/${endpoint_info['delete_e5']}/:privacy_signature`, async (req, res) =
 
     var obj = {message:`The E5 '${e5}' has been removed from the node successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-    res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -5101,7 +5104,7 @@ app.post(`/${endpoint_info['backup']}/:privacy_signature`, async (req, res) => {
     if(success_obj.success == true){
       var obj = {message:`Data backed up successfully.`, 'backup_file_name':success_obj.backup_name, success:true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-      res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+      res.send(await encrypt_call_result(string_obj, registered_users_key));
     }else{
       res.send(JSON.stringify({ message: 'Failed to Back up data.', success:false }));
     }
@@ -5133,7 +5136,7 @@ app.post(`/${endpoint_info['restore']}/:privacy_signature`, async (req, res) => 
     if(success == true){
       var obj = {message:`Backup restoration of ${file_name} successful.`, success:true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-      res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+      res.send(await encrypt_call_result(string_obj, registered_users_key));
     }else{
       var obj = {message:`Backup restoration of ${file_name} unsuccessful. Please ensure the file was not corrupted and the back up key is valid`, success:false}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -5177,7 +5180,7 @@ app.post(`/${endpoint_info['update_iteration']}/:privacy_signature`, async (req,
     data[e5]['iteration'] = new_iteration
     var obj = {message:`Iteration for ${e5} updated to '${new_iteration}' successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-    res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -5204,7 +5207,7 @@ app.post(`/${endpoint_info['boot']}/:privacy_signature`, async (req, res) => {
     beacon_chain_link = new_beacon_chain_link
     var obj = {message:`Node booted successfully.`, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
-    res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -5268,7 +5271,7 @@ app.post(`/${endpoint_info['boot_storage']}/:privacy_signature`, async (req, res
     data['target_storage_recipient_accounts'] = target_storage_recipient_accounts
     data['target_minimum_balance_amounts'] = target_minimum_balance_amounts
 
-    res.send(await this.encrypt_call_result(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs.`, success:true }), registered_users_key));
+    res.send(await encrypt_call_result(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs.`, success:true }), registered_users_key));
   }
 });//ok -------
 
@@ -5303,7 +5306,7 @@ app.post(`/${endpoint_info['reconfigure_storage']}/:privacy_signature`, async (r
     }else{
       data[key] = value
     }
-    res.send(await this.encrypt_call_result(JSON.stringify({ message: `node reconfigured with the specified parameter '${key}' to the speicified value`, success:true }), registered_users_key));
+    res.send(await encrypt_call_result(JSON.stringify({ message: `node reconfigured with the specified parameter '${key}' to the speicified value`, success:true }), registered_users_key));
   }
 });//ok -----
 
@@ -5361,7 +5364,7 @@ app.post(`/${endpoint_info['store_files']}/:privacy_signature`, async (req, res)
           data['storage_data'][storage_data.account.toString()]['uploaded_files'].push(file)
         });
         record_request('/store_files')
-        res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Files stored Successfully', files: success, success:true }), registered_users_key));
+        res.send(await encrypt_call_result(JSON.stringify({ message: 'Files stored Successfully', files: success, success:true }), registered_users_key));
       }
     }
   }
@@ -5406,7 +5409,7 @@ app.post(`/${endpoint_info['reserve_upload']}/:privacy_signature`, async (req, r
       data['upload_reservations'][upload_extension] = {'length':file_length, 'type':file_type, 'expiry':expiry, 'account':storage_data.account.toString(), 'aborted':false, 'ip_address':req.ip}
       record_request('/reserve_upload')
       res.send(
-        await this.encrypt_call_result(
+        await encrypt_call_result(
           JSON.stringify({ message: 'reservation successful.', extension: upload_extension, success:true }), registered_users_key
         )
       );
@@ -5509,7 +5512,7 @@ app.get(`/${endpoint_info['account_storage_data']}/:account/:privacy_signature`,
     if(payment_data == null){
       res.send(JSON.stringify({ message: 'That account does not exist in this node.', success:false }));
     }else{
-      res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Account found.', account: payment_data, success:true }), registered_users_key));
+      res.send(await encrypt_call_result(JSON.stringify({ message: 'Account found.', account: payment_data, success:true }), registered_users_key));
     }
     record_request('/account_storage_data')
   }
@@ -5664,7 +5667,7 @@ app.post(`/${endpoint_info['store_data']}/:privacy_signature`, async (req, res) 
     }else{
       record_request('/store_data')
       res.send(
-        await this.encrypt_call_result(
+        await encrypt_call_result(
           JSON.stringify({ message: 'Files stored Successfully', files: success, success:true }), registered_users_key
         )
       );
@@ -5693,7 +5696,7 @@ app.post(`/${endpoint_info['streams']}/:privacy_signature`, async (req, res) => 
     var return_obj = { message: 'Search successful.', renewal_years: file_renewal_data, file_status, views:return_views_data , streams: return_streams_data, success:true }
     var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/streams')
-    res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
   }
   catch(e){
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
@@ -5865,7 +5868,7 @@ app.post(`/${endpoint_info['count_votes']}/:privacy_signature`, async (req, res)
       var obj = {message:`Vote counted successfully.`, results: success_obj.results, success: true}
       var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       record_request('/count_votes')
-      res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+      res.send(await encrypt_call_result(string_obj, registered_users_key));
     }else{
       res.send(JSON.stringify({ message: success_obj.message, success:false, error:success_obj.error}));
     }
@@ -5896,7 +5899,7 @@ app.post(`/${endpoint_info['subscription_income_stream_datapoints']}/:privacy_si
       var return_obj = { message: 'Calculation successful.', data: data.data, success:true }
       var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       record_request('/subscription_income_stream_datapoints')
-      res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+      res.send(await encrypt_call_result(string_obj, registered_users_key));
     }
   }catch(e){
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
@@ -5926,7 +5929,7 @@ app.post(`/${endpoint_info['creator_group_payouts']}/:privacy_signature`, async 
       var return_obj = { message: 'Calculation successful.', data: data.data, success:true }
       var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       record_request('/creator_group_payouts')
-      res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+      res.send(await encrypt_call_result(string_obj, registered_users_key));
     }
   }catch(e){
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
@@ -5966,7 +5969,7 @@ app.post(`/${endpoint_info['delete_files']}/:privacy_signature`, async (req, res
       var return_obj = { message: 'Delete complete.',  success:true }
       var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       record_request('/delete_file')
-      res.send(await this.encrypt_call_result(string_obj, registered_users_key));
+      res.send(await encrypt_call_result(string_obj, registered_users_key));
     }
   }
   catch(e){
@@ -6202,7 +6205,7 @@ app.post(`/${endpoint_info['run_transaction']}/:privacy_signature`, async (req, 
 
     web3.eth.sendSignedTransaction(rawTransaction).on('receipt', async (receipt) => {
       record_request('/run_transaction')
-      res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Transaction complete', receipt: receipt, success:true }), registered_users_key));
+      res.send(await encrypt_call_result(JSON.stringify({ message: 'Transaction complete', receipt: receipt, success:true }), registered_users_key));
     })
     .on('error', (error) => {
       record_request('/run_transaction')
@@ -6238,7 +6241,7 @@ app.post(`/${endpoint_info['run_contract_call']}/:privacy_signature`, async (req
     const return_data = await focused_contract.methods[function_name](...parameters).call();
     
     record_request('/run_contract_call')
-    res.send(await this.encrypt_call_result(JSON.stringify({ message: 'Call complete', return_data: return_data, success:true }), registered_users_key));
+    res.send(await encrypt_call_result(JSON.stringify({ message: 'Call complete', return_data: return_data, success:true }), registered_users_key));
   }
   catch(e){
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
