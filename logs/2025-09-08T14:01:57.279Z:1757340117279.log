@@ -1,0 +1,110 @@
+-------------------------------e-----------------------------------
+ 
+ Error: Command failed: openssl x509 -enddate -noout -in /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+Could not open file or uri for loading certificate from /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+0086580B01000000:error:16000069:STORE routines:ossl_store_get0_loader_int:unregistered scheme:crypto/store/store_register.c:237:scheme=file
+0086580B01000000:error:80000002:system library:file_open:No such file or directory:providers/implementations/storemgmt/file_store.c:267:calling stat(/etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem)
+Unable to load certificate
+
+    at ChildProcess.exithandler (node:child_process:419:12)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1091:16)
+    at Socket.<anonymous> (node:internal/child_process:449:11)
+    at Socket.emit (node:events:514:28)
+    at Pipe.<anonymous> (node:net:323:12)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: Command failed: openssl x509 -enddate -noout -in /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+Could not open file or uri for loading certificate from /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+00666E0D01000000:error:16000069:STORE routines:ossl_store_get0_loader_int:unregistered scheme:crypto/store/store_register.c:237:scheme=file
+00666E0D01000000:error:80000002:system library:file_open:No such file or directory:providers/implementations/storemgmt/file_store.c:267:calling stat(/etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem)
+Unable to load certificate
+
+    at ChildProcess.exithandler (node:child_process:419:12)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1091:16)
+    at Socket.<anonymous> (node:internal/child_process:449:11)
+    at Socket.emit (node:events:514:28)
+    at Pipe.<anonymous> (node:net:323:12)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Failed to get network interfaces
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: Command failed: sudo certbot renew
+sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
+sudo: a password is required
+
+    at ChildProcess.exithandler (node:child_process:419:12)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1091:16)
+    at Socket.<anonymous> (node:internal/child_process:449:11)
+    at Socket.emit (node:events:514:28)
+    at Pipe.<anonymous> (node:net:323:12)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ ~~~~~~~~~~~~~~~~~~~~ Node rebooted on Mon Sep 08 2025 17:01:57 GMT+0300 (East Africa Time) ~~~~~~~~~~~~~~~~~~~~
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: compactSignature must be valid hex string, got "vicon.ico". Cause: Error: padded hex string expected, got unpadded hex of length 9
+    at ensureBytes (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/@noble/curves/abstract/utils.js:131:19)
+    at Signature.fromCompact (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/@noble/curves/abstract/weierstrass.js:628:46)
+    at Object.recover (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/web3-eth-accounts/lib/commonjs/account.js:402:60)
+    at check_privacy_signature (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:3508:52)
+    at is_privacy_signature_valid (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:3489:24)
+    at /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:6292:13
+    at Layer.handle [as handle_request] (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/express/lib/router/layer.js:95:5)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: compactSignature must be valid hex string, got "vicon.ico". Cause: Error: padded hex string expected, got unpadded hex of length 9
+    at ensureBytes (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/@noble/curves/abstract/utils.js:131:19)
+    at Signature.fromCompact (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/@noble/curves/abstract/weierstrass.js:628:46)
+    at Object.recover (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/web3-eth-accounts/lib/commonjs/account.js:402:60)
+    at check_privacy_signature (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:3508:52)
+    at is_privacy_signature_valid (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:3493:22)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:6292:7
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: compactSignature must be valid hex string, got "vicon.ico". Cause: Error: padded hex string expected, got unpadded hex of length 9
+    at ensureBytes (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/@noble/curves/abstract/utils.js:131:19)
+    at Signature.fromCompact (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/@noble/curves/abstract/weierstrass.js:628:46)
+    at Object.recover (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/web3-eth-accounts/lib/commonjs/account.js:402:60)
+    at check_privacy_signature (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:3508:52)
+    at is_privacy_signature_valid (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:3489:24)
+    at /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:6292:13
+    at Layer.handle [as handle_request] (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/express/lib/router/layer.js:95:5)
+    at next (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/express/lib/router/route.js:149:13)
+    at Route.dispatch (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/express/lib/router/route.js:119:3)
+    at Layer.handle [as handle_request] (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/express/lib/router/layer.js:95:5)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: compactSignature must be valid hex string, got "vicon.ico". Cause: Error: padded hex string expected, got unpadded hex of length 9
+    at ensureBytes (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/@noble/curves/abstract/utils.js:131:19)
+    at Signature.fromCompact (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/@noble/curves/abstract/weierstrass.js:628:46)
+    at Object.recover (/Users/bry/Documents/E5Server/E5ServerTest/node_modules/web3-eth-accounts/lib/commonjs/account.js:402:60)
+    at check_privacy_signature (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:3508:52)
+    at is_privacy_signature_valid (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:3493:22)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:6292:7
+ 
+ 

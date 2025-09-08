@@ -224,7 +224,7 @@ async function decrypt_secure_data(encrypted, password){
     ciphertext
   );
   const decoder = new TextDecoder();
-  return decoder.decode(decrypted)
+  return decoder.decode(new Uint8Array(decrypted))
 }
 
 async function get_key_from_password(password, final_salt) {
@@ -4224,7 +4224,8 @@ async function record_public_key_for_use(){
   const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
   var hash = web3.utils.keccak256(server_key.toString()).slice(34)
   const private_key_to_use = crypto.createHash("sha256").update(hash).digest(); // 32 bytes
-  server_keys = nacl.sign.keyPair.fromSeed(new Uint8Array(private_key_to_use));
+  var provided_server_keys = nacl.box.keyPair.fromSecretKey(new Uint8Array(private_key_to_use));
+  server_keys = { secretKey: provided_server_keys.secretKey.slice(0, 32), publicKey: provided_server_keys.publicKey }
   server_public_key = uint8ToBase64(new Uint8Array(server_keys.publicKey))
 
   // var private_key_to_use = Buffer.from(hash)
@@ -4237,7 +4238,8 @@ function uint8ToBase64(uint8){
 }
 
 function base64ToUint8(base64){
-  return new Uint8Array(Buffer.from(base64, 'base64'))
+  const buf = Buffer.from(base64, 'base64');
+  return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength)
 }
 
 async function register_user_encryption_key(user_temp_hash, encrypted_key, ip_address){
@@ -4250,15 +4252,17 @@ async function register_user_encryption_key(user_temp_hash, encrypted_key, ip_ad
     // const my_key = await ecies.decrypt(private_key_to_use, encrypted_key_as_uint8array)
     // const user_key = my_key.toString()
 
-    const private_key_to_use = server_keys.secretKey
+    const private_key_to_use = new Uint8Array(server_keys.secretKey)
     const public_key_to_use = base64ToUint8(user_temp_hash)
     const base64_encoded_cypher = encrypted_key.split('_')[0]
     const nonce_cypher = encrypted_key.split('_')[1]
-    const encrypted_key_as_uint8array = base64ToUint8(base64_encoded_cypher)
-    const nonce = this.base64ToUint8(nonce_cypher)
+    const encrypted_key_as_uint8array = base64ToUint8(base64_encoded_cypher)//fine
+    const nonce = base64ToUint8(nonce_cypher)//fine
+
     const decrypted = nacl.box.open(encrypted_key_as_uint8array, nonce, public_key_to_use, private_key_to_use);
+    
     const decoder = new TextDecoder();
-    const user_key = decoder.decode(decrypted);
+    const user_key = decoder.decode(new Uint8Array(decrypted));
 
     userKeysMap.set(user_temp_hash.toString(), { 'key': user_key, 'ip':ip_address, 'time':Date.now() })
     return { success: true, message: '' }
@@ -4732,7 +4736,9 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
   var booted = app_key != '' && app_key != null
   var e5_data = {}
   data['e'].forEach(e5 => {
-    e5_data[e5] = data[e5]
+    var e5_data_clone = structuredClone(data[e5])
+    delete e5_data_clone['block_hashes']
+    e5_data[e5] = e5_data_clone
   });
   
   var files = fs.existsSync('./backup_data/') ? fs.readdirSync('./backup_data/') : []
@@ -4742,7 +4748,7 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
   const total_ram = Math.floor(os.totalmem() / (1024 * 1024))
   
   var obj = {
-    'ipfs_hashes':`${number_with_commas(ipfs_hashes)} out of ${number_with_commas(hash_count)}`,
+    'ipfs_hashes':`${number_with_commas(ipfs_hashes)}`,
     'tracked_E5s':data['e'],//
     'storage_accounts':storage_accounts_length,// 
     'target_storage_purchase_recipient_account':data['target_storage_purchase_recipient_account'],// 
@@ -4789,10 +4795,10 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
 /* register a user endpoint with specified encryption keys */
 app.post(`/${endpoint_info['register']}`, async (req, res) => {
   //apply rate limits
-  const rate_limit_results = ip_limits(req.ip)
-  if(rate_limit_results.success == false){
-    return res.status(429).json({ message: rate_limit_results.message});
-  }
+  // const rate_limit_results = ip_limits(req.ip)
+  // if(rate_limit_results.success == false){
+  //   return res.status(429).json({ message: rate_limit_results.message});
+  // }
   const { user_temp_hash, encrypted_key } = req.body
   if(user_temp_hash == null || encrypted_key == null || user_temp_hash == '' || encrypted_key == ''){
     res.send(JSON.stringify({ message: 'Invalid args', success:false }));

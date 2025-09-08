@@ -1,0 +1,50 @@
+-------------------------------e-----------------------------------
+ 
+ Error: Command failed: openssl x509 -enddate -noout -in /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+Could not open file or uri for loading certificate from /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+0096190A01000000:error:16000069:STORE routines:ossl_store_get0_loader_int:unregistered scheme:crypto/store/store_register.c:237:scheme=file
+0096190A01000000:error:80000002:system library:file_open:No such file or directory:providers/implementations/storemgmt/file_store.c:267:calling stat(/etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem)
+Unable to load certificate
+
+    at ChildProcess.exithandler (node:child_process:419:12)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1091:16)
+    at ChildProcess._handle.onexit (node:internal/child_process:302:5)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: Command failed: openssl x509 -enddate -noout -in /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+Could not open file or uri for loading certificate from /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+00E6131701000000:error:16000069:STORE routines:ossl_store_get0_loader_int:unregistered scheme:crypto/store/store_register.c:237:scheme=file
+00E6131701000000:error:80000002:system library:file_open:No such file or directory:providers/implementations/storemgmt/file_store.c:267:calling stat(/etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem)
+Unable to load certificate
+
+    at ChildProcess.exithandler (node:child_process:419:12)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1091:16)
+    at ChildProcess._handle.onexit (node:internal/child_process:302:5)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Failed to get network interfaces
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: Command failed: sudo certbot renew
+sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
+sudo: a password is required
+
+    at ChildProcess.exithandler (node:child_process:419:12)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1091:16)
+    at ChildProcess._handle.onexit (node:internal/child_process:302:5)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ ~~~~~~~~~~~~~~~~~~~~ Node rebooted on Mon Sep 08 2025 16:05:25 GMT+0300 (East Africa Time) ~~~~~~~~~~~~~~~~~~~~
+ 
+ 
