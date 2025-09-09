@@ -160,7 +160,7 @@ var object_types = {} /* object containing all the data types for all the object
 var start_up_time = Date.now()/* start up time */
 var hash_count = 0/* number of ipfs hashes being tracked */
 var load_count = 0/* number of ipfs hashes loaded by the node */
-var app_key = ``/* app key */
+var app_key = `e`/* app key */
 var pointer_data = {}
 var beacon_chain_link = ``
 var staged_ecids = {}
@@ -4647,7 +4647,7 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
       var from_filter = requests[i]['from_filter']
 
       var filtered_events = await filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter)
-      filtered_events_array.push(0, filtered_events.slice(load_limit))
+      filtered_events_array.push(filtered_events.slice(0, load_limit))
       var block_id = data[requested_e5]['current_block'][requested_contract+requested_event_id]
       block_heights.push(block_id)
     }
@@ -4666,7 +4666,7 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
 /* endpoint for returning E5 hash data stored */
 app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
-  var limit = data['hash_data_request_limit'];
+  var limit = 1024;
   if(privacy_signature == 'e'){
     //apply rate limits
     const rate_limit_results = ip_limits(req.ip)
@@ -6350,12 +6350,13 @@ const when_server_started = () => {
 
   get_list_of_server_files_and_auto_backup()
   record_https_certificate_info()
-  record_public_key_for_use()
+  record_public_key_for_use()  
 
   setTimeout(function() {
     log_error({stack: `~~~~~~~~~~~~~~~~~~~~ Node rebooted on ${new Date(start_up_time)} ~~~~~~~~~~~~~~~~~~~~`});
     set_up_file_watch_times()
     set_up_ssh_login_requests()
+    load_events_for_all_e5s()
   }, (5 * 1000));
 }
 
