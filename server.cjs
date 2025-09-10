@@ -4370,19 +4370,23 @@ global.fetch = async (url, options = {}) => {
   return response; // still return usable Response
 };
 
+function set_endpoint_ids(){
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'stream_file', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call'];
 
-const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'stream_file', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call'];
-
-for(var end=0; end<endpoints.length; end++){
-  const endpoint = endpoints[end]
-  endpoint_info[endpoint] = makeid(35)
+  for(var end=0; end<endpoints.length; end++){
+    const endpoint = endpoints[end]
+    endpoint_info[endpoint] = makeid(35)
+  }
+  endpoint_info['events'] = 'events'
+  endpoint_info['data'] = 'data'
+  endpoint_info['subscription'] = 'subscription'
+  endpoint_info['itransfers'] = 'itransfers'
+  endpoint_info['bill_payments'] = 'bill_payments'
+  endpoint_info['marco'] = 'marco'
 }
-endpoint_info['events'] = 'events'
-endpoint_info['data'] = 'data'
-endpoint_info['subscription'] = 'subscription'
-endpoint_info['itransfers'] = 'itransfers'
-endpoint_info['bill_payments'] = 'bill_payments'
-endpoint_info['marco'] = 'marco'
+
+set_endpoint_ids()
+
 
 
 
@@ -4606,6 +4610,46 @@ async function encrypt_call_result(result_string, key){
 
 
 
+async function load_object_data(all_events, known_hashes){
+  const hashes = []
+  for(var i=0; i<all_events.length; i++){
+    var objects_event = all_events[i]
+    if(objects_event.length != 0){
+      var ecid = objects_event[objects_event.length - 1].returnValues.p4
+      if(ecid != 'e3' && ecid != 'e2' && ecid != 'e1' && ecid != 'e'){
+        try{
+          var cid = ecid
+          var option = 'in'
+          if(ecid.includes('.')){
+            var split_cid_array = ecid.split('.');
+            option = split_cid_array[0]
+            cid = split_cid_array[1]
+          }
+          var id = cid;
+          var internal_id = ''
+          if(cid.includes('_')){
+            var split_cid_array2 = cid.split('_');
+            id = split_cid_array2[0]
+            internal_id = split_cid_array2[1]
+          }
+          if(!hashes.includes(id) && !known_hashes.includes(id)) hashes.push(id)
+        }catch(e){
+          console.log(e)
+        }
+      }
+    }
+  }
+  return await fetch_hashes_from_file_storage_or_memory(hashes)
+}
+
+
+
+
+
+
+
+
+
 
 
 /* endpoint for returning E5 event data tracked by the node */
@@ -4632,6 +4676,8 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
     var arg_obj = JSON.parse(arg_string)
     var requests = arg_obj.requests
     const load_limit = (arg_obj.load_limit == null || isNaN(arg_obj.load_limit)) ? 100_000_000 : parseInt(arg_obj.load_limit)
+    var p = arg_obj.p
+    var known = arg_obj.known
     
     var filtered_events_array = []
     var block_heights = []
@@ -4651,8 +4697,10 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
       var block_id = data[requested_e5]['current_block'][requested_contract+requested_event_id]
       block_heights.push(block_id)
     }
+
+    var item_data = p != null ? await load_object_data(filtered_events_array, known) : {}
     
-    var obj = {'data':filtered_events_array, 'block_heights':block_heights, success:true}
+    var obj = {'data':filtered_events_array, 'hash_data':item_data, 'block_heights':block_heights, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/events')
     return res.send(await encrypt_call_result(string_obj, registered_users_key));
@@ -4691,8 +4739,8 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
       res.send(await encrypt_call_result(JSON.stringify({ message: 'request count exceeded limit', success:false }), registered_users_key));
       return;
     }
-    var data = await fetch_hashes_from_file_storage_or_memory(hashes)
-    var obj = {'data':data, success:true}
+    var hash_data = await fetch_hashes_from_file_storage_or_memory(hashes)
+    var obj = {'data':hash_data, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/data')
     res.send(await encrypt_call_result(string_obj, registered_users_key));
