@@ -903,7 +903,7 @@ async function set_up_listeners(e5) {
 
 /* starts the loading of all the E5 event data if the app key is defined */
 async function load_events_for_all_e5s(){
-  if(app_key == null || app_key == '') return;
+  // if(app_key == null || app_key == '') return;
 
   var e5s = data['e']
   for(var i=0; i<e5s.length; i++){ 
@@ -3396,6 +3396,10 @@ function is_file_ok_to_stream(file){
   var current_year = new Date().getFullYear()
   var upload_year = upload_time == null ? current_year : new Date(upload_time).getFullYear();
 
+  if(upload_year == current_year){
+    return true;
+  }
+
   var required_years = []
   for(var i=upload_year; i<current_year; i++){
     required_years.push(i)
@@ -4308,7 +4312,7 @@ async function process_request_params(data, ip_address){
         else if(key != 'privacy_signature'){
           if(userKeysMap.get(registered_user) != null){
             const registered_users_key = userKeysMap.get(registered_user)['key']
-            return_obj[key] = await decrypt_secure_data(data[key], registered_users_key)
+            return_obj[key] = await decrypt_secure_data(decodeURIComponent(data[key]), registered_users_key)
             return_obj['registered_users_key'] = registered_users_key
           }
         }
@@ -5582,16 +5586,20 @@ app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  else if(!is_file_ok_to_stream(file)){
-    res.send(JSON.stringify({ message: 'The file has not been renewed', success:false }));
+  else if(data['uploaded_files_data'][file] == null){
+    res.send(JSON.stringify({ message: `The file ${file} does not exist`, success:false }));
     return;
   }
   else if(data['uploaded_files_data'][file]['deleted'] == true){
     res.send(JSON.stringify({ message: 'The file was deleted', success:false }));
     return;
   }
+  else if(!is_file_ok_to_stream(file)){
+    res.send(JSON.stringify({ message: `The file has not been renewed`, success:false }));
+    return;
+  }
   else{
-    const filePath = `storage_data/${file}`
+    const filePath = `storage_data/${file}.${content_type}`
     const stats = fs.statSync(filePath);
     const fileSize = stats.size;
 
@@ -6440,7 +6448,7 @@ async function when_server_killed(){
 //pm2 ls
 //pm2 stop all | 0
 //sudo pm2 kill
-//sudo pm2 start server2.cjs --no-daemon
+//sudo pm2 start server.cjs --no-daemon
 
 //client-cert.pem  contract-listener  package-lock.json
 //client-key.pem   hash_data          package.json
