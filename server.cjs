@@ -32,6 +32,7 @@ const { exec } = require('child_process');
 const path = require('path');
 // const CryptoJS = require("crypto-js");
 const nacl = require("tweetnacl");
+const { json } = require('stream/consumers');
 
 const app = express();
 app.use(cors());
@@ -97,7 +98,8 @@ var data = {
   'is_ecid_delete_scheduled':false,
   'ip_request_time_limit': 1000,
   'certificate_expiry_time':0,
-  'target_minimum_balance_amounts':{}
+  'target_minimum_balance_amounts':{},
+  'data_indexes':{},
 }
 
 const E5_CONTRACT_ABI = [
@@ -317,9 +319,9 @@ async function fetch_object_data_from_infura(ecid_obj, count){
       // console.log(response)
       throw new Error(`Failed to retrieve data from IPFS. Status: ${response}`);
     }
-    var data = await response.text();
+    var object_data = await response.text();
     // data = decrypt_storage_data(data, app_key)
-    var parsed_data = attempt_parsing(data)
+    var parsed_data = attempt_parsing(object_data)
     update_color_metric(parsed_data)
     hash_data[cid] = parsed_data
     load_count++
@@ -352,9 +354,9 @@ async function fetch_objects_data_from_nft_storage (ecid_obj, count){
       // console.log(response)
       throw new Error(`Failed to retrieve data from IPFS using nft storage. Status: ${response}`);
     }
-    var data = await response.text();
+    var object_data = await response.text();
     // data = decrypt_storage_data(data, app_key)
-    var parsed_data = attempt_parsing(data)
+    var parsed_data = attempt_parsing(object_data)
     update_color_metric(parsed_data)
     hash_data[cid] = parsed_data
     load_count++
@@ -402,8 +404,8 @@ async function fetch_data_from_nitro(cid, depth){
       console.log('datas',response)
       throw new Error(`Failed to retrieve data. Status: ${response}`);
     }
-    var data = await response.text();
-    var obj = JSON.parse(data);
+    var response_data = await response.text();
+    var obj = JSON.parse(response_data);
     var object_data = obj['data']
     var cid_data = object_data[nitro_cid]
     var parsed_data = attempt_parsing(cid_data)
@@ -428,11 +430,11 @@ async function fetch_data_from_arweave(id){
   }
   try{
     const decoded = Buffer.from(id, 'base64').toString();
-    // var data = await arweave.transactions.getData(decoded, {decode: true, string: true})
+    // var return_data = await arweave.transactions.getData(decoded, {decode: true, string: true})
     var return_data = await fetch(`https://arweave.net/${decoded}`)
-    var data = await return_data.text()
+    var object_data = await return_data.text()
     // var decrypted_data = decrypt_storage_data(data)
-    var parsed_data = attempt_parsing(data)
+    var parsed_data = attempt_parsing(object_data)
     update_color_metric(parsed_data)
     hash_data[id] = parsed_data
     load_count++
@@ -569,8 +571,8 @@ async function load_data_from_beacon_node(cids){
       console.log('datas',response)
       throw new Error(`Failed to retrieve data. Status: ${response}`);
     }
-    var data = await response.text();
-    var obj = JSON.parse(data);
+    var return_data = await response.text();
+    var obj = JSON.parse(return_data);
     var object_data = obj['data']
 
     cids.forEach(cid => {
@@ -604,8 +606,8 @@ async function load_events_from_nitro(contract_name, event_id, e5, filter){
       console.log('all_data2',response)
       throw new Error(`Failed to retrieve data. Status: ${response}`);
     }
-    var data = await response.text();
-    var obj = JSON.parse(data);
+    var object_data = await response.text();
+    var obj = JSON.parse(object_data);
     return { 'events': obj['data'][0], 'height': obj['block_heights'][0] }
   }
   catch(e){
@@ -893,12 +895,480 @@ async function set_up_listeners(e5) {
       load_multiple_past_events(h52_contract, ['e1','e2', 'e3', 'e5', 'power'], e5, web3, 'H52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
     }
+    load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_contract, h52_contract)
 
     //load nitro links
     load_nitro_links(e5)
   }catch(e){
     console.log(e)
   }
+}
+
+async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_contract, h52_contract){
+  const from_block = data['data_indexes'][e5] != null ? data['data_indexes'][e5]['from_block'] : 0
+  const transaction_events = await filter_events(e5, 'E5', 'e4'/* transaction */, {p9/* block_number */:from_block}, {})
+
+  const all_users = {}
+  transaction_events.forEach(event_item => {
+    const account_id = event_item.returnValues.p1/* sender_account_id */
+    const account_address = event_item.returnValues.p2/* sender_address */
+    if(all_users[account_id] == null){
+      all_users[account_id] = {'address':account_address}
+    }
+  });
+
+  //load the transaction height for e5
+  const transaction_height = await e5_contract.methods.f147(6).call((error, result) => {});
+
+  //load withdraw balance data for each account
+  const accounts = Object.keys(all_users)
+  const withdraw_balance = await e5_contract.methods.f167(accounts, [], 1).call((error, result) => {});
+  const basic_transaction_data = await e5_contract.methods.f287(accounts).call((error, result) => {});
+  accounts.forEach((account, index) => {
+    all_users[account]['withdraw_balance'] = withdraw_balance[index]
+    all_users[account]['basic_transaction_data'] = basic_transaction_data[index]
+  });
+
+  //load the balance in ether for e5
+  const E5_balance = await e5_contract.methods.f147(1).call((error, result) => {});
+
+  //load the balances for the main accounts
+  /* 
+    0 -> end_balance_of_E5
+    1 -> spend_balance_of_E5
+    2 -> end_balance_of_burn_account
+  */
+  const exchange_ids = [3, 5, 3]
+  const e5_account_ids = [2, 2, 0]
+  const depths = [0, 0, 0]
+  const token_balances = await h52_contract.methods.f140e(exchange_ids, e5_account_ids, depths).call((error, result) => {});
+  
+
+
+  const all_exchange_ids = [3, 5]
+  const created_token_data = await h5_contract.methods.f86(all_exchange_ids).call((error, result) => {});
+  // const e_token_balance_data = await fetch_balance_data_for_e_tokens(all_exchange_ids, created_token_data, h5_contract)
+
+
+  // const all_contract_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 30/* 30(contract_obj_id) */));
+  const main_contract_data = await g5_contract.methods.f78([2], true).call((error, result) => {});
+  // const created_contract_data = await g5_contract.methods.f78(all_contract_ids, false).call((error, result) => {});
+  var primary_account_transaction_data = {}
+  if(main_contract_data[0][1][39] != 0 && main_contract_data[0][1][40] != 0){
+    const primary_acc = main_contract_data[0][1][39];
+    primary_account_transaction_data = await e5_contract.methods.f287([primary_acc], false).call((error, result) => {});
+  }
+
+  // const all_subscription_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 33/* 33(subscription_object) */));
+  // const created_subscription_data = await f5_contract.methods.f74(all_subscription_ids).call((error, result) => {});
+
+
+  // const all_proposal_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 32/* 32(consensus_request) */));
+  // const created_proposal_data = await g5_contract.methods.f78(all_proposal_ids).call((error, result) => {});
+
+
+  //record the data in the indexer datapoint
+  if(data['data_indexes'][e5] == null){
+    data['data_indexes'][e5] = {}
+  }
+  // data['data_indexes'][e5]['all_users'] = all_users
+  data['data_indexes'][e5]['transaction_height'] = transaction_height
+  data['data_indexes'][e5]['E5_balance'] = E5_balance
+  data['data_indexes'][e5]['primary_account_transaction_data'] = primary_account_transaction_data
+  
+  //record the exchange data
+  const token_balances_object = {
+    'end_balance_of_E5':token_balances[0], 
+    'spend_balance_of_E5':token_balances[1],
+    'end_balance_of_burn_account':token_balances[2]
+  }
+  data['data_indexes'][e5]['token_balances'] = token_balances_object
+  const all_exchange_ids_data_object = {}
+  all_exchange_ids.forEach((exchange_id, index) => {
+    all_exchange_ids_data_object[exchange_id] = created_token_data[index]
+  });
+  data['data_indexes'][e5]['created_token_data'] = all_exchange_ids_data_object
+  if(data['data_indexes'][e5]['e_token_ids'] != null){
+    data['data_indexes'][e5]['e_token_balance_data'] = await fetch_balance_data_for_e_tokens(data['data_indexes'][e5]['e_token_ids'], h5_contract)
+  }
+  
+  //record the contract data
+  const all_contract_ids_data_object = {}
+  all_contract_ids_data_object[2] = main_contract_data[0]
+  // all_contract_ids.forEach((contract_id, index) => {
+  //   all_contract_ids_data_object[contract_id] = created_contract_data[index]
+  // });
+  data['data_indexes'][e5]['created_contract_data'] = all_contract_ids_data_object
+
+  //record the subscription data
+  // const all_subscription_ids_data_object = {}
+  // all_subscription_ids.forEach((subscription_id, index) => {
+  //   all_subscription_ids_data_object[subscription_id] = created_subscription_data[index]
+  // });
+  // data['data_indexes'][e5]['created_subscription_data'] = all_subscription_ids_data_object
+
+  //record the proposal data
+  // const all_proposal_ids_data_object = {}
+  // all_proposal_ids.forEach((proposal_id, index) => {
+  //   all_proposal_ids_data_object[proposal_id] = created_proposal_data[index]
+  // });
+  // data['data_indexes'][e5]['created_proposal_data'] = all_proposal_ids_data_object
+
+  data['data_indexes'][e5]['from_block'] = transaction_events[transaction_events.length -1].returnValues.p9/* block_number */
+
+  if(data['data_indexes'][e5]['boot_time'] == null){
+    const boot_events = await filter_events(e5, 'E5', 'e7'/* record_boot_addresses */, {}, {})
+    data['data_indexes'][e5]['boot_time'] = {'time': boot_events[0].returnValues.p3/* timestamp */, 'block':boot_events[0].returnValues.p4/* block_number */}
+  }
+
+  fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract, g5_contract, h5_contract, all_users)
+}
+
+async function fetch_balance_data_for_e_tokens(exchanges_to_fetch, H52contractInstance){
+  if(exchanges_to_fetch.length == 0) return {};
+
+  const balance_data = {}
+  const token_balances = await H52contractInstance.methods.f270([5], [exchanges_to_fetch], [0], 1, 0).call((error, result) => {});
+
+  token_balances[0].forEach((balance_item, index) => {
+    balance_data[exchanges_to_fetch[index]] = bigInt(balance_item)
+  });
+
+  return balance_data
+}
+
+function fetch_e_tokens_from_data(exchange_ids, exchange_data){
+  const exchanges_to_fetch = []
+  for(var i=0; i<exchange_ids.length; i++){
+    const focused_exchange_id = exchange_ids[i]
+    const focused_exchange_data = exchange_data[i]
+
+    if(focused_exchange_data[3].length == 1 && focused_exchange_data[3][0] == 5 && focused_exchange_data[4][0] == 1 && focused_exchange_data[5][0] == 0){
+      exchanges_to_fetch.push(focused_exchange_id)
+    }
+  }
+  return exchanges_to_fetch
+}
+
+async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract, g5_contract, h5_contract, all_users){
+  const latest_block = await e5_contract.methods.f147(3/* get_block_number */).call((error, result) => {});
+  if(data['data_indexes'][e5]['block_level_update'] != null){
+    const starting_block = data['data_indexes'][e5]['block_level_update']
+    const contract_or_proposal_change_events = await load_specific_events_from_block(e5, g5_contract, 'e2', starting_block, latest_block)
+    const subscription_change_events = await load_specific_events_from_block(e5, f5_contract, 'e5', starting_block, latest_block)
+    const exchange_change_events = await load_specific_events_from_block(e5, h5_contract, 'allEvents', starting_block, latest_block)
+    const create_object_events = await load_specific_events_from_block(e5, e5_contract, 'e1', starting_block, latest_block)
+
+    const changed_contracts = []
+    const changed_proposals = []
+    const changed_subscriptions = []
+    const changed_exchanges = []
+
+    contract_or_proposal_change_events.forEach(event_item => {
+      const object_id = event_item.returnValues.p1
+      if(object_types[e5][object_id] == 30/* 30(contract_obj_id) */){
+        if(!changed_contracts.includes(object_id)) changed_contracts.push(object_id);
+      }else{
+        if(!changed_proposals.includes(object_id)) changed_proposals.push(object_id);
+      }
+    });
+
+    subscription_change_events.forEach(event_item => {
+      const object_id = event_item.returnValues.p1
+      if(!changed_subscriptions.includes(object_id)) changed_subscriptions.push(object_id);
+    });
+
+    exchange_change_events.forEach(event_item => {
+      const object_id = event_item.returnValues.p1
+      if(!changed_exchanges.includes(object_id)) changed_exchanges.push(object_id);
+    });
+
+    const created_exchanges = []
+    create_object_events.forEach(event_item => {
+      const object_id = event_item.returnValues.p1
+      const object_type = event_item.returnValues.p2/* object_type */
+      if(object_type == 30/* 30(contract_obj_id) */){
+        if(!changed_contracts.includes(object_id)) changed_contracts.push(object_id);
+      }
+      else if(object_type == 32/* 32(consensus_request) */){
+        if(!changed_proposals.includes(object_id)) changed_proposals.push(object_id);
+      }
+      else if(object_type == 33/* 33(subscription_object) */){
+        if(!changed_subscriptions.includes(object_id)) changed_subscriptions.push(object_id);
+      }
+      else if(object_type == 31/* 31(token_exchange) */){
+        if(!changed_exchanges.includes(object_id)){
+          changed_exchanges.push(object_id);
+          created_exchanges.push(object_id)
+        } 
+      }
+    });
+
+    const created_contract_data = await g5_contract.methods.f78(changed_contracts, false).call((error, result) => {});
+    const created_subscription_data = await f5_contract.methods.f74(changed_subscriptions).call((error, result) => {});
+    const created_proposal_data = await g5_contract.methods.f78(changed_proposals).call((error, result) => {});
+    const created_token_data = await h5_contract.methods.f86(changed_exchanges).call((error, result) => {});
+
+    const all_contract_ids_data_object = {}
+    changed_contracts.forEach((contract_id, index) => {
+      all_contract_ids_data_object[contract_id] = created_contract_data[index]
+    });
+
+    //record the subscription data
+    const all_subscription_ids_data_object = {}
+    changed_subscriptions.forEach((subscription_id, index) => {
+      all_subscription_ids_data_object[subscription_id] = created_subscription_data[index]
+    });
+
+    //record the proposal data
+    const all_proposal_ids_data_object = {}
+    changed_subscriptions.forEach((proposal_id, index) => {
+      all_proposal_ids_data_object[proposal_id] = created_proposal_data[index]
+    });
+
+    const all_exchange_ids_data_object = {}
+    const created_exchanges_objects = []
+    const ordered_created_exchange_ids = []
+    changed_exchanges.forEach((exchange_id, index) => {
+      all_exchange_ids_data_object[exchange_id] = created_token_data[index]
+      if(created_exchanges.includes(exchange_id)){
+        created_exchanges_objects.push(created_token_data[index])
+        ordered_created_exchange_ids.push(exchange_id)
+      }
+    });
+    const e_token_ids = fetch_e_tokens_from_data(ordered_created_exchange_ids, created_exchanges_objects)
+
+    if(created_token_data.length > 0){
+      resolve_objects_in_specific_files(all_exchange_ids_data_object, 31/* 31(token_exchange) */)
+    }
+    if(created_contract_data.length > 0){
+      resolve_objects_in_specific_files(all_contract_ids_data_object, 30/* 30(contract_obj_id) */)
+    }
+    if(created_subscription_data.length > 0){
+      resolve_objects_in_specific_files(all_subscription_ids_data_object, 33/* 33(subscription_object) */)
+    }
+    if(created_proposal_data.length > 0){
+      resolve_objects_in_specific_files(all_proposal_ids_data_object, 32/* 32(consensus_request) */)
+    }
+    if(Object.keys(all_users).length > 0){
+      resolve_objects_in_specific_files(all_users, 29/* 29(account_obj_id) */)
+    }
+    data['data_indexes'][e5]['e_token_ids'] = e_token_ids
+  }
+  else{
+    const all_exchange_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 31/* 31(token_exchange) */));
+    const created_token_data = await h5_contract.methods.f86(all_exchange_ids).call((error, result) => {});
+    const e_token_ids = fetch_e_tokens_from_data(all_exchange_ids, created_token_data)
+
+    const all_contract_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 30/* 30(contract_obj_id) */));
+    const created_contract_data = await g5_contract.methods.f78(all_contract_ids, false).call((error, result) => {});
+
+
+    const all_subscription_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 33/* 33(subscription_object) */));
+    const created_subscription_data = await f5_contract.methods.f74(all_subscription_ids).call((error, result) => {});
+
+
+    const all_proposal_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 32/* 32(consensus_request) */));
+    const created_proposal_data = await g5_contract.methods.f78(all_proposal_ids).call((error, result) => {});
+
+
+    const all_exchange_ids_data_object = {}
+    all_exchange_ids.forEach((exchange_id, index) => {
+      all_exchange_ids_data_object[exchange_id] = created_token_data[index]
+    });
+
+    const all_contract_ids_data_object = {}
+    all_contract_ids.forEach((contract_id, index) => {
+      all_contract_ids_data_object[contract_id] = created_contract_data[index]
+    });
+
+    //record the subscription data
+    const all_subscription_ids_data_object = {}
+    all_subscription_ids.forEach((subscription_id, index) => {
+      all_subscription_ids_data_object[subscription_id] = created_subscription_data[index]
+    });
+
+    //record the proposal data
+    const all_proposal_ids_data_object = {}
+    all_proposal_ids.forEach((proposal_id, index) => {
+      all_proposal_ids_data_object[proposal_id] = created_proposal_data[index]
+    });
+
+    if(created_token_data.length > 0){
+      resolve_objects_in_specific_files(all_exchange_ids_data_object, 31/* 31(token_exchange) */)
+    }
+    if(created_contract_data.length > 0){
+      resolve_objects_in_specific_files(all_contract_ids_data_object, 30/* 30(contract_obj_id) */)
+    }
+    if(created_subscription_data.length > 0){
+      resolve_objects_in_specific_files(all_subscription_ids_data_object, 33/* 33(subscription_object) */)
+    }
+    if(created_proposal_data.length > 0){
+      resolve_objects_in_specific_files(all_proposal_ids_data_object, 32/* 32(consensus_request) */)
+    }
+    if(Object.keys(all_users).length > 0){
+      resolve_objects_in_specific_files(all_users, 29/* 29(account_obj_id) */)
+    }
+
+    data['data_indexes'][e5]['e_token_ids'] = e_token_ids
+  }
+
+  data['data_indexes'][e5]['block_level_update'] = latest_block
+}
+
+async function load_specific_events_from_block(e5, contract, event_name, starting_block, latest){
+  var iteration = data[e5]['iteration']
+  var events = []
+  if(latest - starting_block < iteration){
+    events = await contract.getPastEvents(event_name, { fromBlock: starting_block, toBlock: latest }, (error, events) => {});
+  }else{
+    var pos = starting_block
+    while (pos < latest) {
+      var to = pos+iteration < latest ? pos+iteration : latest
+      var from = pos
+      events = events.concat(await contract.getPastEvents(event_name, { fromBlock: from, toBlock: to }, (error, events) => {}))
+      pos = to+1
+    }
+  }
+  return events
+}
+
+async function resolve_objects_in_specific_files(data_object, data_type, e5){
+  const content_redistribution_object = {}
+  const object_ids = Object.keys(data_object)
+  object_ids.forEach(object_id => {
+    const general_bucket_identifier = Math.floor(object_id / 100_000)
+    if(content_redistribution_object[general_bucket_identifier] == null){
+      content_redistribution_object[general_bucket_identifier] = {}
+    }
+    content_redistribution_object[general_bucket_identifier][object_id] = data_object[object_id]
+  });
+
+  const general_bucket_identifiers = Object.keys(content_redistribution_object)
+  if(data['data_indexes'][e5]['general_bucket_identifiers'] == null){
+    data['data_indexes'][e5]['general_bucket_identifiers'] = {}
+  }
+  if(data['data_indexes'][e5]['general_bucket_identifiers'][data_type] == null){
+    data['data_indexes'][e5]['general_bucket_identifiers'][data_type] = []
+  }
+
+  for(var g=0; g<general_bucket_identifiers.length; g++){
+    const focused_general_bucket_identifier = general_bucket_identifiers[g]
+    if(!data['data_indexes'][e5]['general_bucket_identifiers'][data_type].includes(focused_general_bucket_identifier)){
+      //were writing a new file
+      data['data_indexes'][e5]['general_bucket_identifiers'][data_type].push(focused_general_bucket_identifier)
+      write_new_general_bucket_identifier_file(content_redistribution_object[focused_general_bucket_identifier], focused_general_bucket_identifier, data_type, e5)
+    }else{
+      //were editing a file
+      rewrite_new_general_bucket_identifier_file(content_redistribution_object[focused_general_bucket_identifier], focused_general_bucket_identifier, data_type, e5)
+    }
+  }
+}
+
+async function write_new_general_bucket_identifier_file(object, general_bucket_identifier, data_type, e5){
+  const write_data = JSON.stringify(object, (_, v) => typeof v === 'bigint' ? v.toString() : v);
+  var isloading = true;
+  const file_name = general_bucket_identifier.toString()
+  var dir = `./object_data/${e5}/${data_type}`
+  if (!fs.existsSync(dir)){
+    fs.mkdirSync(dir);
+  }
+  fs.writeFile(`object_data/${e5}/${data_type}/${file_name}.json`, write_data, (error) => {
+    if (error) {
+      log_error(error)
+    }else{
+      console.log("data written correctly");
+    }
+    isloading = false
+  });
+
+  while (isloading == true) {
+    if (isloading == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+}
+
+async function rewrite_new_general_bucket_identifier_file(updated_object, general_bucket_identifier, data_type, e5){
+  var cold_storage_obj = await fetch_object_file_by_bucket_identifier(general_bucket_identifier, data_type, e5)
+  const modified_object_ids = Object.keys(updated_object)
+  modified_object_ids.forEach(object_id => {
+    cold_storage_obj[object_id] = updated_object[object_id]
+  });
+  await write_new_general_bucket_identifier_file(cold_storage_obj, general_bucket_identifier, data_type, e5)
+}
+
+async function fetch_object_file_by_bucket_identifier(general_bucket_identifier, data_type, e5){
+  var is_loading_file = true
+  var cold_storage_obj = {}
+  const file_name = general_bucket_identifier.toString()
+  fs.readFile(`object_data/${e5}/${data_type}/${file_name}.json`, (error, data) => {
+    if (error) {
+      log_error(error)
+    }else{
+      cold_storage_obj = JSON.parse(data.toString())
+    }
+    is_loading_file = false
+  });
+  while (is_loading_file == true) {
+    if (is_loading_file == false) break
+    await new Promise(resolve => setTimeout(resolve, 700))
+  }
+
+  return cold_storage_obj
+}
+
+async function fetch_objects_in_specific_files(object_ids, data_type, e5){
+  const content_redistribution_object = {}
+  if(object_ids.length == 0){
+    data['data_indexes'][e5]['general_bucket_identifiers'][data_type].forEach(general_bucket_identifier => {
+      if(content_redistribution_object[general_bucket_identifier] == null){
+        content_redistribution_object[general_bucket_identifier] = []
+      }
+    });
+  }
+  else{
+    object_ids.forEach(object_id => {
+      const general_bucket_identifier = Math.floor(object_id / 100_000)
+      if(content_redistribution_object[general_bucket_identifier] == null){
+        content_redistribution_object[general_bucket_identifier] = []
+      }
+      content_redistribution_object[general_bucket_identifier].push(object_id)
+    });
+  }
+
+  const general_bucket_identifiers = Object.keys(content_redistribution_object)
+  const return_object = {}
+  for(var g=0; g<general_bucket_identifiers.length; g++){
+    const focused_general_bucket_identifier = general_bucket_identifiers[g]
+    if(data['data_indexes'][e5]['general_bucket_identifiers'][data_type].includes(focused_general_bucket_identifier)){
+      const cold_storage_obj = await fetch_object_file_by_bucket_identifier(focused_general_bucket_identifier, data_type, e5)
+      if(object_ids.length == 0){
+        Object.assign(return_object, cold_storage_obj)
+      }else{
+        content_redistribution_object[focused_general_bucket_identifier].forEach(object_id => {
+          if(object_id == 3 || object_id == 5){
+            return_object[object_id] = data['data_indexes'][e5]['created_token_data'][object_id]
+          }
+          else if(object_id == 2){
+            return_object[object_id] = data['data_indexes'][e5]['created_contract_data'][object_id]
+          }
+          else{
+            return_object[object_id] = cold_storage_obj[object_id]
+          }
+        });
+      }
+    }
+  }
+  if(object_ids.length == 0){
+    if(data_type == 31/* 31(token_exchange) */){
+      return_object[3] = data['data_indexes'][e5]['created_token_data'][3]
+      return_object[5] = data['data_indexes'][e5]['created_token_data'][5]
+    }
+    else if(data_type == 30/* 30(contract_obj_id) */){
+      return_object[2] = data['data_indexes'][e5]['created_contract_data'][2]
+    }
+  }
+  return return_object
 }
 
 /* starts the loading of all the E5 event data if the app key is defined */
@@ -938,7 +1408,7 @@ async function check_and_set_default_rpc(e5){
 
 async function check_for_reorgs(e5){
   const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
-  const current_block_number = Number(await web3.eth.getBlockNumber())
+  const current_block_number = bigInt(await web3.eth.getBlockNumber())
   const current_block = await web3.eth.getBlock(current_block_number);
   const current_block_hash = current_block.hash == null ? '' : current_block.hash.toString()
   const current_block_time = parseInt(current_block.timestamp)
@@ -974,14 +1444,14 @@ async function check_for_reorgs(e5){
         }
         else{
           last_matching_block = focused_block_number
-          last_matching_block_time = block_being_chekced_block.timestamp
+          last_matching_block_time = parseInt(block_being_chekced_block.timestamp)
         }
       }
 
       if(last_matching_block == null){
         last_matching_block = data[e5]['first_block']
         const first_block = await web3.eth.getBlock(last_matching_block)
-        last_matching_block_time = first_block.timestamp
+        last_matching_block_time = parseInt(first_block.timestamp)
       }
 
       blocks_to_delete.forEach(invalid_block_number => {
@@ -1326,7 +1796,9 @@ function update_staged_hash_data(){
                   const index_values = container_data['tags'][key]['elements']
                   const item_type = container_data['tags'][key]['type']
                   const item_lan = container_data['tags'][key]['lan'] == null ? 'en' : container_data['tags'][key]['type']
-                  const item_state = container_data['tags']['key']['state'] == null ? '0x' : container_data['tags']['key']['state']
+                  const item_state = container_data['tags'][key]['state'] == null ? '0x' : container_data['tags'][key]['state']
+                  const targeted_countries = container_data['tags'][key]['targeted_countries'] == null ? [] : container_data['tags'][key]['targeted_countries']
+
                   if(pointer_data[item_type] == null){
                     pointer_data[item_type] = []
                   }
@@ -1334,6 +1806,7 @@ function update_staged_hash_data(){
                   const e5 = isNaN(staged_ecids[ecid]) ? staged_ecids[ecid].e5 : 'E25'
                   pointer_data[item_type].push({'id':id, 'e5':e5, 'keys':index_values})
                   record_trend('uploads', index_values, item_lan, item_state, item_type, {})
+                  if(targeted_countries.length > 0) record_objects_targeted_states_in_memory(id, targeted_countries, e5);
                   delete staged_ecids[ecid]
                 }
               }
@@ -1348,6 +1821,18 @@ function update_staged_hash_data(){
       }
     }
   }
+}
+
+function record_objects_targeted_states_in_memory(object_id, targeted_countries, e5){
+  // const focused_general_bucket_identifier = Math.floor(object_id / 100_000)
+  if(data['object_targeted_states'] == null){
+    data['object_targeted_states'] = {}
+  }
+  if(data['object_targeted_states'][e5] == null){
+    data['object_targeted_states'][e5] = {}
+  }
+
+  data['object_targeted_states'][e5][object_id] = targeted_countries
 }
 
 function record_trend(type, keys, language, state, object_type, tag_type_mapping){
@@ -2405,15 +2890,15 @@ async function load_nitro_links(e5){
   var registered_nitro_links_authors = {}
   nitro_link_registry.forEach(event => {
     var id = event.returnValues.p1/* target_id */
-    var data = event.returnValues.p4/* string_data */
+    var object_data = event.returnValues.p4/* string_data */
     var author = event.returnValues.p2/* sender_acc_id */
     if(registered_nitro_links[(id+e5)] != null){
       if(author.toString() == registered_nitro_links_authors[(id+e5)].toString()){
         //link was reset by author
-        registered_nitro_links[(id+e5)] = data
+        registered_nitro_links[(id+e5)] = object_data
       }
     }else{
-      registered_nitro_links[(id+e5)] = data
+      registered_nitro_links[(id+e5)] = object_data
       registered_nitro_links_authors[(id+e5)] = author
     }
   });
@@ -2528,8 +3013,8 @@ async function fetch_event_data_for_specific_e5(e5, contract, event_name){
   var memory_data = event_data[e5] == null ? [] : event_data[e5][contract][event_name]
   var final_data = []
   for(var i=0; i<cold_storage_event_files.length; i++){
-    var data = await fetch_event_file_from_storage(cold_storage_event_files[i], e5, contract, event_name)
-    final_data = final_data.concat(data)
+    var object_data = await fetch_event_file_from_storage(cold_storage_event_files[i], e5, contract, event_name)
+    final_data = final_data.concat(object_data)
   }
   final_data = final_data.concat(memory_data)
   return final_data
@@ -2802,7 +3287,7 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
   const all_modification_events = await filter_events(subscription_e5, 'F5', 'e5', { p1/* target_id */: subscription_id}, null)
 
   const price_data_snapshots = get_price_data_snapshots(all_modification_events, object)
-  var data = []
+  var object_data = []
   var total_payment_data = {}
   const starting_time = Math.floor(Date.now()/1000) - filter_value
 
@@ -2848,28 +3333,28 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
     for(var i=0; i<time_steps.length; i++){
         const focused_step = time_steps[i]
         const valid_user_keys = Object.entries(payment_history).filter(([key, value]) => {
-                var result = value.filter(function (payment_object) {
-                    return (
-                        bigInt(focused_step['start_time']).greaterOrEquals(bigInt(payment_object['from'])) && bigInt(focused_step['start_time']).lesserOrEquals(bigInt(payment_object['to']))
-                    )
-                })
-                return result.length > 0
-            }
+            var result = value.filter(function (payment_object) {
+              return (
+                bigInt(focused_step['start_time']).greaterOrEquals(bigInt(payment_object['from'])) && bigInt(focused_step['start_time']).lesserOrEquals(bigInt(payment_object['to']))
+              )
+            })
+            return result.length > 0
+          }
         );
         const price_snapshot = price_data_snapshots.find(e => ( focused_step['start_time'] >= e['from'] && focused_step['end_time'] <= e['to'] ) )
         
         if(price_snapshot != null){
             // const number_count = Object.keys(valid_user_keys).length
             const number_count = valid_user_keys.length
-            data.push({'count':number_count, 'price_data':price_snapshot})
+            object_data.push({'count':number_count, 'price_data':price_snapshot})
         }
     }
   }catch(e){
-    return { data: {}, success:false, reason: e.toString() }
+    return { object_data: {}, success:false, reason: e.toString() }
   }
 
-  for(var w=0; w<data.length; w++){
-      const focused_data_point = data[w]
+  for(var w=0; w<object_data.length; w++){
+      const focused_data_point = object_data[w]
       const focused_time_unit = focused_data_point['price_data']['time_unit']
       const focused_payment_exchange_items = focused_data_point['price_data']['prices']
       const paying_accounts = focused_data_point['count']
@@ -2889,11 +3374,11 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
   var xVal = 1, yVal = 0;
   var dps = [];
   var noOfDps = 100;
-  var factor = Math.round(data.length/noOfDps) +1;
-  var largest_number = get_total_supply_interval_figure(data)
+  var factor = Math.round(object_data.length/noOfDps) +1;
+  var largest_number = get_total_supply_interval_figure(object_data)
   for(var v = 0; v < noOfDps; v++) {
     var pos = factor * xVal
-    const focused_data_point = data[pos]
+    const focused_data_point = object_data[pos]
     yVal = 0
     if(focused_data_point != null && focused_data_point['count'] != 0 && largest_number != 0){
         yVal = parseInt(bigInt(focused_data_point['count']).multiply(100).divide(largest_number))
@@ -2922,7 +3407,7 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
     }
   }
 
-  return { data: {dps, total_payment_data}, success:true }
+  return { object_data: {dps, total_payment_data}, success:true }
 }
 
 /* gets the largest figure from an array of items */
@@ -3009,7 +3494,7 @@ function backup_stream_count_data_if_large_enough(){
     const now = Date.now()
     var backup_obj = {}
     keys_to_backup.forEach(key => {
-      obj[key] = file_data_steams[key]
+      backup_obj[key] = file_data_steams[key]
     });
     const write_data = JSON.stringify(backup_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     var dir = './stream_data'
@@ -3146,7 +3631,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
       transaction_event_object[subscription_e5] = await filter_events(subscription_e5, 'E5', 'e4', {}, null)
 
       const price_data_snapshots = get_price_data_snapshots(all_modification_events, object)
-      var data = []
+      var object_data = []
       var total_payment_data = {}
 
       try{
@@ -3204,15 +3689,15 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
             if(price_snapshot != null){
                 // const number_count = Object.keys(valid_user_keys).length
                 const number_count = valid_user_keys.length
-                data.push({'count':number_count, 'price_data':price_snapshot})
+                object_data.push({'count':number_count, 'price_data':price_snapshot})
             }
         }
       }catch(e){
-        return { data: {}, success:false, reason: e.toString() }
+        return { object_data: {}, success:false, reason: e.toString() }
       }
 
-      for(var w=0; w<data.length; w++){
-          const focused_data_point = data[w]
+      for(var w=0; w<object_data.length; w++){
+          const focused_data_point = object_data[w]
           const focused_time_unit = focused_data_point['price_data']['time_unit']
           const focused_payment_exchange_items = focused_data_point['price_data']['prices']
           const paying_accounts = focused_data_point['count']
@@ -3323,7 +3808,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
   }
   
   return { 
-    data: {
+    object_data: {
       final_payment_info, 
       total_payment_data_for_subscriptions, 
       end_time: last_month_date.getTime(),
@@ -3548,7 +4033,7 @@ async function record_ram_rom_usage(){
   const memoryUsage = process.memoryUsage();
   const free_ram = os.freemem();
   const obj = {
-    1/* 'consumed_rom' */:consumed,
+    1/* 'consumed_rom' */:consumed,//in megabytes
     2/* 'network' */:network_usage_stats,
     3/* 'rss' */:memoryUsage.rss,
     4/* 'heapTotal' */:memoryUsage.heapTotal,
@@ -4178,7 +4663,7 @@ function get_active_interface(callback) {
 async function get_network_usage_info(){
   var isloading = true;
   var return_data = {};
-  const used_network_interface = data['network_interface'];
+  const used_network_interface = data['network_interface'] || 'ens3';
   const network_speed_in_mbps = data['network_speed_in_mbps']
   if(used_network_interface == null){
     return return_data
@@ -4375,7 +4860,7 @@ global.fetch = async (url, options = {}) => {
 };
 
 function set_endpoint_ids(){
-  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'stream_file', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call'];
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', /* 'stream_file', */ 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -4387,6 +4872,8 @@ function set_endpoint_ids(){
   endpoint_info['itransfers'] = 'itransfers'
   endpoint_info['bill_payments'] = 'bill_payments'
   endpoint_info['marco'] = 'marco'
+  endpoint_info['stream_file'] = 'stream_file'
+  endpoint_info['token_price'] = 'token_price'
 }
 
 set_endpoint_ids()
@@ -4453,13 +4940,13 @@ function read_and_record_ssh_access_events(log_file){
 
 async function get_all_login_access_time_info(){
   var isloading = true;
-  var data = ''
+  var object_data = ''
   exec("last", (err, stdout) => {
     if (err){
       log_error(err)
     }
     else{
-      data = stdout
+      object_data = stdout
     }
     isloading = false;
   });
@@ -4469,7 +4956,7 @@ async function get_all_login_access_time_info(){
     await new Promise(resolve => setTimeout(resolve, 700))
   }
 
-  return data
+  return object_data
 }
 
 
@@ -4646,6 +5133,425 @@ async function load_object_data(all_events, known_hashes){
   return await fetch_hashes_from_file_storage_or_memory(hashes)
 }
 
+function check_if_error_log_file_exists(file){
+  var log_files = fs.existsSync('./logs/') ? fs.readdirSync('./logs/') : []
+  return log_files.includes(file)
+}
+
+async function process_app_launch_data(event_fetches, target_address, indexing_hash, max_post_bulk_load_count, known_hashes, specific_e5s_targeted, launch_state){
+  const all_supported_e5s = data['e']
+  const all_return_data = {}
+  const hashes_to_fetch = []
+  for(var i=0; i<all_supported_e5s.length; i++){
+    const return_data = {}
+    const e5 = all_supported_e5s[i]
+    if(specific_e5s_targeted.length > 0 && !specific_e5s_targeted.included_cids(e5)){
+      continue;
+    }
+    
+    const addresses_transactions = await filter_events(e5, 'E5', 'e4', { p2/* sender_address */: target_address }, {})
+    const e5_account_id = addresses_transactions.length > 0 ? addresses_transactions[0].returnValues.p1 : 0
+    // const e5_account_id = Object.keys(data['data_indexes'][e5]['all_users']).find(
+    //   account_id => data['data_indexes'][e5]['all_users'][account_id]['address'] == target_address
+    // );
+    if(e5_account_id != null){
+      return_data['account_id'] = e5_account_id
+      return_data['account_data'] = await fetch_objects_in_specific_files([e5_account_id], 29/* 29(account_obj_id) */, e5)
+    }
+    return_data['contract_addresses'] = data['e5']['addresses']
+    return_data['boot_time'] = data['data_indexes'][e5]['boot_time']
+    return_data['transaction_height'] = data['data_indexes'][e5]['transaction_height']
+    return_data['E5_balance'] = data['data_indexes'][e5]['E5_balance']
+    return_data['token_balances'] = data['data_indexes'][e5]['token_balances']
+    const my_state_exchanges = data['object_targeted_states'] != null && data['object_targeted_states'][e5] != null ? Object.keys(data['object_targeted_states'][e5]).filter(key => data['object_targeted_states'][e5][key].includes(launch_state)) : [];
+
+    if(e5_account_id != null){
+      const exchanges_to_load_first = await load_accounts_exchange_interactions_data(e5_account_id, e5)
+      exchanges_to_load_first.forEach(exchange_id => {
+        if(!my_state_exchanges.includes(exchange_id)){
+          my_state_exchanges.push(exchange_id)
+        }
+      });
+    }
+    if(!my_state_exchanges.includes(3)){
+      my_state_exchanges.push(3)
+    }
+    if(!my_state_exchanges.includes(5)){
+      my_state_exchanges.push(5)
+    }
+    const all_exchange_ids = Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 31/* 31(token_exchange) */);
+    all_exchange_ids.forEach(exchange_id => {
+      if(data['object_targeted_states'] != null && data['object_targeted_states'][e5] != null){
+        if(data['object_targeted_states'][e5][exchange_id] == null){
+          if(!my_state_exchanges.includes(exchange_id)){
+            my_state_exchanges.push(exchange_id)
+          }
+        }
+      }else{
+        if(!my_state_exchanges.includes(exchange_id)){
+          my_state_exchanges.push(exchange_id)
+        }
+      }
+    });
+
+    return_data['created_token_data'] = await fetch_objects_in_specific_files(my_state_exchanges, 31/* 31(token_exchange) */, e5)
+    return_data['e_token_balance_data'] = data['data_indexes'][e5]['e_token_balance_data']
+    return_data['main_contracts'] = data['data_indexes'][e5]['created_contract_data'][2]
+    return_data['primary_account_transaction_data'] = data['data_indexes'][e5]['primary_account_transaction_data']
+
+    for(var t=0; t<event_fetches.length; t++){
+      const focused_event_fetch = event_fetches[t]
+      const fetch_identifier = focused_event_fetch['identifier'].trim()
+      const ignore = focused_event_fetch['ignore']
+      const fetch_last_data = focused_event_fetch['fetch_last_data'] // last, all, none
+      const event_fetch_data_params = focused_event_fetch['fetch_params']
+      const requested_contract = event_fetch_data_params['requested_contract'].trim()
+      const requested_event_id = event_fetch_data_params['requested_event_id'].trim()
+      const filter = event_fetch_data_params['filter']
+      var should_run_filter = true;
+      Object.keys(filter).forEach(filter_target => {
+        if(filter[filter_target] == '%%account%%'){
+          filter[filter_target] = e5_account_id || 0
+          if(e5_account_id == null){
+            should_run_filter = false
+          }
+        }
+      });
+      const from_filter = event_fetch_data_params['from_filter'] || {}
+      const filtered_events = (should_run_filter == false || ignore == true) ? [] : await filter_events(e5, requested_contract, requested_event_id, filter, from_filter)
+      return_data[fetch_identifier] = filtered_events
+
+      if(fetch_last_data == 'last'){
+        //fetch the last data hash for the selected event id
+        if(filtered_events.length > 0){
+          const latest_event = filtered_events[filtered_events.length - 1];
+          const ecid_identifier = latest_event.returnValues.p4
+          try{
+            const content_id = get_data_id_from_ecid(ecid_identifier)
+            if(!hashes_to_fetch.includes(content_id) && !known_hashes.includes(content_id)){
+              hashes_to_fetch.push(content_id)
+            }
+          }catch(e){
+            log_error(e)
+          }
+        }
+      }
+      else if(fetch_last_data == 'all'){
+        //fetch all the hashes logged under the selected event id
+        filtered_events.forEach(obtained_event => {
+          const ecid_identifier = obtained_event.returnValues.p4
+          try{
+            const content_id = get_data_id_from_ecid(ecid_identifier)
+            if(!hashes_to_fetch.includes(content_id) && !known_hashes.includes(content_id)){
+              hashes_to_fetch.push(content_id)
+            }
+          }catch(e){
+            log_error(e)
+          }
+        });
+      }
+    }
+
+    return_data['nitro_objects_data'] = await get_app_launch_object_data(indexing_hash, 21/* 21(nitro_object) */, e5, e5_account_id, max_post_bulk_load_count, known_hashes)
+    return_data['job_objects_data'] = await get_app_launch_object_data(indexing_hash, 17/* 17(job_object) */, e5, e5_account_id, max_post_bulk_load_count, known_hashes)
+    return_data['exchange_objects_data'] = await get_app_launch_object_data(indexing_hash, 31/* token_exchange */, e5, e5_account_id, max_post_bulk_load_count, known_hashes, my_state_exchanges)
+
+    //set the return data under the selected e5
+    all_return_data[e5] = return_data
+  }
+  const hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
+
+  return { hash_data, all_return_data }
+}
+
+function get_data_id_from_ecid(ecid){
+  if(ecid == 'ar.MY_Kh9i3VhChJuTzo_Cyu6bG6hCvasqzWGfo4oniNnA_1xjiAYxW') return ecid
+  if(!ecid.includes('.')){
+    return ecid
+  }
+  var split_cid_array = ecid.split('.');
+  var option = split_cid_array[0]
+  var cid = split_cid_array[1]
+
+  var included_underscore = false
+  var id = cid;
+  var internal_id = ''
+  if(cid.includes('_')){
+    included_underscore = true;
+    var split_cid_array2 = cid.split('_');
+    id = split_cid_array2[0]
+    internal_id = split_cid_array2[1]
+  }
+
+  return id
+}
+
+async function get_app_launch_object_data(indexing_hash, item_type, e5, account, max_post_bulk_load_count, known_hashes, my_state_exchanges){
+  var created_object_events = null;
+
+  if(item_type == 31/* token_exchange */){
+    created_object_events = await filter_events(e5, 'E5', 'e1', {p2/* object_type */:item_type}, {})
+  }
+  else if(item_type == 21/* 21(nitro_object) */){
+    created_object_events = await filter_events(e5, 'E52', 'e2', {p3/* item_type */: item_type}, {})
+  }
+  else if(item_type == 17/* 17(job_object) */){
+    created_object_events = await filter_events(e5, 'E52', 'e2', {p3/* item_type */: item_type, p1: indexing_hash}, {})
+  }
+
+  if(account != null){
+    if(item_type == 31/* token_exchange */){
+      const exchanges_to_load_first = await load_accounts_exchange_interactions_data(account, e5)
+      var my_posted_events = created_object_events.filter(function (event) {
+        return (exchanges_to_load_first.includes(event.returnValues.p1) || my_state_exchanges.includes(event.returnValues.p1))
+      })
+      // created_object_events.forEach(event => {
+      //   if(my_posted_events.find(e => e.returnValues.p1 === event.returnValues.p1) == null){
+      //     my_posted_events.push(event)
+      //   }
+      // });
+      created_object_events = my_posted_events
+    }else{
+      var my_posted_events = created_object_events.filter(function (event) {
+        return (event.returnValues.p5/* sender_account */ == account)
+      })
+      created_object_events.forEach(event => {
+        if(my_posted_events.find(e => e.returnValues.p2/* item */ === event.returnValues.p2/* item */) == null){
+          my_posted_events.push(event)
+        }
+      });
+      created_object_events = my_posted_events
+    }
+  }
+
+  const p = item_type == 31/* token_exchange */ ? 'p1' : 'p2';
+  const object_ids = get_ids_from_events(created_object_events, p).slice(0, max_post_bulk_load_count)
+
+  const hashes_to_fetch = []
+  const id_to_hash_mapping = {}
+  for(var i=0; i<object_ids.length; i++){
+    const target_id = object_ids[i]
+    const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+
+    if(object_metadata_events.length > 0){
+      const latest_event = object_metadata_events[object_metadata_events.length - 1];
+      const ecid_identifier = latest_event.returnValues.p4
+      if(ecid_identifier != 'e3' && ecid_identifier != 'e2' && ecid_identifier != 'e1' && ecid_identifier != 'e'){
+        const content_id = get_data_id_from_ecid(ecid_identifier)
+        if(!hashes_to_fetch.includes(content_id) && !known_hashes.includes(content_id)){
+          hashes_to_fetch.push(content_id)
+        }
+      }
+      id_to_hash_mapping[target_id] = ecid_identifier
+    }
+  }
+
+  const object_hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
+  return { object_hash_data, created_object_events, id_to_hash_mapping }
+}
+
+function get_ids_from_events(events, p){
+  var ids = []
+  events.forEach(event_item => {
+    var id = event_item.returnValues[p]
+    ids.push(id);
+  });
+  return ids
+}
+
+async function load_accounts_exchange_interactions_data(account_id, e5){
+  const received_tokens_event_data = await filter_events(e5, 'H52', 'e1', {p3/* receiver */: account_id}, {})
+  const update_balance_event_data = await filter_events(e5, 'H52', 'e2', {p2/* receiver */: account_id}, {})
+  const stack_depth_swap_event_data = await filter_events(e5, 'H52', 'power', {p3/* receiver */: account_id, p2/* action */:2/* depth_auth_mint */}, {})
+
+  var all_events = [];
+  for(var i=0; i<update_balance_event_data.length; i++){
+    all_events.push({'event':update_balance_event_data[i], 'action':'Update', 'timestamp':update_balance_event_data[i].returnValues.p4})
+  }
+  for(var i=0; i<received_tokens_event_data.length; i++){
+    all_events.push({'event':received_tokens_event_data[i], 'action':'Received', 'timestamp':received_tokens_event_data[i].returnValues.p5})
+  }
+
+  for(var i=0; i<stack_depth_swap_event_data.length; i++){
+    all_events.push({'event':stack_depth_swap_event_data[i], 'action':'DepthMint', 'timestamp':stack_depth_swap_event_data[i].returnValues.p7})
+  }
+
+  var data = []
+  all_events.forEach(token_event => {
+    var exchange = token_event['event'].returnValues.p1
+    if(!data.includes(exchange)){
+      data.push(exchange)
+    }
+  });
+
+  return data
+}
+
+
+
+
+
+
+async function get_objects_metadata(created_object_events_mapping, item_type, max_post_bulk_load_count, known_hashes, specific_e5s_targeted){
+  const all_supported_e5s = data['e']
+  const all_return_data = {}
+  for(var i=0; i<all_supported_e5s.length; i++){
+    const return_data = {}
+    const e5 = all_supported_e5s[i]
+    if(specific_e5s_targeted.length > 0 && !specific_e5s_targeted.included_cids(e5)){
+      continue;
+    }
+    const created_object_events = created_object_events_mapping[e5]
+    if(created_object_events == null){
+      continue;
+    }
+    if(item_type == 33/* subscription_object */ || item_type == 30/* contract_obj_id */){
+      return_data['objects_data'] = await get_subscription_or_contract_object_data_from_indexing_events(created_object_events, item_type, e5, max_post_bulk_load_count, known_hashes)
+    }
+    else if(item_type == 32/* 32(consensus_request) */){
+      return_data['objects_data'] = await get_proposal_object_data_from_indexing_events(created_object_events, e5, max_post_bulk_load_count, known_hashes)
+    }
+    else{
+      return_data['objects_data'] = await get_object_data_from_indexing_events(created_object_events, item_type, e5, max_post_bulk_load_count, known_hashes)
+    }
+    all_return_data[e5] = return_data
+  }
+
+  return all_return_data
+}
+
+async function get_object_data_from_indexing_events(created_object_events, item_type, e5, max_post_bulk_load_count, known_hashes){
+  const p = item_type == 25/* 25(storefront_bag_object) */ ? 'p1' : 'p2';
+  const object_ids = get_ids_from_events(created_object_events, p).slice(0, max_post_bulk_load_count)
+
+  const hashes_to_fetch = []
+  const id_to_hash_mapping = {}
+  for(var i=0; i<object_ids.length; i++){
+    const target_id = object_ids[i]
+    const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+
+    if(object_metadata_events.length > 0){
+      const latest_event = object_metadata_events[object_metadata_events.length - 1];
+      const ecid_identifier = latest_event.returnValues.p4
+      if(ecid_identifier != 'e3' && ecid_identifier != 'e2' && ecid_identifier != 'e1' && ecid_identifier != 'e'){
+        const content_id = get_data_id_from_ecid(ecid_identifier)
+        if(!hashes_to_fetch.includes(content_id) && !known_hashes.includes(content_id)){
+          hashes_to_fetch.push(content_id)
+        }
+      }
+      id_to_hash_mapping[target_id] = ecid_identifier
+    }
+  }
+
+  const object_hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
+  return { object_hash_data, id_to_hash_mapping }
+}
+
+async function get_subscription_or_contract_object_data_from_indexing_events(created_object_events, item_type, e5, max_post_bulk_load_count, known_hashes){
+  const p = 'p1'
+  const object_ids = get_ids_from_events(created_object_events, p).slice(0, max_post_bulk_load_count)
+  const object_data = object_ids.length == 0 ? {} : await fetch_objects_in_specific_files(object_ids, item_type, e5)
+  // const identifier = item_type == 33/* subscription_object */ ? 'created_subscription_data' : 'created_contract_data'
+  // object_ids.forEach(object_id => {
+  //   object_data[object_id] = data['data_indexes'][e5][identifier][object_id]
+  // });
+
+  const hashes_to_fetch = []
+  const id_to_hash_mapping = {}
+  for(var i=0; i<object_ids.length; i++){
+    const target_id = object_ids[i]
+    const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+
+    if(object_metadata_events.length > 0){
+      const latest_event = object_metadata_events[object_metadata_events.length - 1];
+      const ecid_identifier = latest_event.returnValues.p4
+      if(ecid_identifier != 'e3' && ecid_identifier != 'e2' && ecid_identifier != 'e1' && ecid_identifier != 'e'){
+        const content_id = get_data_id_from_ecid(ecid_identifier)
+        if(!hashes_to_fetch.includes(content_id) && !known_hashes.includes(content_id)){
+          hashes_to_fetch.push(content_id)
+        }
+      }
+      id_to_hash_mapping[target_id] = ecid_identifier
+    }
+  }
+
+  const object_hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
+  return { object_hash_data, id_to_hash_mapping, object_data }
+}
+
+async function get_proposal_object_data_from_indexing_events(created_object_events, e5, max_post_bulk_load_count, known_hashes){
+  const p = 'p1'
+  const contract_object_ids = get_ids_from_events(created_object_events, p).slice(0, max_post_bulk_load_count)
+
+  const all_contracts_proposals = await filter_events(e5, 'G5', 'e1', {p1/* target_obj_id */: target_id}, {})
+
+  const my_specific_contracts_proposals = all_contracts_proposals.filter(function (event) {
+    return (contract_object_ids.includes(event.returnValues.p1/* contract_id */))
+  })
+
+  const object_ids = get_ids_from_events(my_specific_contracts_proposals, 'p2').slice(0, max_post_bulk_load_count)
+  const object_data = object_ids.length == 0 ? {} : await fetch_objects_in_specific_files(object_ids, 32/* 32(consensus_request) */, e5)
+  // const object_data = {}
+  // object_ids.forEach(object_id => {
+  //   object_data[object_id] = data['data_indexes'][e5]['created_proposal_data'][object_id]
+  // });
+
+  const hashes_to_fetch = []
+  const id_to_hash_mapping = {}
+  for(var i=0; i<object_ids.length; i++){
+    const target_id = object_ids[i]
+    const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+
+    if(object_metadata_events.length > 0){
+      const latest_event = object_metadata_events[object_metadata_events.length - 1];
+      const ecid_identifier = latest_event.returnValues.p4
+      if(ecid_identifier != 'e3' && ecid_identifier != 'e2' && ecid_identifier != 'e1' && ecid_identifier != 'e'){
+        const content_id = get_data_id_from_ecid(ecid_identifier)
+        if(!hashes_to_fetch.includes(content_id) && !known_hashes.includes(content_id)){
+          hashes_to_fetch.push(content_id)
+        }
+      }
+      id_to_hash_mapping[target_id] = ecid_identifier
+    }
+  }
+
+  const object_hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
+  return { object_hash_data, id_to_hash_mapping, object_data }
+}
+
+async function load_comment_data(all_events, known_hashes){
+  const hashes = []
+  for(var i=0; i<all_events.length; i++){
+    var objects_event = all_events[i]
+    if(objects_event.length != 0){
+      objects_event.reverse().slice(0, 135).forEach(event_item => {
+        var ecid = event_item.returnValues.p4
+        if(ecid != 'e3' && ecid != 'e2' && ecid != 'e1' && ecid != 'e'){
+          try{
+            var cid = ecid
+            var option = 'in'
+            if(ecid.includes('.')){
+              var split_cid_array = ecid.split('.');
+              option = split_cid_array[0]
+              cid = split_cid_array[1]
+            }
+            var id = cid;
+            var internal_id = ''
+            if(cid.includes('_')){
+              var split_cid_array2 = cid.split('_');
+              id = split_cid_array2[0]
+              internal_id = split_cid_array2[1]
+            }
+            if(!hashes.includes(id) && !known_hashes.includes(id)) hashes.push(id)
+          }catch(e){
+            console.log(e)
+          }
+        }
+      });
+    }
+  }
+  return await fetch_hashes_from_file_storage_or_memory(hashes)
+}
 
 
 
@@ -4670,7 +5576,7 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
   }
   else{
     if(!await is_privacy_signature_valid(privacy_signature)){
-      res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid signature', success:false })));
+      res.send((JSON.stringify({ message: 'Invalid signature', success:false })));
       return;
     }
   }
@@ -4679,14 +5585,14 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
 
     var arg_obj = JSON.parse(arg_string)
     var requests = arg_obj.requests
-    const load_limit = (arg_obj.load_limit == null || isNaN(arg_obj.load_limit)) ? 100_000_000 : parseInt(arg_obj.load_limit)
+    const load_limit = (arg_obj.load_limit == null || isNaN(arg_obj.load_limit)) ? 1_000_000_000 : parseInt(arg_obj.load_limit)
     var p = arg_obj.p
     var known = arg_obj.known
     
     var filtered_events_array = []
     var block_heights = []
     if(requests.length > limit){
-      res.send(await encrypt_call_result(JSON.stringify({ message: 'request count exceeded limit', success:false }), registered_users_key));
+      res.send((JSON.stringify({ message: 'request count exceeded limit', success:false })));
       return;
     }
     for(var i=0; i<requests.length; i++){
@@ -4702,7 +5608,7 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
       block_heights.push(block_id)
     }
 
-    var item_data = p != null ? await load_object_data(filtered_events_array, known) : {}
+    var item_data = p != null ? (p == 'comment' ? await load_comment_data(filtered_events_array, known) : await load_object_data(filtered_events_array, known)) : {}
     
     var obj = {'data':filtered_events_array, 'hash_data':item_data, 'block_heights':block_heights, success:true}
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -4711,7 +5617,7 @@ app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
   }
   catch(e){
     console.log(e)
-    res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid arg string', success:false }), registered_users_key));
+    res.send((JSON.stringify({ message: 'Invalid arg string', success:false })));
   }
 });//ok
 
@@ -4729,7 +5635,7 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
   }
   else{
     if(!await is_privacy_signature_valid(privacy_signature)){
-      res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid signature', success:false }), registered_users_key));
+      res.send((JSON.stringify({ message: 'Invalid signature', success:false })));
       return;
     }
   }
@@ -4740,7 +5646,7 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
     var arg_obj = JSON.parse(arg_string)
     var hashes = arg_obj.hashes
     if(hashes.length > limit){
-      res.send(await encrypt_call_result(JSON.stringify({ message: 'request count exceeded limit', success:false }), registered_users_key));
+      res.send((JSON.stringify({ message: 'request count exceeded limit', success:false })));
       return;
     }
     var hash_data = await fetch_hashes_from_file_storage_or_memory(hashes)
@@ -4750,7 +5656,7 @@ app.get(`/${endpoint_info['data']}/:privacy_signature`, async (req, res) => {
     res.send(await encrypt_call_result(string_obj, registered_users_key));
   }catch(e){
     console.log(e)
-    res.send(await encrypt_call_result(JSON.stringify({ message: 'Invalid arg string', success:false }), registered_users_key));
+    res.send((JSON.stringify({ message: 'Invalid arg string', success:false })));
   }
 });//ok
 
@@ -4868,7 +5774,7 @@ app.post(`/${endpoint_info['register']}`, async (req, res) => {
     log_error(e)
     res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
   }
-});
+});//ok ----
 
 /* enpoint for loading traffic stats */
 app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, async (req, res) => {
@@ -4877,7 +5783,7 @@ app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, as
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  if(filter_time == null || isNaN(filter_time) || parseInt(filter_time) > 0){
+  if(filter_time == null || isNaN(filter_time) || parseInt(filter_time) <= 0){
     res.send(JSON.stringify({ message: 'Invalid filter time', success:false }));
     return;
   }
@@ -4900,7 +5806,7 @@ app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, as
     res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
   }
   
-});
+});//ok ----
 
 /* enpoint for loading trends */
 app.post(`/${endpoint_info['trends']}/:privacy_signature`, async (req, res) => {
@@ -5947,12 +6853,12 @@ app.post(`/${endpoint_info['subscription_income_stream_datapoints']}/:privacy_si
   }
   
   try{
-    var data = await calculate_income_stream_data_points(subscription_object, steps, filter_value, token_name_data)
-    if(data.success == false){
-      res.send(JSON.stringify({ message: 'Something went wrong', error: data.reason, success:false }));
+    var object_data = await calculate_income_stream_data_points(subscription_object, steps, filter_value, token_name_data)
+    if(object_data.success == false){
+      res.send(JSON.stringify({ message: 'Something went wrong', error: object_data.reason, success:false }));
       return;
     }else{
-      var return_obj = { message: 'Calculation successful.', data: data.data, success:true }
+      var return_obj = { message: 'Calculation successful.', data: object_data.object_data, success:true }
       var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       record_request('/subscription_income_stream_datapoints')
       res.send(await encrypt_call_result(string_obj, registered_users_key));
@@ -5977,12 +6883,12 @@ app.post(`/${endpoint_info['creator_group_payouts']}/:privacy_signature`, async 
   }
   
   try{
-    var data = await calculate_income_stream_for_multiple_subscriptions(subscription_objects, steps, filter_value, file_view_data)
-    if(data.success == false){
-      res.send(JSON.stringify({ message: 'Something went wrong', error: data.reason, success:false }));
+    var object_data = await calculate_income_stream_for_multiple_subscriptions(subscription_objects, steps, filter_value, file_view_data)
+    if(object_data.success == false){
+      res.send(JSON.stringify({ message: 'Something went wrong', error: object_data.reason, success:false }));
       return;
     }else{
-      var return_obj = { message: 'Calculation successful.', data: data.data, success:true }
+      var return_obj = { message: 'Calculation successful.', data: object_data.object_data, success:true }
       var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
       record_request('/creator_group_payouts')
       res.send(await encrypt_call_result(string_obj, registered_users_key));
@@ -6049,7 +6955,7 @@ app.get(`/${endpoint_info['stream_logs']}/:file/:backup_key/:privacy_signature`,
     res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
     return;
   }
-  else if(!await check_if_log_file_exists(`logs/${file}`)){
+  else if(!check_if_error_log_file_exists(`${file}`)){
     res.send(JSON.stringify({ message: 'File does not exist', success:false }));
     return;
   }
@@ -6341,6 +7247,60 @@ app.get(`/${endpoint_info['token_price']}`, async (req, res) => {
 
 });
 
+/* endpoint for pre-fetching app launch data */
+app.post(`/${endpoint_info['pre_launch_fetch']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { event_fetches, target_address, indexing_hash, max_post_bulk_load_count, known_hashes, specific_e5s_targeted, launch_state } = await process_request_body(req.body);
+  if(event_fetches == null || target_address == null || indexing_hash == null || isNaN(max_post_bulk_load_count) || !Array.isArray(event_fetches) || known_hashes == null || !Array.isArray(specific_e5s_targeted) || launch_state == null){
+    res.send(JSON.stringify({ message: 'Invalid arg strings', success:false }));
+    return;
+  }
+
+  try{
+    var { hash_data, all_return_data } = await process_app_launch_data(event_fetches, target_address, indexing_hash, max_post_bulk_load_count, known_hashes, specific_e5s_targeted, launch_state)
+    var return_obj = { message: 'App launch fetch successful.', hash_data, all_return_data, success:true }
+
+    var string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/pre_launch_fetch')
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    return;
+  }
+});
+
+/* endpoint for fetching app section object data */
+app.post(`/${endpoint_info['pre_fetch_object_data']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { created_object_events_mapping, item_type, max_post_bulk_load_count, known_hashes, specific_e5s_targeted} = await process_request_body(req.body);
+  if(created_object_events_mapping == null || isNaN(item_type) || isNaN(max_post_bulk_load_count) || known_hashes == null || !Array.isArray(specific_e5s_targeted)){
+    res.send(JSON.stringify({ message: 'Invalid arg strings', success:false }));
+    return;
+  }
+
+  try{
+    const all_return_data = await get_objects_metadata(created_object_events_mapping, item_type, max_post_bulk_load_count, known_hashes, specific_e5s_targeted)
+    const return_obj = { message: 'App object fetch successful.', all_return_data, success:true }
+
+    const string_obj = JSON.stringify(return_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/pre_fetch_object_data')
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }catch(e){
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    return;
+  }
+});
+
+
+
 app.get('/:privacy_signature', async (req, res) => {
   const { privacy_signature } = req.params
   if(!await is_privacy_signature_valid(privacy_signature)){
@@ -6396,7 +7356,7 @@ const when_server_started = () => {
   data['key'] = key
   console.log('')
   console.log('------------------------e----------------------------')
-  console.log(key)
+  // console.log(key)
   console.log('------------------------e----------------------------')
   console.log('')
   console.log(`Back-ups for the node's data are stored periodically. Make sure to keep that nitro key safe incase you need to reboot the node.`)
@@ -6470,17 +7430,17 @@ setInterval(store_hashes_in_file_storage_if_memory_full, 2*60*1000);
 setInterval(start_update_storage_payment_information, 2*60*1000);
 setInterval(backup_event_data_if_large_enough, 2*60*1000)
 setInterval(delete_old_backup_files, 2*60*60*1000)
-setInterval(backup_stream_count_data_if_large_enough, 32*24*60*60*1000)
+setInterval(backup_stream_count_data_if_large_enough, 20*24*60*60*1000)
 setInterval(reset_ip_access_timestamp_object, 5*60*60*1000)
 setInterval(start_update_storage_renewal_payment_information, 2*60*1000)
 setInterval(delete_unrenewed_files, 7*24*60*60*1000)
 setInterval(clear_rate_limit_info, 5*60*1000)
-setInterval(record_ram_rom_usage, 5*60*1000)
-setInterval(delete_older_ram_rom_usage_stats, 30*24*60*60*1000)
-setInterval(delete_older_request_stats, 30*24*60*60*1000)
+setInterval(record_ram_rom_usage, 8*60*1000)
+setInterval(delete_older_ram_rom_usage_stats, 20*24*60*60*1000)
+setInterval(delete_older_request_stats, 20*24*60*60*1000)
 setTimeout(update_logStream, milliseconds_till_midnight());
 setInterval(write_block_number, 11*1000)
-setInterval(stash_old_trends_in_cold_storage, 30*24*60*60*1000)
+setInterval(stash_old_trends_in_cold_storage, 20*24*60*60*1000)
 setInterval(trim_block_record_data, 3*24*60*60*1000)
 
 
