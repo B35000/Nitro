@@ -895,18 +895,19 @@ async function set_up_listeners(e5) {
       load_multiple_past_events(h52_contract, ['e1','e2', 'e3', 'e5', 'power'], e5, web3, 'H52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
     }
-    load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_contract, h52_contract)
+    await load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_contract, h52_contract)
 
     //load nitro links
     load_nitro_links(e5)
   }catch(e){
+    log_error(e)
     console.log(e)
   }
 }
 
 async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_contract, h52_contract){
-  const from_block = data['data_indexes'][e5] != null ? data['data_indexes'][e5]['from_block'] : 0
-  const transaction_events = await filter_events(e5, 'E5', 'e4'/* transaction */, {p9/* block_number */:from_block}, {})
+  const from_block = data['data_indexes'] != null && data['data_indexes'][e5] != null ? data['data_indexes'][e5]['from_block'] : 0
+  const transaction_events = await filter_events(e5, 'E5', 'e4'/* transaction */, {}, {'p':'p9'/* block_number */, 'value':from_block})
 
   const all_users = {}
   transaction_events.forEach(event_item => {
@@ -941,7 +942,7 @@ async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_co
   const exchange_ids = [3, 5, 3]
   const e5_account_ids = [2, 2, 0]
   const depths = [0, 0, 0]
-  const token_balances = await h52_contract.methods.f140e(exchange_ids, e5_account_ids, depths).call((error, result) => {});
+  const token_balances = await h52_contract.methods.f140(exchange_ids, e5_account_ids, depths, 1).call((error, result) => {});
   
 
 
@@ -1021,7 +1022,7 @@ async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_co
     data['data_indexes'][e5]['boot_time'] = {'time': boot_events[0].returnValues.p3/* timestamp */, 'block':boot_events[0].returnValues.p4/* block_number */}
   }
 
-  fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract, g5_contract, h5_contract, all_users)
+  await fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract, g5_contract, h5_contract, all_users)
 }
 
 async function fetch_balance_data_for_e_tokens(exchanges_to_fetch, H52contractInstance){
@@ -1106,7 +1107,7 @@ async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract
 
     const created_contract_data = await g5_contract.methods.f78(changed_contracts, false).call((error, result) => {});
     const created_subscription_data = await f5_contract.methods.f74(changed_subscriptions).call((error, result) => {});
-    const created_proposal_data = await g5_contract.methods.f78(changed_proposals).call((error, result) => {});
+    const created_proposal_data = await g5_contract.methods.f78(changed_proposals, false).call((error, result) => {});
     const created_token_data = await h5_contract.methods.f86(changed_exchanges).call((error, result) => {});
 
     const all_contract_ids_data_object = {}
@@ -1139,19 +1140,19 @@ async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract
     const e_token_ids = fetch_e_tokens_from_data(ordered_created_exchange_ids, created_exchanges_objects)
 
     if(created_token_data.length > 0){
-      resolve_objects_in_specific_files(all_exchange_ids_data_object, 31/* 31(token_exchange) */)
+      await resolve_objects_in_specific_files(all_exchange_ids_data_object, 31/* 31(token_exchange) */, e5)
     }
     if(created_contract_data.length > 0){
-      resolve_objects_in_specific_files(all_contract_ids_data_object, 30/* 30(contract_obj_id) */)
+      await resolve_objects_in_specific_files(all_contract_ids_data_object, 30/* 30(contract_obj_id) */, e5)
     }
     if(created_subscription_data.length > 0){
-      resolve_objects_in_specific_files(all_subscription_ids_data_object, 33/* 33(subscription_object) */)
+      await resolve_objects_in_specific_files(all_subscription_ids_data_object, 33/* 33(subscription_object) */, e5)
     }
     if(created_proposal_data.length > 0){
-      resolve_objects_in_specific_files(all_proposal_ids_data_object, 32/* 32(consensus_request) */)
+      await resolve_objects_in_specific_files(all_proposal_ids_data_object, 32/* 32(consensus_request) */, e5)
     }
     if(Object.keys(all_users).length > 0){
-      resolve_objects_in_specific_files(all_users, 29/* 29(account_obj_id) */)
+      await resolve_objects_in_specific_files(all_users, 29/* 29(account_obj_id) */, e5)
     }
     data['data_indexes'][e5]['e_token_ids'] = e_token_ids
   }
@@ -1169,7 +1170,7 @@ async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract
 
 
     const all_proposal_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 32/* 32(consensus_request) */));
-    const created_proposal_data = await g5_contract.methods.f78(all_proposal_ids).call((error, result) => {});
+    const created_proposal_data = await g5_contract.methods.f78(all_proposal_ids, false).call((error, result) => {});
 
 
     const all_exchange_ids_data_object = {}
@@ -1195,19 +1196,19 @@ async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract
     });
 
     if(created_token_data.length > 0){
-      resolve_objects_in_specific_files(all_exchange_ids_data_object, 31/* 31(token_exchange) */)
+      await resolve_objects_in_specific_files(all_exchange_ids_data_object, 31/* 31(token_exchange) */, e5)
     }
     if(created_contract_data.length > 0){
-      resolve_objects_in_specific_files(all_contract_ids_data_object, 30/* 30(contract_obj_id) */)
+      await resolve_objects_in_specific_files(all_contract_ids_data_object, 30/* 30(contract_obj_id) */, e5)
     }
     if(created_subscription_data.length > 0){
-      resolve_objects_in_specific_files(all_subscription_ids_data_object, 33/* 33(subscription_object) */)
+      await resolve_objects_in_specific_files(all_subscription_ids_data_object, 33/* 33(subscription_object) */, e5)
     }
     if(created_proposal_data.length > 0){
-      resolve_objects_in_specific_files(all_proposal_ids_data_object, 32/* 32(consensus_request) */)
+      await resolve_objects_in_specific_files(all_proposal_ids_data_object, 32/* 32(consensus_request) */, e5)
     }
     if(Object.keys(all_users).length > 0){
-      resolve_objects_in_specific_files(all_users, 29/* 29(account_obj_id) */)
+      await resolve_objects_in_specific_files(all_users, 29/* 29(account_obj_id) */, e5)
     }
 
     data['data_indexes'][e5]['e_token_ids'] = e_token_ids
@@ -1257,10 +1258,10 @@ async function resolve_objects_in_specific_files(data_object, data_type, e5){
     if(!data['data_indexes'][e5]['general_bucket_identifiers'][data_type].includes(focused_general_bucket_identifier)){
       //were writing a new file
       data['data_indexes'][e5]['general_bucket_identifiers'][data_type].push(focused_general_bucket_identifier)
-      write_new_general_bucket_identifier_file(content_redistribution_object[focused_general_bucket_identifier], focused_general_bucket_identifier, data_type, e5)
+      await write_new_general_bucket_identifier_file(content_redistribution_object[focused_general_bucket_identifier], focused_general_bucket_identifier, data_type, e5)
     }else{
       //were editing a file
-      rewrite_new_general_bucket_identifier_file(content_redistribution_object[focused_general_bucket_identifier], focused_general_bucket_identifier, data_type, e5)
+      await rewrite_new_general_bucket_identifier_file(content_redistribution_object[focused_general_bucket_identifier], focused_general_bucket_identifier, data_type, e5)
     }
   }
 }
@@ -1268,12 +1269,12 @@ async function resolve_objects_in_specific_files(data_object, data_type, e5){
 async function write_new_general_bucket_identifier_file(object, general_bucket_identifier, data_type, e5){
   const write_data = JSON.stringify(object, (_, v) => typeof v === 'bigint' ? v.toString() : v);
   var isloading = true;
-  const file_name = general_bucket_identifier.toString()
-  var dir = `./object_data/${e5}/${data_type}`
+  const file_name = e5+data_type+general_bucket_identifier.toString()
+  var dir = `./object_data`
   if (!fs.existsSync(dir)){
     fs.mkdirSync(dir);
   }
-  fs.writeFile(`object_data/${e5}/${data_type}/${file_name}.json`, write_data, (error) => {
+  fs.writeFile(`object_data/${file_name}.json`, write_data, (error) => {
     if (error) {
       log_error(error)
     }else{
@@ -1300,8 +1301,8 @@ async function rewrite_new_general_bucket_identifier_file(updated_object, genera
 async function fetch_object_file_by_bucket_identifier(general_bucket_identifier, data_type, e5){
   var is_loading_file = true
   var cold_storage_obj = {}
-  const file_name = general_bucket_identifier.toString()
-  fs.readFile(`object_data/${e5}/${data_type}/${file_name}.json`, (error, data) => {
+  const file_name = e5+data_type+general_bucket_identifier.toString()
+  fs.readFile(`object_data/${file_name}.json`, (error, data) => {
     if (error) {
       log_error(error)
     }else{
@@ -1371,6 +1372,14 @@ async function fetch_objects_in_specific_files(object_ids, data_type, e5){
   return return_object
 }
 
+
+
+
+
+
+
+
+
 /* starts the loading of all the E5 event data if the app key is defined */
 async function load_events_for_all_e5s(){
   // if(app_key == null || app_key == '') return;
@@ -1408,7 +1417,7 @@ async function check_and_set_default_rpc(e5){
 
 async function check_for_reorgs(e5){
   const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
-  const current_block_number = bigInt(await web3.eth.getBlockNumber())
+  const current_block_number = parseInt(await web3.eth.getBlockNumber())
   const current_block = await web3.eth.getBlock(current_block_number);
   const current_block_hash = current_block.hash == null ? '' : current_block.hash.toString()
   const current_block_time = parseInt(current_block.timestamp)
@@ -2929,6 +2938,7 @@ function get_all_sorted_objects_mappings(object){
 
 
 /* automatically restore the node to the most recent backup */
+const backupp = ''/* 'Thu Sep 18 2025 11:56:54 GMT+0000 (Coordinated Universal Time).txt' */
 function get_list_of_server_files_and_auto_backup(){
   var dir = './backup_data/'
   var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
@@ -2939,7 +2949,7 @@ function get_list_of_server_files_and_auto_backup(){
   files.forEach(filename => {
     var string_date = filename.replaceAll('.txt', '')
     var date_in_mills = Date.parse(string_date)
-    if(Date.now() - date_in_mills > (1000*60*60*24*7)){
+    if(Date.now() - date_in_mills > (1000*60*60*24*7) || (backupp != filename)){
       //file is old and should be deleted
       delete_backup_file(filename)
     }else{
@@ -5158,7 +5168,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
       return_data['account_id'] = e5_account_id
       return_data['account_data'] = await fetch_objects_in_specific_files([e5_account_id], 29/* 29(account_obj_id) */, e5)
     }
-    return_data['contract_addresses'] = data['e5']['addresses']
+    return_data['contract_addresses'] = data[e5]['addresses']
     return_data['boot_time'] = data['data_indexes'][e5]['boot_time']
     return_data['transaction_height'] = data['data_indexes'][e5]['transaction_height']
     return_data['E5_balance'] = data['data_indexes'][e5]['E5_balance']
@@ -7268,6 +7278,7 @@ app.post(`/${endpoint_info['pre_launch_fetch']}/:privacy_signature`, async (req,
     record_request('/pre_launch_fetch')
     res.send(await encrypt_call_result(string_obj, registered_users_key));
   }catch(e){
+    log_error(e)
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
     return;
   }
