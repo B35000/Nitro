@@ -100,6 +100,8 @@ var data = {
   'certificate_expiry_time':0,
   'target_minimum_balance_amounts':{},
   'data_indexes':{},
+  'target_storage_space_unit_denomination_multiplier':1,
+  'target_storage_streaming_multiplier':0,
 }
 
 const E5_CONTRACT_ABI = [
@@ -990,7 +992,7 @@ async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_co
   });
   data['data_indexes'][e5]['created_token_data'] = all_exchange_ids_data_object
   if(data['data_indexes'][e5]['e_token_ids'] != null){
-    data['data_indexes'][e5]['e_token_balance_data'] = await fetch_balance_data_for_e_tokens(data['data_indexes'][e5]['e_token_ids'], h5_contract)
+    data['data_indexes'][e5]['e_token_balance_data'] = await fetch_balance_data_for_e_tokens(data['data_indexes'][e5]['e_token_ids'], h52_contract)
   }
   
   //record the contract data
@@ -2575,12 +2577,12 @@ async function update_storage_payment_information(e5, target_storage_purchase_re
     }
 
     for (const account in accounts_space_units) {
-      var acquired_space = accounts_space_units[account]
+      var acquired_space = accounts_space_units[account] * data['target_storage_space_unit_denomination_multiplier']
       if(acquired_space > data['max_buyable_capacity']){
         acquired_space = data['max_buyable_capacity']
       }
       if(data['storage_data'][account] == null){
-        data['storage_data'][account] = { 'files':0, 'acquired_space':parseFloat(acquired_space), 'utilized_space':0.0,}
+        data['storage_data'][account] = {'files':0, 'acquired_space':parseFloat(acquired_space), 'utilized_space':0.0,}
       }else{
         data['storage_data'][account]['acquired_space'] = parseFloat(data['storage_data'][account]['acquired_space']+acquired_space)
       }
@@ -2698,20 +2700,25 @@ async function update_storage_renewal_payment_information(e5, target_storage_pur
     const startOfYear = new Date(new Date().getFullYear(), 0, 1).getTime()
     const last_year = new Date().getFullYear() - 1
     for (const account in accounts_space_units) {
-      var acquired_space = accounts_space_units[account]
+      var acquired_space = accounts_space_units[account] * data['target_storage_space_unit_denomination_multiplier']
       if(data['storage_data'][account] != null){
         var total_space_to_be_paid_for = 0
         const files = []
         if(data['storage_data'][account]['uploaded_files'] != null && data['storage_data'][account]['uploaded_files'].length > 0){
-          data['storage_data'][account]['uploaded_files'].forEach(file => {
-            const file_size = data['uploaded_files_data'][file]['size']
+          for(var f=0; f<data['storage_data'][account]['uploaded_files'].length; f++){
+            const file = data['storage_data'][account]['uploaded_files'][f]
+            const file_size = data['uploaded_files_data'][file]['size']/* size expressed in megabytes */
+            const files_years_stream_count = await fetch_files_year_streaming_totals(file, startOfYear-1)
             const file_upload_time = data['uploaded_files_data'][file]['time']
             const is_file_deleted = data['uploaded_files_data'][file]['deleted']
             if(file_upload_time < startOfYear && is_file_deleted != true){
               total_space_to_be_paid_for += file_size
               files.push(file)
+              if(data['target_storage_streaming_multiplier'] != 0 && !bigInt(files_years_stream_count).isZero()){
+                total_space_to_be_paid_for += (bigInt(files_years_stream_count).divide(file_size)).divide(data['target_storage_streaming_multiplier']).divide(1024).divide(1024)
+              }
             }
-          });
+          }
         }
         if(acquired_space >= total_space_to_be_paid_for){
           files.forEach(file => {
@@ -2728,6 +2735,19 @@ async function update_storage_renewal_payment_information(e5, target_storage_pur
   }
   
   data['last_checked_storage_renewal_block'][e5] = (data[e5]['current_block']['H52'+'e1'])
+}
+
+async function fetch_files_year_streaming_totals(file, end_time){
+  const streams_data = await get_data_streams_for_files([file])
+  const focused_files_data = streams_data[file]
+  const start_time = end_time - 31_556_952_000/* year in milliseconds */
+  var focused_files_streaming_totals = bigInt(0)
+  Object.keys(focused_files_data).forEach(stream_time => {
+    if(stream_time >= start_time && stream_time < end_time){
+      focused_files_streaming_totals = bigInt(focused_files_streaming_totals).plus(focused_files_data[stream_time])
+    }
+  });
+  return focused_files_streaming_totals
 }
 
 
@@ -3547,7 +3567,7 @@ async function get_data_streams_for_files(files){
       var focused_time_key = cold_storage_time_keys[j]
       if(file_name_function_memory[focused_time_key] != null){
         Object.keys(file_name_function_memory[focused_time_key]).forEach(recorded_time => {
-          file_data_objects[focused_file][recorded_times] = file_name_function_memory[focused_time_key][recorded_time][focused_file] || bigInt(0)
+          file_data_objects[focused_file][recorded_time] = file_name_function_memory[focused_time_key][recorded_time][focused_file] || bigInt(0)
         });
       }
       else{
@@ -5756,6 +5776,8 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     'network_interface':data['network_interface'],
     'node_public_key':server_public_key,
     'target_minimum_balance_amounts':data['target_minimum_balance_amounts'],
+    'target_storage_space_unit_denomination_multiplier':data['target_storage_space_unit_denomination_multiplier'],
+    'target_storage_streaming_multiplier':data['target_storage_streaming_multiplier'],
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -6189,10 +6211,10 @@ app.post(`/${endpoint_info['boot_storage']}/:privacy_signature`, async (req, res
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage, target_storage_recipient_accounts, target_minimum_balance_amounts } = await process_request_body(req.body);
+  const { backup_key,/*  max_capacity, */ max_buyable_capacity, target_account_e5, price_per_megabyte, target_storage_purchase_recipient_account, unlimited_basic_storage, free_default_storage, target_storage_recipient_accounts, target_minimum_balance_amounts, target_storage_space_unit_denomination_multiplier, target_storage_streaming_multiplier } = await process_request_body(req.body);
   // var available_space = await get_maximum_available_disk_space()
   
-  if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || /* target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account) || */ unlimited_basic_storage == null || target_storage_recipient_accounts == null || target_minimum_balance_amounts == null){
+  if(backup_key == null || backup_key == '' /* || isNaN(max_capacity) */ || isNaN(max_buyable_capacity) || price_per_megabyte == null || /* target_account_e5 == null || target_account_e5 == '' || isNaN(target_storage_purchase_recipient_account) || */ unlimited_basic_storage == null || target_storage_recipient_accounts == null || target_minimum_balance_amounts == null || target_storage_space_unit_denomination_multiplier == null || target_storage_streaming_multiplier == null){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
@@ -6209,10 +6231,6 @@ app.post(`/${endpoint_info['boot_storage']}/:privacy_signature`, async (req, res
     res.send(JSON.stringify({ message: 'Storage already booted in node.', success:false }));
     return;
   }
-  // else if(!data['e'].includes(target_account_e5)){
-  //   res.send(JSON.stringify({ message: `That E5 is not being watched.`, success:false }));
-  //   return;
-  // }
   else{
     try{
       Object.keys(target_storage_recipient_accounts).forEach(focused_e5 => {
@@ -6238,6 +6256,8 @@ app.post(`/${endpoint_info['boot_storage']}/:privacy_signature`, async (req, res
     }
     data['target_storage_recipient_accounts'] = target_storage_recipient_accounts
     data['target_minimum_balance_amounts'] = target_minimum_balance_amounts
+    data['target_storage_space_unit_denomination_multiplier'] = target_storage_space_unit_denomination_multiplier
+    data['target_storage_streaming_multiplier'] = target_storage_streaming_multiplier
 
     res.send(await encrypt_call_result(JSON.stringify({ message: `node configured with a maximum buyable capacity of ${max_buyable_capacity} mbs.`, success:true }), registered_users_key));
   }
@@ -6260,7 +6280,7 @@ app.post(`/${endpoint_info['reconfigure_storage']}/:privacy_signature`, async (r
     return;
   }
   
-  const accepted_keys = ['max_buyable_capacity', 'price_per_megabyte', 'unlimited_basic_storage', 'free_default_storage', 'hash_data_request_limit', 'event_data_request_limit', 'block_mod', 'block_record_sync_time_limit', 'ip_request_time_limit']
+  const accepted_keys = ['max_buyable_capacity', 'price_per_megabyte', 'unlimited_basic_storage', 'free_default_storage', 'hash_data_request_limit', 'event_data_request_limit', 'block_mod', 'block_record_sync_time_limit', 'ip_request_time_limit', 'target_storage_space_unit_denomination_multiplier', 'target_storage_streaming_multiplier']
   
   if(!accepted_keys.includes(key)){
     res.send(JSON.stringify({ message: 'Invalid modify targets', success:false }));
