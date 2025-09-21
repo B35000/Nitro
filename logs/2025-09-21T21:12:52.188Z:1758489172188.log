@@ -1,0 +1,234 @@
+-------------------------------e-----------------------------------
+ 
+ Error: Command failed: openssl x509 -enddate -noout -in /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+Could not open file or uri for loading certificate from /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+00B67B0701000000:error:16000069:STORE routines:ossl_store_get0_loader_int:unregistered scheme:crypto/store/store_register.c:237:scheme=file
+00B67B0701000000:error:80000002:system library:file_open:No such file or directory:providers/implementations/storemgmt/file_store.c:267:calling stat(/etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem)
+Unable to load certificate
+
+    at ChildProcess.exithandler (node:child_process:419:12)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1091:16)
+    at ChildProcess._handle.onexit (node:internal/child_process:302:5)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: Command failed: openssl x509 -enddate -noout -in /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+Could not open file or uri for loading certificate from /etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem
+0036850C01000000:error:16000069:STORE routines:ossl_store_get0_loader_int:unregistered scheme:crypto/store/store_register.c:237:scheme=file
+0036850C01000000:error:80000002:system library:file_open:No such file or directory:providers/implementations/storemgmt/file_store.c:267:calling stat(/etc/letsencrypt/live/app.twentythreeinreverse.com/fullchain.pem)
+Unable to load certificate
+
+    at ChildProcess.exithandler (node:child_process:419:12)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1091:16)
+    at Socket.<anonymous> (node:internal/child_process:449:11)
+    at Socket.emit (node:events:514:28)
+    at Pipe.<anonymous> (node:net:323:12)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Failed to get network interfaces
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ Error: Command failed: sudo certbot renew
+sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
+sudo: a password is required
+
+    at ChildProcess.exithandler (node:child_process:419:12)
+    at ChildProcess.emit (node:events:514:28)
+    at maybeClose (node:internal/child_process:1091:16)
+    at Socket.<anonymous> (node:internal/child_process:449:11)
+    at Socket.emit (node:events:514:28)
+    at Pipe.<anonymous> (node:net:323:12)
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ ~~~~~~~~~~~~~~~~~~~~ Node rebooted on Mon Sep 22 2025 00:12:52 GMT+0300 (East Africa Time) ~~~~~~~~~~~~~~~~~~~~
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5652:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5660:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5668:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5676:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5684:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5692:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5700:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5708:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5716:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5724:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5732:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5740:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5748:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5756:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5763:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5770:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5777:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5784:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ ReferenceError: time_p is not defined
+    at get_deposit_amount_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:6068:47)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5799:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 
+-------------------------------e-----------------------------------
+ 
+ TypeError: Cannot mix BigInt and other types, use explicit conversions
+    at get_post_transaction_count_data_points (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5844:36)
+    at get_e5_chart_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5805:14)
+    at async process_app_launch_data (/Users/bry/Documents/E5Server/E5ServerTest/server.cjs:5296:31)
+    at async /Users/bry/Documents/E5Server/E5ServerTest/server.cjs:7930:42
+ 
+ 

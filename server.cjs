@@ -179,6 +179,7 @@ const userKeysMap = new Map();
 const endpoint_info = {}
 let trafficHistory = [];
 const originalFetch = global.fetch;
+var e5_charts_data_object = {}
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -1220,12 +1221,12 @@ async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract
 }
 
 async function load_specific_events_from_block(e5, contract, event_name, starting_block, latest){
-  var iteration = data[e5]['iteration']
+  var iteration = parseInt(data[e5]['iteration'])
   var events = []
-  if(latest - starting_block < iteration){
+  if(parseInt(latest) - parseInt(starting_block) < iteration){
     events = await contract.getPastEvents(event_name, { fromBlock: starting_block, toBlock: latest }, (error, events) => {});
   }else{
-    var pos = starting_block
+    var pos = parseInt(starting_block)
     while (pos < latest) {
       var to = pos+iteration < latest ? pos+iteration : latest
       var from = pos
@@ -5172,6 +5173,8 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
   const all_supported_e5s = data['e']
   const all_return_data = {}
   const hashes_to_fetch = []
+  const all_data = {}
+  var all_concatenated_data = []
   for(var i=0; i<all_supported_e5s.length; i++){
     const return_data = {}
     const e5 = all_supported_e5s[i]
@@ -5286,9 +5289,37 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     return_data['job_objects_data'] = await get_app_launch_object_data(indexing_hash, 17/* 17(job_object) */, e5, e5_account_id, max_post_bulk_load_count, known_hashes)
     return_data['exchange_objects_data'] = await get_app_launch_object_data(indexing_hash, 31/* token_exchange */, e5, e5_account_id, max_post_bulk_load_count, known_hashes, my_state_exchanges)
 
+    if(e5_charts_data_object[e5] == null || e5_charts_data_object[e5]['time'] < Date.now()-(1000*60*23)){
+      //generate new data
+      const translation_object = {'transactions': 'transactions'}
+      try{
+        const e5_chart_data = await get_e5_chart_data(e5, translation_object)
+        e5_charts_data_object[e5] = {'data': e5_chart_data, 'time':Date.now()}
+        return_data['e5_charts_data'] = e5_chart_data
+      }catch(e){
+        log_error(e)
+      }
+      
+    }else{
+      return_data['e5_charts_data'] = e5_charts_data_object[e5]['data']
+    }
+
+    all_data[e5] = await filter_events(e5, 'E52', 'e4', {}, {})
+    all_concatenated_data = all_concatenated_data.concat(all_data[e5])
+    
     //set the return data under the selected e5
     all_return_data[e5] = return_data
   }
+
+  for(var i=0; i<all_supported_e5s.length; i++){
+    const e5 = all_supported_e5s[i]
+    if(specific_e5s_targeted.length > 0 && !specific_e5s_targeted.included_cids(e5)){
+      continue;
+    }
+    all_return_data[e5]['load_traffic_proportion_data'] = load_traffic_proportion_data(all_data[e5], all_concatenated_data, e5)
+  }
+
+
   const hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
 
   return { hash_data, all_return_data }
@@ -5581,6 +5612,611 @@ async function load_comment_data(all_events, known_hashes){
     }
   }
   return await fetch_hashes_from_file_storage_or_memory(hashes)
+}
+
+
+
+
+
+
+
+
+
+
+
+
+async function get_e5_chart_data(e5, translation_object){
+  const object_creation_events = await filter_events(e5, 'E5', 'e1', {}, {})
+  const all_indexed_events = await filter_events(e5, 'E52', 'e2', {}, {})
+  const data_events = await filter_events(e5, 'E52', 'e4', {}, {})
+  const metadata_events = await filter_events(e5, 'E52', 'e5', {}, {})
+  const run_events = await filter_events(e5, 'E5', 'e4', {}, {})
+  const withdraw_events = await filter_events(e5, 'E5', 'e2', {}, {})
+  const transfer_events = await filter_events(e5, 'H52', 'e1', {}, {})
+  const burn_events = await filter_events(e5, 'H52', 'e1', {p1/* exchange */: 3, p3/* receiver */: 0}, {})
+  const update_balance_events = await filter_events(e5, 'H52', 'e2', {}, {})
+
+  const object_creation_events_sorted = {}
+  object_creation_events.forEach(event_item => {
+    const object_type = event_item.returnValues.p2
+    if(object_creation_events_sorted[object_type] == null){
+      object_creation_events_sorted[object_type] = []
+    }
+    object_creation_events_sorted[object_type].push(event_item)
+  });
+
+  const e5_chart_data_object = {}
+
+  var focused_item = 33/* subscription_object */
+  e5_chart_data_object['show_subscription_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 30/* contract_obj_id */
+  e5_chart_data_object['show_contract_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 18/* 18(post object) */
+  e5_chart_data_object['show_post_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 36/* 36(type_channel_target) */
+  e5_chart_data_object['show_channel_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 17/* 17(job_object) */
+  e5_chart_data_object['show_job_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 27/* 27(storefront-item) */
+  e5_chart_data_object['show_stores_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+  
+  focused_item = 25/* 25(storefront_bag_object) */
+  e5_chart_data_object['show_bag_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 26/* 26(contractor_object) */
+  e5_chart_data_object['show_contractor_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 19/* 19(audio_object) */
+  e5_chart_data_object['show_audio_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 20/* 20(video_object) */
+  e5_chart_data_object['show_video_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 28/* 28(poll-object) */
+  e5_chart_data_object['show_poll_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 32/* 32(consensus_request) */
+  e5_chart_data_object['show_proposal_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 31/* token_exchange */
+  e5_chart_data_object['show_exchange_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  focused_item = 21/* 21(nitro_object) */
+  e5_chart_data_object['show_nitro_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(object_creation_events_sorted[focused_item] || [], 'p4'/* timestamp */, translation_object),
+    'event_count': object_creation_events_sorted[focused_item] == null ? 0 : object_creation_events_sorted[focused_item].length
+  }
+  console.log('gotten focused item: ', focused_item)
+
+  e5_chart_data_object['show_data_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(data_events || [], 'p6'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(data_events || [], 'p6'/* timestamp */, translation_object),
+    'event_count': data_events == null ? 0 : data_events.length
+  }
+  console.log('gotten focused item: ', 'show_data_transaction_count_chart')
+
+  e5_chart_data_object['show_metadata_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(metadata_events || [], 'p5'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(metadata_events || [], 'p5'/* timestamp */, translation_object),
+    'event_count': metadata_events == null ? 0 : metadata_events.length
+  }
+  console.log('gotten focused item: ', 'show_metadata_transaction_count_chart')
+
+  e5_chart_data_object['show_transaction_transaction_count_chart'] = {
+    'total': get_post_transaction_count_data_points(run_events || [], 'p8'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(run_events || [], 'p8'/* timestamp */, translation_object),
+    'event_count': run_events == null ? 0 : run_events.length
+  }
+  console.log('gotten focused item: ', 'show_transaction_transaction_count_chart')
+
+  e5_chart_data_object['show_transfer_events_chart'] = {
+    'total': get_post_transaction_count_data_points(transfer_events || [], 'p5'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(transfer_events || [], 'p5'/* timestamp */, translation_object),
+    'event_count': transfer_events == null ? 0 : transfer_events.length
+  }
+  console.log('gotten focused item: ', 'show_transfer_events_chart')
+
+  e5_chart_data_object['get_deflation_amount_data_points'] = {
+    'total': get_post_transaction_count_data_points(burn_events || [], 'p5'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(burn_events || [], 'p5'/* timestamp */, translation_object),
+    'event_count': burn_events == null ? 0 : burn_events.length
+  }
+  console.log('gotten focused item: ', 'get_deflation_amount_data_points')
+
+  const deposit_withdraw_data = format_deposit_witdraw_ether_events(run_events, withdraw_events)
+  e5_chart_data_object['show_deposit_amount_data_chart'] = {
+    'total': get_deposit_amount_data_points(deposit_withdraw_data || []),
+    'event_count': deposit_withdraw_data == null ? 0 : deposit_withdraw_data.length
+  }
+  console.log('gotten focused item: ', 'show_deposit_amount_data_chart')
+
+  e5_chart_data_object['show_update_balance_events_chart'] = {
+    'total': get_post_transaction_count_data_points(update_balance_events || [], 'p4'/* timestamp */), 
+    'average': get_transaction_data_points_as_average(update_balance_events || [], 'p4'/* timestamp */, translation_object),
+    'event_count': update_balance_events == null ? 0 : update_balance_events.length
+  }
+  console.log('gotten focused item: ', 'show_update_balance_events_chart')
+
+  e5_chart_data_object['filter_transfer_events_for_end_and_spend_transactions2'] = filter_transfer_events_for_end_and_spend_transactions2(transfer_events)
+  console.log('gotten focused item: ', 'filter_transfer_events_for_end_and_spend_transactions2')
+
+  e5_chart_data_object['filter_and_sort_channeling_events'] = filter_and_sort_channeling_events(all_indexed_events, e5)
+  console.log('gotten focused item: ', 'filter_and_sort_channeling_events')
+
+
+  const end_spend_transfer_events = filter_transfer_events_for_end_and_spend_transactions(transfer_events)
+  const end_spend_transfer_events_total = end_spend_transfer_events.end_events.length + end_spend_transfer_events.spend_events.length
+  const end_percentage = round_off((end_spend_transfer_events.end_events.length / end_spend_transfer_events_total) * 100)
+  const spend_percentage = round_off((end_spend_transfer_events.spend_events.length / end_spend_transfer_events_total) * 100)
+
+  e5_chart_data_object['render_end_to_spend_use_ratio'] = {'end_percentage': end_percentage, 'spend_percentage': spend_percentage, 'total': end_spend_transfer_events_total}
+
+  console.log('gotten focused item: ', 'filter_transfer_events_for_end_and_spend_transactions')
+  
+  return e5_chart_data_object
+}
+
+function get_post_transaction_count_data_points(events, time_p){
+  var point_data = []
+  var data_time_mapping = {}
+  try{
+    for(var i=0; i<events.length; i++){
+      if(i==0){
+        point_data.push(1)
+      }
+      else{
+        point_data.push(parseInt(point_data[point_data.length-1]) + (1))
+      }
+      point_data[point_data[point_data.length-1]] = events[i].returnValues[time_p]
+
+      if(i==events.length-1){
+        var diff = Date.now()/1000 - events[i].returnValues[time_p]
+        var t_diff = parseInt(events[i].returnValues[time_p]+0);
+        for(var t=0; t<diff; t+=(60*60*3)){
+          point_data.push(point_data[point_data.length-1]) 
+          t_diff+=(60*60*3)
+          data_time_mapping[point_data[point_data.length-1]] = t_diff     
+        }
+      }
+      else{
+        var diff = events[i+1].returnValues[time_p] - events[i].returnValues[time_p]
+        var t_diff = parseInt(events[i].returnValues[time_p])+0;
+        for(var t=0; t<diff; t+=(60*60*3)){
+          point_data.push(point_data[point_data.length-1])  
+          t_diff+=(60*60*3)
+          data_time_mapping[point_data[point_data.length-1]] = t_diff  
+        }
+      }
+    }
+  }catch(e){
+    log_error(e)
+  }
+
+
+  point_data = point_data.slice(Math.floor(point_data.length * 0.25))
+  const chart_starting_time = data_time_mapping[point_data[0]]
+
+  
+
+  var xVal = 1, yVal = 0;
+  var dps = [];
+  var noOfDps = 100;
+  var factor = Math.round(point_data.length/noOfDps) +1;
+  // var noOfDps = data.length
+  for(var i = 0; i < noOfDps; i++) {
+      yVal = point_data.length > 0 ? point_data[factor * xVal] : 0
+      // yVal = data[i]
+      if(yVal != null){
+          if(i%(Math.round(noOfDps/3)) == 0 && i != 0){
+            dps.push({x: xVal,y: yVal, indexLabel: ""+format_account_balance_figure(yVal)});//
+          }else{
+            dps.push({x: xVal, y: yVal});//
+          }
+          xVal++;
+      }
+      
+  }
+
+
+  return { dps, chart_starting_time, interval_figure: get_transaction_count_interval_figure(events) }
+}
+
+function get_transaction_count_interval_figure(events){
+  return events.length
+}
+
+function get_transaction_data_points_as_average(events, time_p, translation_object){
+  const return_data_object = {}
+  const filter_period = (1000*60*60*24*7*72)
+  events.forEach(event_item => {
+      const event_time = parseInt(event_item.returnValues[time_p])
+      if(event_time > filter_period/1000){
+        const pos = (Math.floor(event_time/(60*60*3)))*(60*60*3)
+        if(return_data_object[pos] == null){
+            return_data_object[pos] = []
+        }
+        return_data_object[pos].push(event_item)
+      }
+      
+  });
+
+  return get_steaming_stats_data_points(return_data_object, translation_object)
+}
+
+function get_steaming_stats_data_points(memory_stats_data, translation_object){
+  var point_data = []
+  var timestamp_datapoints = Object.keys(memory_stats_data)
+  for(var i=0; i<timestamp_datapoints.length; i++){
+      const focused_item = memory_stats_data[timestamp_datapoints[i]].length
+      point_data.push(focused_item)
+
+      if(i==timestamp_datapoints.length-1){
+          var diff = Date.now()/1000 - timestamp_datapoints[i]
+          for(var t=0; t<diff; t+=60*60*3){
+            if(point_data[point_data.length-1] == 0){
+              point_data.push(0)
+            }else{
+              point_data.push(point_data[point_data.length-1]*0.999)    
+            }  
+          }
+      }
+      else{
+          var diff = timestamp_datapoints[i+1] - timestamp_datapoints[i]
+          for(var t=0; t<diff; t+=60*60*3){
+            if(point_data[point_data.length-1] == 0){
+              point_data.push(0)
+            }else{
+              point_data.push(point_data[point_data.length-1]*0.999)    
+            }     
+          }
+      }
+  }
+
+  const chart_starting_time = timestamp_datapoints.length == 0 ? (1000*60*60*24) : timestamp_datapoints[0]*1000
+
+  var xVal = 1, yVal = 0, original_y_val = 0;
+  var dps = [];
+  var largest = 0;
+  var noOfDps = 100;
+  var factor = Math.round(point_data.length/noOfDps) +1;
+  for(var i = 0; i < noOfDps; i++) {
+      if(i < 100 && point_data.length > 200 && xVal < 100 && (factor * (xVal+1)) < point_data.length){
+          var sum = 0
+          var slice = point_data.slice(factor * xVal, factor * (xVal+1))
+          for(var j = 0; j < slice.length; j++) {
+            sum += slice[j]
+          }
+          var result = sum / (slice.length)
+          original_y_val = result;
+          // yVal =  parseInt(bigInt(result).multiply(100).divide(largest))
+          yVal = result
+      }
+      else{
+          original_y_val = point_data.length > 0 ? point_data[factor * xVal] : 0
+          // yVal = parseInt(bigInt(data[factor * xVal]).multiply(100).divide(largest))
+          yVal =  point_data.length > 0 ? point_data[factor * xVal] : 0
+      }
+      if((largest) < (yVal)){
+        largest = (yVal)
+      }
+      var indicator = Math.round(yVal) +' '+ translation_object['transactions']/* 'transactions' */
+      if(yVal != null && !isNaN(yVal)){
+          if(i%(Math.round(noOfDps/3)) == 0 && i != 0 && yVal != 0){
+              dps.push({x: xVal,y: yVal, indexLabel:""+indicator});//
+          }else{
+              dps.push({x: xVal, y: yVal});//
+          }
+          xVal++;
+      } 
+  }
+
+  // for(var e=0; e<dps.length; e++){
+  //     dps[e].y = (dps[e].y) * (100) / (largest)
+  //     if(e>97 && dps[e].y == 0){
+  //         dps[e].y = dps[e-1].y
+  //     }
+  // }
+
+  return { dps, largest, chart_starting_time }
+}
+
+
+
+
+
+
+
+
+
+function format_deposit_witdraw_ether_events(deposit_events, withdraw_events){
+  var all_events = []
+  deposit_events.forEach(event => {
+    if(!bigInt(event.returnValues.p6/* msg_value */).equals(0)){
+      all_events.push({'type':'deposit', 'event':event, 'timestamp':parseInt(event.returnValues.p8/* timestamp */)})
+    }
+  });
+
+  withdraw_events.forEach(event => {
+    all_events.push({'type':'withdraw', 'event':event, 'timestamp':parseInt(event.returnValues.p6/* timestamp */)})
+  });
+
+  var sorted_events = sortByAttributeDescending(all_events, 'timestamp')
+  return sorted_events.reverse()
+}
+
+function sortByAttributeDescending(array, attribute) {
+  return array.sort((a, b) => {
+      if (a[attribute] < b[attribute]) {
+      return 1;
+      }
+      if (a[attribute] > b[attribute]) {
+      return -1;
+      }
+      return 0;
+  });
+}
+
+function get_deposit_amount_data_points(events){
+  var point_data = []
+  var largest_number = bigInt(0)
+  var data_time_mapping = {}
+  try{
+      for(var i=0; i<events.length; i++){
+        if(i == 0){
+          if(events[i]['type'] == 'deposit'){
+            var amount = bigInt(events[i]['event'].returnValues.p6)
+            point_data.push(amount)
+            if(largest_number.lesser(amount)) largest_number = amount
+          }else{
+            point_data.push(0)
+          }
+        }else{
+          if(events[i]['type'] == 'deposit'){
+            var amount = bigInt(point_data[point_data.length-1]).add(bigInt(events[i]['event'].returnValues.p6))
+            point_data.push(amount)
+            if(largest_number.lesser(amount)) largest_number = amount
+          }else{
+            var amount = bigInt(point_data[point_data.length-1]).minus(bigInt(events[i]['event'].returnValues.p5))
+            point_data.push(amount)
+            if(largest_number.lesser(amount)) largest_number = amount
+          }
+        }
+        data_time_mapping[point_data[point_data.length-1]] = events[i]['timestamp']
+
+        if(i==events.length-1){
+          var diff = Date.now()/1000 - events[i]['timestamp']
+          var t_diff = events[i].returnValues[time_p]+0;
+          for(var t=0; t<diff; t+=(60*60)){
+            point_data.push(point_data[point_data.length-1])
+            t_diff+=(60*60)
+            data_time_mapping[point_data[point_data.length-1]] = t_diff      
+          }
+        }
+        else{
+          var diff = events[i+1]['timestamp'] - events[i]['timestamp']
+          var t_diff = events[i].returnValues[time_p]+0;
+          for(var t=0; t<diff; t+=(60*60)){
+            point_data.push(point_data[point_data.length-1])
+            t_diff+=(60*60)
+            data_time_mapping[point_data[point_data.length-1]] = t_diff      
+          }
+        }
+      }
+  }catch(e){
+    log_error(e)
+  }
+
+
+  point_data = point_data.slice(Math.floor(point_data.length * 0.25))
+  const chart_starting_time = data_time_mapping[point_data[0]]
+
+  var xVal = 1, yVal = 0;
+  var dps = [];
+  var noOfDps = 100;
+  var factor = Math.round(point_data.length/noOfDps) +1;
+  var recorded = false;
+  for(var i = 0; i < noOfDps; i++) {
+      if(largest_number == 0) yVal = 0
+      else if(point_data.length == 0) yVal = 0
+      else yVal = parseInt(bigInt(point_data[factor * xVal]).multiply(100).divide(largest_number))
+      if(yVal != null && point_data[factor * xVal] != null){
+          if(i%(Math.round(noOfDps/10)) == 0 && i != 0 && !recorded){
+              recorded = true
+              var label = ""+format_account_balance_figure(point_data[factor * xVal])
+              dps.push({x: xVal,y: yVal, indexLabel: label});
+          }else{
+              dps.push({x: xVal, y: yVal});
+          }
+          xVal++;
+      }
+  }
+
+  return { dps, chart_starting_time }
+}
+
+function load_traffic_proportion_data(all_data, e5_chart_data, e5){
+  var return_data = {}
+  if(e5_chart_data != null){
+    var e5s_events = e5_chart_data.length
+    var x = ((e5s_events * 100) / all_data.length)
+    var rounded_proportion = Math.round(x * 1000) / 1000
+    return_data = {'e5':e5, 'percentage':rounded_proportion}
+  }
+  else{
+    return_data = {'e5':e5, 'percentage':0}
+  }
+
+  return return_data
+}
+
+function filter_transfer_events_for_end_and_spend_transactions2(events){
+  var spend_events = []
+  const time_limit = (Date.now()/1000) - (60*60*24*7*53)
+  const income_stream_data = {}
+  const income_stream_records = {}
+  var total_volume = bigInt(0)
+  events.forEach(event => {
+      if(event.returnValues.p1 == 5 && event.returnValues.p5/* timestamp */ > time_limit){
+          if(income_stream_records[event.returnValues.p2/* sender */] == null){
+              income_stream_records[event.returnValues.p2/* sender */] = {}
+          }
+          if(income_stream_records[event.returnValues.p2/* sender */][event.returnValues.p3/* receiver */] == null){
+              income_stream_records[event.returnValues.p2/* sender */][event.returnValues.p3/* receiver */] = []
+          }
+          const receivers_time_array = income_stream_records[event.returnValues.p2/* sender */][event.returnValues.p3/* receiver */]
+          if(receivers_time_array.length == 0 || event.returnValues.p5/* timestamp */ - receivers_time_array[receivers_time_array.length-1] > (60*60*2.3)){
+              spend_events.push(event)
+              if(income_stream_data[event.returnValues.p3/* receiver */] == null){
+                  income_stream_data[event.returnValues.p3/* receiver */] = bigInt(0) 
+              }
+              income_stream_data[event.returnValues.p3/* receiver */] = bigInt(income_stream_data[event.returnValues.p3/* receiver */]).plus(event.returnValues.p4/* amount */)
+              total_volume = bigInt(total_volume).plus(event.returnValues.p4/* amount */)
+
+              income_stream_records[event.returnValues.p2/* sender */][event.returnValues.p3/* receiver */].push(event.returnValues.p5/* timestamp */)
+          } 
+      }
+  });
+
+  if(spend_events.length == 0){
+      return 0
+  }
+
+  const filtered_income_stream_data = getBottomPercentAccounts(income_stream_data)
+  const bottom_volume = Object.values(filtered_income_stream_data).reduce((total, value) => bigInt(total).plus(bigInt(value)), bigInt(0));
+  
+  const proportion = bigInt(bottom_volume).multiply(bigInt(100)).divide(bigInt(total_volume))
+  const decimals = bigInt(bottom_volume).multiply(bigInt(100)).mod(bigInt(total_volume))
+
+  const percentage_string = proportion.toString().toLocaleString('fullwide', {useGrouping:false})+'.'+decimals.toString().toLocaleString('fullwide', {useGrouping:false})
+
+  return parseFloat(percentage_string).toFixed(2)
+}
+
+function getBottomPercentAccounts(obj) {
+  const percent = 0.8
+  const entries = Object.entries(obj);
+  
+  entries.sort((a, b) => a[1] - b[1]);
+  const count = Math.floor(entries.length * percent);
+  const bottomEntries = entries.slice(0, count);
+  
+  return Object.fromEntries(bottomEntries);
+}
+
+function filter_and_sort_channeling_events(events, e5){
+  const local_events = []
+  const language_events = []
+  const international_events = []
+
+  const language_hash = hash_my_data('language')
+  const international_hash = hash_my_data('international')
+  const international_hash2 = hash_my_data('en')
+
+  events.forEach(event => {
+      var index_string = event.returnValues.p1/* tag */
+      if(index_string == international_hash || index_string == international_hash2){
+          international_events.push(event)
+      }
+      else if(index_string == language_hash){
+          language_events.push(event)
+      }
+      else{
+          local_events.push(event)
+      }
+  });
+
+  return { local_events: local_events.length, language_events: language_events.length, international_events: international_events.length }
+}
+
+function filter_transfer_events_for_end_and_spend_transactions(events){
+  var end_events = []
+  var spend_events = []
+
+  events.forEach(event => {
+      if(event.returnValues.p1 == 3){
+          end_events.push(event)
+      }
+      else if(event.returnValues.p1 == 5){
+          spend_events.push(event)
+      }
+  });
+
+  return {end_events, spend_events}
+}
+
+function round_off(number){
+  return (Math.round(number * 100) / 100)
 }
 
 
