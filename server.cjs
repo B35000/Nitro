@@ -5814,6 +5814,16 @@ async function get_e5_chart_data(e5, translation_object){
   e5_chart_data_object['filter_and_sort_channeling_events'] = filter_and_sort_channeling_events(all_indexed_events, e5)
   console.log('gotten focused item: ', 'filter_and_sort_channeling_events')
 
+  
+  e5_chart_data_object['get_gas_history_data_points'] = {
+    '1h': get_gas_history_data_points(run_events || [], '1h'), 
+    '24h': get_gas_history_data_points(run_events || [], '24h'),
+    '7d': get_gas_history_data_points(run_events || [], '7d'),
+    '30d': get_gas_history_data_points(run_events || [], '30d'),
+    '6mo': get_gas_history_data_points(run_events || [], '6mo'),
+    'all_time': get_gas_history_data_points(run_events || [], 'all_time'),
+  }
+
 
   const end_spend_transfer_events = filter_transfer_events_for_end_and_spend_transactions(transfer_events)
   const end_spend_transfer_events_total = end_spend_transfer_events.end_events.length + end_spend_transfer_events.spend_events.length
@@ -5838,24 +5848,24 @@ function get_post_transaction_count_data_points(events, time_p){
       else{
         point_data.push(parseInt(point_data[point_data.length-1]) + (1))
       }
-      point_data[point_data[point_data.length-1]] = events[i].returnValues[time_p]
+      data_time_mapping[point_data.length-1] = events[i].returnValues[time_p]
 
       if(i==events.length-1){
         var diff = Date.now()/1000 - events[i].returnValues[time_p]
-        var t_diff = parseInt(events[i].returnValues[time_p]+0);
-        for(var t=0; t<diff; t+=(60*60*3)){
+        var t_diff = parseInt(events[i].returnValues[time_p])+0;
+        for(var t=0; t<diff; t+=(60*30)){
           point_data.push(point_data[point_data.length-1]) 
-          t_diff+=(60*60*3)
-          data_time_mapping[point_data[point_data.length-1]] = t_diff     
+          t_diff+=(60*30)
+          data_time_mapping[point_data.length-1] = t_diff     
         }
       }
       else{
         var diff = events[i+1].returnValues[time_p] - events[i].returnValues[time_p]
         var t_diff = parseInt(events[i].returnValues[time_p])+0;
-        for(var t=0; t<diff; t+=(60*60*3)){
+        for(var t=0; t<diff; t+=(60*30)){
           point_data.push(point_data[point_data.length-1])  
-          t_diff+=(60*60*3)
-          data_time_mapping[point_data[point_data.length-1]] = t_diff  
+          t_diff+=(60*30)
+          data_time_mapping[point_data.length-1] = t_diff  
         }
       }
     }
@@ -5864,8 +5874,9 @@ function get_post_transaction_count_data_points(events, time_p){
   }
 
 
-  point_data = point_data.slice(Math.floor(point_data.length * 0.25))
-  const chart_starting_time = data_time_mapping[point_data[0]]
+  const slice_pos = Math.floor(point_data.length * 0.25)
+  point_data = point_data.slice(slice_pos)
+  const chart_starting_time = data_time_mapping[slice_pos] * 1000
 
   
 
@@ -6052,24 +6063,24 @@ function get_deposit_amount_data_points(events){
             if(largest_number.lesser(amount)) largest_number = amount
           }
         }
-        data_time_mapping[point_data[point_data.length-1]] = events[i]['timestamp']
+        data_time_mapping[point_data.length-1] = events[i]['timestamp']
 
         if(i==events.length-1){
           var diff = Date.now()/1000 - events[i]['timestamp']
-          var t_diff = events[i].returnValues[time_p]+0;
+          var t_diff = parseInt(events[i]['timestamp'])+0;
           for(var t=0; t<diff; t+=(60*60)){
             point_data.push(point_data[point_data.length-1])
             t_diff+=(60*60)
-            data_time_mapping[point_data[point_data.length-1]] = t_diff      
+            data_time_mapping[point_data.length-1] = t_diff
           }
         }
         else{
           var diff = events[i+1]['timestamp'] - events[i]['timestamp']
-          var t_diff = events[i].returnValues[time_p]+0;
+          var t_diff = parseInt(events[i]['timestamp'])+0;
           for(var t=0; t<diff; t+=(60*60)){
             point_data.push(point_data[point_data.length-1])
             t_diff+=(60*60)
-            data_time_mapping[point_data[point_data.length-1]] = t_diff      
+            data_time_mapping[point_data.length-1] = t_diff
           }
         }
       }
@@ -6078,8 +6089,11 @@ function get_deposit_amount_data_points(events){
   }
 
 
-  point_data = point_data.slice(Math.floor(point_data.length * 0.25))
-  const chart_starting_time = data_time_mapping[point_data[0]]
+  const slice_pos = Math.floor(point_data.length * 0.25)
+  point_data = point_data.slice(slice_pos)
+  const chart_starting_time = data_time_mapping[slice_pos] * 1000
+
+  
 
   var xVal = 1, yVal = 0;
   var dps = [];
@@ -6217,6 +6231,73 @@ function filter_transfer_events_for_end_and_spend_transactions(events){
 
 function round_off(number){
   return (Math.round(number * 100) / 100)
+}
+
+
+
+
+
+
+function filter_proportion_ratio_events(events, selected_item){
+  var filter_value = 60*60
+  if(selected_item == '1h'){
+      filter_value = 60*60
+  }
+  else if(selected_item == '24h'){
+      filter_value = 60*60*24
+  }
+  else if(selected_item == '7d'){
+      filter_value = 60*60*24*7
+  }
+  else if(selected_item == '30d'){
+      filter_value = 60*60*24*30
+  }
+  else if(selected_item == '6mo'){
+      filter_value = 60*60*24*30*6
+  }
+  else if(selected_item == 'all_time'){
+      filter_value = 10**10
+  }
+  var data = []
+  var cutoff_time = Date.now()/1000 - filter_value
+  events.forEach(event => {
+    if(event.returnValues.p8 > cutoff_time){
+      data.push(event)
+    }
+  });
+
+  return data
+}
+
+function get_gas_history_data_points(event_data, selected_item){
+  var events = filter_proportion_ratio_events(event_data, selected_item)
+  var data = []
+  for(var i=0; i<events.length; i++){
+      var point = parseInt(events[i].returnValues.p7)/1_000_000_000
+      if(point > 0) data.push(point)
+  }
+
+  data = data.reverse();
+
+  var xVal = 1, yVal = 0;
+  var dps = [];
+  var recorded = false
+  for(var i = 0; i < data.length; i++) {
+      yVal = data[i]
+      if(yVal != null){
+          if(i%(20) == 0 && i != 0 && !recorded){
+              dps.push({x: xVal,y: yVal, indexLabel: yVal+" gwei"});//
+              recorded = true
+          }else{
+              dps.push({x: xVal, y: yVal});//
+          }
+          xVal++;
+      }
+  }
+
+  const chart_starting_time = events.length == 0 ? null : events[0].returnValues.p8*1000
+
+  return { dps, starting_time: chart_starting_time }
 }
 
 
@@ -6365,12 +6446,13 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
   data['e'].forEach(e5 => {
     var e5_data_clone = structuredClone(data[e5])
     delete e5_data_clone['block_hashes']
+    delete e5_data_clone['reorgs']
     e5_data[e5] = e5_data_clone
   });
   
-  var files = fs.existsSync('./backup_data/') ? fs.readdirSync('./backup_data/') : []
-  var log_files = fs.existsSync('./logs/') ? fs.readdirSync('./logs/') : []
-  var files_obj = { 'data':files, 'log_data':log_files }
+  // var files = fs.existsSync('./backup_data/') ? fs.readdirSync('./backup_data/') : []
+  // var log_files = fs.existsSync('./logs/') ? fs.readdirSync('./logs/') : []
+  var files_obj = { /* 'data':files, 'log_data':log_files */ }
   var encrypted_files_obj = JSON.stringify(files_obj)
   const total_ram = Math.floor(os.totalmem() / (1024 * 1024))
   
@@ -6455,6 +6537,15 @@ app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, as
     res.send(JSON.stringify({ message: 'Invalid filter time', success:false }));
     return;
   }
+
+  const files = fs.existsSync('./backup_data/') ? fs.readdirSync('./backup_data/') : []
+  const log_files = fs.existsSync('./logs/') ? fs.readdirSync('./logs/') : []
+  const files_obj = { 'data':files, 'log_data':log_files }
+  const e5_data = {}
+  data['e'].forEach(e5 => {
+    e5_data[e5] = {'reorgs': data[e5]['reorgs']}
+  });
+
   try{
     const history_data = await get_traffic_stats_history(filter_time)
     const access_info = await get_all_login_access_time_info()
@@ -6462,6 +6553,8 @@ app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, as
       'memory_stats': history_data.selected_cold_storage_memory_stat_obj,
       'request_stats': history_data.selected_cold_storage_request_stat_obj,
       'access_info':access_info,
+      'reorgs':e5_data,
+      'files':files_obj,
       success:true
     }
 
