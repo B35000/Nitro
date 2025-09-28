@@ -4891,7 +4891,7 @@ global.fetch = async (url, options = {}) => {
 };
 
 function set_endpoint_ids(){
-  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', /* 'stream_file', */ 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data'];
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', /* 'stream_file', */ 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
