@@ -180,6 +180,7 @@ const endpoint_info = {}
 let trafficHistory = [];
 const originalFetch = global.fetch;
 var e5_charts_data_object = {}
+var changed_data = {}
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -891,7 +892,7 @@ async function set_up_listeners(e5) {
       await new Promise(resolve => setTimeout(resolve, t))
 
       //H5
-      load_multiple_past_events(h5_contract, ['e1','e2', 'e3'], e5, web3, 'H5', latest)
+      load_multiple_past_events(h5_contract, ['e1','e2','e3'], e5, web3, 'H5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //H52
@@ -951,31 +952,20 @@ async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_co
 
   const all_exchange_ids = [3, 5]
   const created_token_data = await h5_contract.methods.f86(all_exchange_ids).call((error, result) => {});
-  // const e_token_balance_data = await fetch_balance_data_for_e_tokens(all_exchange_ids, created_token_data, h5_contract)
 
 
-  // const all_contract_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 30/* 30(contract_obj_id) */));
   const main_contract_data = await g5_contract.methods.f78([2], true).call((error, result) => {});
-  // const created_contract_data = await g5_contract.methods.f78(all_contract_ids, false).call((error, result) => {});
   var primary_account_transaction_data = {}
   if(main_contract_data[0][1][39] != 0 && main_contract_data[0][1][40] != 0){
     const primary_acc = main_contract_data[0][1][39];
     primary_account_transaction_data = await e5_contract.methods.f287([primary_acc], false).call((error, result) => {});
   }
 
-  // const all_subscription_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 33/* 33(subscription_object) */));
-  // const created_subscription_data = await f5_contract.methods.f74(all_subscription_ids).call((error, result) => {});
-
-
-  // const all_proposal_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 32/* 32(consensus_request) */));
-  // const created_proposal_data = await g5_contract.methods.f78(all_proposal_ids).call((error, result) => {});
-
 
   //record the data in the indexer datapoint
   if(data['data_indexes'][e5] == null){
     data['data_indexes'][e5] = {}
   }
-  // data['data_indexes'][e5]['all_users'] = all_users
   data['data_indexes'][e5]['transaction_height'] = transaction_height
   data['data_indexes'][e5]['E5_balance'] = E5_balance
   data['data_indexes'][e5]['primary_account_transaction_data'] = primary_account_transaction_data
@@ -999,24 +989,7 @@ async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_co
   //record the contract data
   const all_contract_ids_data_object = {}
   all_contract_ids_data_object[2] = main_contract_data[0]
-  // all_contract_ids.forEach((contract_id, index) => {
-  //   all_contract_ids_data_object[contract_id] = created_contract_data[index]
-  // });
   data['data_indexes'][e5]['created_contract_data'] = all_contract_ids_data_object
-
-  //record the subscription data
-  // const all_subscription_ids_data_object = {}
-  // all_subscription_ids.forEach((subscription_id, index) => {
-  //   all_subscription_ids_data_object[subscription_id] = created_subscription_data[index]
-  // });
-  // data['data_indexes'][e5]['created_subscription_data'] = all_subscription_ids_data_object
-
-  //record the proposal data
-  // const all_proposal_ids_data_object = {}
-  // all_proposal_ids.forEach((proposal_id, index) => {
-  //   all_proposal_ids_data_object[proposal_id] = created_proposal_data[index]
-  // });
-  // data['data_indexes'][e5]['created_proposal_data'] = all_proposal_ids_data_object
 
   data['data_indexes'][e5]['from_block'] = transaction_events[transaction_events.length -1].returnValues.p9/* block_number */
 
@@ -1158,6 +1131,20 @@ async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract
       await resolve_objects_in_specific_files(all_users, 29/* 29(account_obj_id) */, e5)
     }
     data['data_indexes'][e5]['e_token_ids'] = e_token_ids
+
+    data['data_indexes'][e5]['changed_data'][latest_block] = {
+      exchanges: Object.keys(all_exchange_ids_data_object),
+      contracts: Object.keys(all_contract_ids_data_object),
+      subscriptions: Object.keys(all_subscription_ids_data_object),
+      proposals: Object.keys(all_proposal_ids_data_object),
+      users: Object.keys(all_users)
+    }
+
+    Object.keys(data['data_indexes'][e5]['changed_data']).forEach(block_number => {
+      if(parseInt(block_number) <= (parseInt(latest_block) - 1000)){
+        delete data['data_indexes'][e5]['changed_data'][block_number]
+      }
+    });
   }
   else{
     const all_exchange_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 31/* 31(token_exchange) */));
@@ -1267,6 +1254,112 @@ async function resolve_objects_in_specific_files(data_object, data_type, e5){
       await rewrite_new_general_bucket_identifier_file(content_redistribution_object[focused_general_bucket_identifier], focused_general_bucket_identifier, data_type, e5)
     }
   }
+}
+
+
+async function remove_existing_updates_after_specific_block(e5, reorg_block_number){
+  if(data['data_indexes'][e5]['block_level_update'] != null){
+    const starting_block = reorg_block_number
+
+    const selected_blocks = []
+    Object.keys(data['data_indexes'][e5]['changed_data']).forEach(block_number => {
+      if(parseInt(block_number) >= parseInt(starting_block)){
+        selected_blocks.push(block_number)
+      }
+    });
+
+    const changed_contracts = []
+    const changed_proposals = []
+    const changed_subscriptions = []
+    const changed_exchanges = []
+    const changed_users = []
+
+    selected_blocks.forEach(block_number => {
+      const data = data['data_indexes'][e5]['changed_data'][block_number]
+      data.contracts.forEach(contract_id => {
+        if(!changed_contracts.includes(contract_id)){
+          changed_contracts.push(contract_id)
+        }
+      });
+      data.exchanges.forEach(exchange_id => {
+        if(!changed_exchanges.includes(exchange_id)){
+          changed_exchanges.push(exchange_id)
+        }
+      });
+      data.subscriptions.forEach(subscription_id => {
+        if(!changed_subscriptions.includes(subscription_id)){
+          changed_subscriptions.push(subscription_id)
+        }
+      });
+      data.proposals.forEach(proposal_id => {
+        if(!changed_proposals.includes(proposal_id)){
+          changed_proposals.push(proposal_id)
+        }
+      });
+      data.users.forEach(user_id => {
+        if(!changed_users.includes(user_id)){
+          changed_users.push(user_id)
+        }
+      });
+      delete data['data_indexes'][e5]['changed_data'][block_number]
+    });
+
+    const all_users = []
+    for(var t=0; t<changed_users.length; t++){
+      const account_id = changed_users[t]
+      const run_events = await filter_events(e5, 'E5', 'e4', {p1: account_id}, {})
+      if(run_events.length == 0 || parseInt(run_events[0].returnValues.p9/* block_number */) >= parseInt(starting_block)){
+        if(!all_users.includes(account_id)){
+          all_users.push(account_id)
+        }
+      }
+    }
+
+    const all_object_ids = [].concat(changed_exchanges, changed_subscriptions, changed_proposals, changed_contracts, all_users)
+    await unresolve_objects_in_specific_files(all_object_ids, e5)
+
+    data['data_indexes'][e5]['block_level_update'] = starting_block
+  }
+}
+
+async function unresolve_objects_in_specific_files(object_ids, e5){
+  const content_redistribution_object = {}
+  object_ids.forEach(object_id => {
+    const general_bucket_identifier = Math.floor(object_id / 100_000)
+    if(content_redistribution_object[general_bucket_identifier] == null){
+      content_redistribution_object[general_bucket_identifier] = {}
+    }
+    content_redistribution_object[general_bucket_identifier][object_id] = data_object[object_id]
+  });
+
+  const general_bucket_identifiers = Object.keys(content_redistribution_object)
+  if(data['data_indexes'][e5]['general_bucket_identifiers'] == null){
+    data['data_indexes'][e5]['general_bucket_identifiers'] = {}
+  }
+  if(data['data_indexes'][e5]['general_bucket_identifiers'][data_type] == null){
+    data['data_indexes'][e5]['general_bucket_identifiers'][data_type] = []
+  }
+
+  for(var g=0; g<general_bucket_identifiers.length; g++){
+    const focused_general_bucket_identifier = general_bucket_identifiers[g]
+    const data_types = [31/* 31(token_exchange) */, 30/* 30(contract_obj_id) */, 33/* 33(subscription_object) */,32/* 32(consensus_request) */, 29/* 29(account_obj_id) */]
+    
+    for(var d=0; d<data_types.length; d++){
+      const data_type = data_types[d]
+      if(data['data_indexes'][e5] != null && data['data_indexes'][e5]['general_bucket_identifiers'] != null && data['data_indexes'][e5]['general_bucket_identifiers'][data_type] != null && data['data_indexes'][e5]['general_bucket_identifiers'][data_type].includes(focused_general_bucket_identifier)){
+        await delete_existing_general_bucket_identifier_file_objects(content_redistribution_object[focused_general_bucket_identifier], focused_general_bucket_identifier, data_type, e5)
+      }
+    }
+  }
+}
+
+async function delete_existing_general_bucket_identifier_file_objects(updated_object, general_bucket_identifier, data_type, e5){
+  var cold_storage_obj = await fetch_object_file_by_bucket_identifier(general_bucket_identifier, data_type, e5)
+  const modified_object_ids = Object.keys(updated_object)
+  modified_object_ids.forEach(object_id => {
+    delete cold_storage_obj[object_id]
+  });
+  await write_new_general_bucket_identifier_file(cold_storage_obj, general_bucket_identifier, data_type, e5)
 }
 
 async function write_new_general_bucket_identifier_file(object, general_bucket_identifier, data_type, e5){
@@ -1506,6 +1599,7 @@ async function delete_all_events_after_specific_block(block_number, last_matchin
   }
   const updated_object_data = delete_all_invalid_event_entries(event_data, e5, block_number)
   await start_delete_event_data_hashes(updated_object_data.deleted_events_object, last_matching_block_time)
+  await remove_existing_updates_after_specific_block(e5, block_number)
   event_data = updated_object_data.events_object
 }
 
@@ -5824,6 +5918,15 @@ async function get_e5_chart_data(e5, translation_object){
     'all_time': get_gas_history_data_points(run_events || [], 'all_time'),
   }
 
+  e5_chart_data_object['get_all_contracts_data_points'] = {
+    'E5': await filter_and_get_contract_data_points(e5, 'E5'),
+    'E52': await filter_and_get_contract_data_points(e5, 'E52'),
+    'F5': await filter_and_get_contract_data_points(e5, 'F5'),
+    'G5': await filter_and_get_contract_data_points(e5, 'G5'),
+    'G52': await filter_and_get_contract_data_points(e5, 'G52'),
+    'H5': await filter_and_get_contract_data_points(e5, 'H5'),
+    'H52': await filter_and_get_contract_data_points(e5, 'H52'),
+  }
 
   const end_spend_transfer_events = filter_transfer_events_for_end_and_spend_transactions(transfer_events)
   const end_spend_transfer_events_total = end_spend_transfer_events.end_events.length + end_spend_transfer_events.spend_events.length
@@ -5851,7 +5954,7 @@ function get_post_transaction_count_data_points(events, time_p){
       data_time_mapping[point_data.length-1] = events[i].returnValues[time_p]
 
       if(i==events.length-1){
-        var diff = Date.now()/1000 - events[i].returnValues[time_p]
+        var diff = Date.now()/1000 - parseInt(events[i].returnValues[time_p])
         var t_diff = parseInt(events[i].returnValues[time_p])+0;
         for(var t=0; t<diff; t+=(60*30)){
           point_data.push(point_data[point_data.length-1]) 
@@ -5860,7 +5963,7 @@ function get_post_transaction_count_data_points(events, time_p){
         }
       }
       else{
-        var diff = events[i+1].returnValues[time_p] - events[i].returnValues[time_p]
+        var diff = parseInt(events[i+1].returnValues[time_p]) - parseInt(events[i].returnValues[time_p])
         var t_diff = parseInt(events[i].returnValues[time_p])+0;
         for(var t=0; t<diff; t+=(60*30)){
           point_data.push(point_data[point_data.length-1])  
@@ -5915,11 +6018,10 @@ function get_transaction_data_points_as_average(events, time_p, translation_obje
       if(event_time > filter_period/1000){
         const pos = (Math.floor(event_time/(60*60*3)))*(60*60*3)
         if(return_data_object[pos] == null){
-            return_data_object[pos] = []
+          return_data_object[pos] = []
         }
         return_data_object[pos].push(event_item)
       }
-      
   });
 
   return get_steaming_stats_data_points(return_data_object, translation_object)
@@ -6295,12 +6397,127 @@ function get_gas_history_data_points(event_data, selected_item){
       }
   }
 
-  const chart_starting_time = events.length == 0 ? null : events[0].returnValues.p8*1000
+  const chart_starting_time = events.length == 0 ? null : parseInt(events[0].returnValues.p8)*1000
 
   return { dps, starting_time: chart_starting_time }
 }
 
+async function filter_and_get_contract_data_points(e5, contract_id){
+  const contract_event_ids = {
+    E5 : ['e1','e2', 'e3', 'e4', 'e5', 'e6', 'e7'],
+    E52 : ['e1','e2', 'e3', 'e4', 'e5'],
+    F5 : ['e1','e2', 'e5', 'e4'],
+    G5 : ['e1','e2'],
+    G52 : ['e1','e2', 'e3', 'archive'],
+    H5 : ['e1','e2','e3'],
+    H52 : ['e1','e2', 'e3', 'e5', 'power'],
+  }
 
+  const contract_event_id_time_ids = {
+    E5 : {'e1':'p4','e2':'p6', 'e3':'p3', 'e4':'p8', 'e5':'p4', 'e6':'p5', 'e7':'p3'},
+    E52 : {'e1':'p7','e2':'p6', 'e3':'p4', 'e4':'p6', 'e5':'p5'},
+    F5 : {'e1':'p5','e2':'p5', 'e5':'p6', 'e4':'p5'},
+    G5 : {'e1':'p5','e2':'p6'},
+    G52 : {'e1':'p5','e2':'p7', 'e3':'p3', 'archive':'p3'},
+    H5 : {'e1':'p9','e2':'p5','e3':'p6'},
+    H52 : {'e1':'p5','e2':'p4', 'e3':'p7', 'e5':'p5', 'power':'p7'},
+  }
+
+  const contracts_event_ids = contract_event_ids[contract_id]
+  const all_events = []
+  const return_data_object = {}
+  const filter_period = (1000*60*60*24*7*72)
+  for(var i=0; i<contracts_event_ids.length; i++){
+    const focused_event_name = contracts_event_ids[i]
+    const loaded_events = await filter_events(e5, contract_id, focused_event_name, {}, {})
+    const time_p = contract_event_id_time_ids[contract_id][focused_event_name]
+    loaded_events.forEach(event_item => {
+      const event_time = parseInt(event_item.returnValues[time_p])
+      all_events.push(event_time)
+      if(event_time > filter_period/1000){
+        const pos = (Math.floor(event_time/(60*60*3)))*(60*60*3)
+        if(return_data_object[pos] == null){
+          return_data_object[pos] = []
+        }
+        return_data_object[pos].push({})
+      }
+    });
+  }
+
+  all_events.sort((a, b) => a - b);
+
+  const contract_steaming_stats_data_points = get_steaming_stats_data_points(return_data_object, {'transactions':'transactions'});
+
+  const contract_transaction_count_data_points = get_contract_transaction_count_data_points(all_events);
+
+  return { average: contract_steaming_stats_data_points, total: contract_transaction_count_data_points, event_count: all_events.length }
+}
+
+function get_contract_transaction_count_data_points(events){
+  var point_data = []
+  var data_time_mapping = {}
+  try{
+    for(var i=0; i<events.length; i++){
+      if(i==0){
+        point_data.push(1)
+      }
+      else{
+        point_data.push(parseInt(point_data[point_data.length-1]) + (1))
+      }
+      data_time_mapping[point_data.length-1] = events[i]
+
+      if(i==events.length-1){
+        var diff = Date.now()/1000 - parseInt(events[i])
+        var t_diff = parseInt(events[i])+0;
+        for(var t=0; t<diff; t+=(60*30)){
+          point_data.push(point_data[point_data.length-1]) 
+          t_diff+=(60*30)
+          data_time_mapping[point_data.length-1] = t_diff     
+        }
+      }
+      else{
+        var diff = parseInt(events[i+1]) - parseInt(events[i])
+        var t_diff = parseInt(events[i])+0;
+        for(var t=0; t<diff; t+=(60*30)){
+          point_data.push(point_data[point_data.length-1])  
+          t_diff+=(60*30)
+          data_time_mapping[point_data.length-1] = t_diff  
+        }
+      }
+    }
+  }catch(e){
+    log_error(e)
+  }
+
+
+  const slice_pos = Math.floor(point_data.length * 0.25)
+  point_data = point_data.slice(slice_pos)
+  const chart_starting_time = data_time_mapping[slice_pos] * 1000
+
+  
+
+  var xVal = 1, yVal = 0;
+  var dps = [];
+  var noOfDps = 100;
+  var factor = Math.round(point_data.length/noOfDps) +1;
+  // var noOfDps = data.length
+  for(var i = 0; i < noOfDps; i++) {
+      yVal = point_data.length > 0 ? point_data[factor * xVal] : 0
+      // yVal = data[i]
+      if(yVal != null){
+          if(i%(Math.round(noOfDps/3)) == 0 && i != 0){
+            dps.push({x: xVal,y: yVal, indexLabel: ""+format_account_balance_figure(yVal)});//
+          }else{
+            dps.push({x: xVal, y: yVal});//
+          }
+          xVal++;
+      }
+      
+  }
+
+
+  return { dps, chart_starting_time }
+}
 
 
 
