@@ -180,7 +180,6 @@ const endpoint_info = {}
 let trafficHistory = [];
 const originalFetch = global.fetch;
 var e5_charts_data_object = {}
-var changed_data = {}
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -1061,17 +1060,25 @@ async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract
     });
 
     const created_exchanges = []
+    const created_subscriptions = []
+    const created_contracts = []
+    const created_proposals = []
     create_object_events.forEach(event_item => {
       const object_id = event_item.returnValues.p1
       const object_type = event_item.returnValues.p2/* object_type */
       if(object_type == 30/* 30(contract_obj_id) */){
         if(!changed_contracts.includes(object_id)) changed_contracts.push(object_id);
+        created_contracts.push(object_id)
       }
       else if(object_type == 32/* 32(consensus_request) */){
         if(!changed_proposals.includes(object_id)) changed_proposals.push(object_id);
+        created_proposals.push(object_id)
       }
       else if(object_type == 33/* 33(subscription_object) */){
-        if(!changed_subscriptions.includes(object_id)) changed_subscriptions.push(object_id);
+        if(!changed_subscriptions.includes(object_id)){
+          changed_subscriptions.push(object_id);
+        }
+        created_subscriptions.push(object_id)
       }
       else if(object_type == 31/* 31(token_exchange) */){
         if(!changed_exchanges.includes(object_id)){
@@ -1132,11 +1139,15 @@ async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract
     }
     data['data_indexes'][e5]['e_token_ids'] = e_token_ids
 
+    if(data['data_indexes'][e5]['changed_data'] == null){
+      data['data_indexes'][e5]['changed_data'] = {}
+    }
+
     data['data_indexes'][e5]['changed_data'][latest_block] = {
-      exchanges: Object.keys(all_exchange_ids_data_object),
-      contracts: Object.keys(all_contract_ids_data_object),
-      subscriptions: Object.keys(all_subscription_ids_data_object),
-      proposals: Object.keys(all_proposal_ids_data_object),
+      exchanges: created_exchanges,
+      contracts: created_contracts,
+      subscriptions: created_subscriptions,
+      proposals: created_proposals,
       users: Object.keys(all_users)
     }
 
@@ -1257,8 +1268,11 @@ async function resolve_objects_in_specific_files(data_object, data_type, e5){
 }
 
 
+
+
+
 async function remove_existing_updates_after_specific_block(e5, reorg_block_number){
-  if(data['data_indexes'][e5]['block_level_update'] != null){
+  if(data['data_indexes'][e5]['block_level_update'] != null && data['data_indexes'][e5]['changed_data'] != null && data['data_indexes'][e5]['changed_data'].length > 0){
     const starting_block = reorg_block_number
 
     const selected_blocks = []
@@ -1316,7 +1330,9 @@ async function remove_existing_updates_after_specific_block(e5, reorg_block_numb
     }
 
     const all_object_ids = [].concat(changed_exchanges, changed_subscriptions, changed_proposals, changed_contracts, all_users)
-    await unresolve_objects_in_specific_files(all_object_ids, e5)
+    if(all_object_ids.length > 0){
+      await unresolve_objects_in_specific_files(all_object_ids, e5)
+    }
 
     data['data_indexes'][e5]['block_level_update'] = starting_block
   }
@@ -1361,6 +1377,9 @@ async function delete_existing_general_bucket_identifier_file_objects(updated_ob
   });
   await write_new_general_bucket_identifier_file(cold_storage_obj, general_bucket_identifier, data_type, e5)
 }
+
+
+
 
 async function write_new_general_bucket_identifier_file(object, general_bucket_identifier, data_type, e5){
   const write_data = JSON.stringify(object, (_, v) => typeof v === 'bigint' ? v.toString() : v);
@@ -1599,6 +1618,7 @@ async function delete_all_events_after_specific_block(block_number, last_matchin
   }
   const updated_object_data = delete_all_invalid_event_entries(event_data, e5, block_number)
   await start_delete_event_data_hashes(updated_object_data.deleted_events_object, last_matching_block_time)
+  
   await remove_existing_updates_after_specific_block(e5, block_number)
   event_data = updated_object_data.events_object
 }
@@ -6218,7 +6238,8 @@ function get_deposit_amount_data_points(events){
       }
   }
 
-  return { dps, chart_starting_time }
+  const scale = bigInt(largest_number).divide(100) == 0 ? 1 : bigInt(largest_number).divide(100)
+  return { dps, chart_starting_time, scale }
 }
 
 function load_traffic_proportion_data(all_data, e5_chart_data, e5){
