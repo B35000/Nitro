@@ -2230,11 +2230,6 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
   return success
 }
 
-
-
-
-
-
 /* filters objects by a specified set of tags */
 async function search_for_object_ids_by_tags(tags, target_type, language, state){
   var all_objs = pointer_data[target_type] == null ? [] : pointer_data[target_type]
@@ -6545,6 +6540,69 @@ function get_contract_transaction_count_data_points(events){
 
 
 
+async function get_id_objects_and_hash_data(ids, item_type, known_hashes, indexing_hash, max_post_bulk_load_count){
+  const object_e5_id_data = {}
+  ids.forEach(id => {
+    const id_object = id.split(':')
+    if(object_e5_id_data[id_object[0]] == null){
+      object_e5_id_data[id_object[0]] = []
+    }
+    object_e5_id_data[id_object[0]].push(id_object[1])
+  });
+  const targeted_e5s = Object.keys(object_e5_id_data)
+  const created_object_events_mapping = {}
+  for(var e=0; e<targeted_e5s.length; e++){
+    const e5 = targeted_e5s[e]
+    const targeted_ids = object_e5_id_data[e5]
+    var created_object_events = [];
+
+    if(
+      item_type == 31/* token_exchange */ || 
+      item_type == 33/* subscription_object */ || 
+      item_type == 30/* contract_obj_id */|| 
+      item_type == 25/* 25(storefront_bag_object) */||
+      item_type == 32/* 32(consensus_request) */
+    ){
+      created_object_events = await filter_events(e5, 'E5', 'e1', {p2/* object_type */:item_type}, {})
+      created_object_events = created_object_events.filter(function (event) {
+        return (targeted_ids.includes(event.returnValues.p1))
+      })
+    }
+    else if(item_type == 21/* 21(nitro_object) */){
+      created_object_events = await filter_events(e5, 'E52', 'e2', {p3/* item_type */: item_type}, {})
+      created_object_events = created_object_events.filter(function (event) {
+        return (targeted_ids.includes(event.returnValues.p2))
+      })
+    }
+    else if(
+      item_type == 17/* 17(job_object) */ || 
+      item_type == 18/* 18(post object) */ || 
+      item_type == 36/* 36(type_channel_target) */ || 
+      item_type == 17/* 17(job_object) */ || 
+      item_type == 27/* 27(storefront-item) */ || 
+      item_type == 26/* 26(contractor_object) */ || 
+      item_type == 19/* 19(audio_object) */ || 
+      item_type == 20/* 20(video_object) */ || 
+      item_type == 28/* 28(poll-object) */
+    ){
+      created_object_events = await filter_events(e5, 'E52', 'e2', {p3/* item_type */: item_type, p1: indexing_hash}, {})
+      created_object_events = created_object_events.filter(function (event) {
+        return (targeted_ids.includes(event.returnValues.p2))
+      })
+    }
+    created_object_events_mapping[e5] = created_object_events
+  }
+
+  const return_data = await get_objects_metadata(created_object_events_mapping, item_type, max_post_bulk_load_count, known_hashes, targeted_e5s)
+  
+  return { return_data, created_object_events_mapping } 
+}
+
+
+
+
+
+
 
 
 /* endpoint for returning E5 event data tracked by the node */
@@ -6661,6 +6719,10 @@ app.get(`/${endpoint_info['tags']}/:privacy_signature`, async (req, res) => {
     var state = arg_obj.state == null ? '0x' : arg_obj.state
     var ids = await search_for_object_ids_by_tags(tags, target_type, language, state)
     var obj = {'data':ids, success:true}
+    if(arg_obj.known_hashes != null && arg_obj.max_post_bulk_load_count != null && ids.length > 0){
+      const extra_data = await get_id_objects_and_hash_data(ids, target_type, arg_obj.known_hashes, arg_obj.indexing_hash, arg_obj.max_post_bulk_load_count)
+      obj['extra_data'] = extra_data
+    }
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/tags')
     res.send(await encrypt_call_result(string_obj, registered_users_key));
@@ -7661,7 +7723,7 @@ app.post(`/${endpoint_info['streams']}/:privacy_signature`, async (req, res) => 
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
     return;
   }
-});
+});//ok ----
 
 /* endpoint for fetching itransfers with a specified identifier */
 app.get(`/${endpoint_info['itransfers']}`, async (req, res) => {
@@ -7935,7 +7997,7 @@ app.post(`/${endpoint_info['delete_files']}/:privacy_signature`, async (req, res
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
     return;
   }
-});
+});//ok ----
 
 /* endpoint for streaming the log file stored in the node. */
 app.get(`/${endpoint_info['stream_logs']}/:file/:backup_key/:privacy_signature`, async (req, res) => {
@@ -7997,7 +8059,7 @@ app.get(`/${endpoint_info['stream_logs']}/:file/:backup_key/:privacy_signature`,
       }
     }
   }
-});
+});//ok ----
 
 /* endpoint for updating the nodes https certificates */
 app.post(`/${endpoint_info['update_certificates']}/:privacy_signature`, async (req, res) => {
@@ -8269,7 +8331,7 @@ app.post(`/${endpoint_info['pre_launch_fetch']}/:privacy_signature`, async (req,
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
     return;
   }
-});
+});//ok ----
 
 /* endpoint for fetching app section object data */
 app.post(`/${endpoint_info['pre_fetch_object_data']}/:privacy_signature`, async (req, res) => {
