@@ -5527,7 +5527,6 @@ async function get_app_launch_object_data(indexing_hash, item_type, e5, account,
 
 function get_ids_from_events(events, p){
   var ids = []
-  log_error({stack: 'size: '+events.length})
   events.forEach(event_item => {
     var id = event_item.returnValues[p]
     ids.push(id);
@@ -6232,7 +6231,7 @@ function get_deposit_amount_data_points(events){
       else if(point_data.length == 0) yVal = 0
       else yVal = parseInt(bigInt(point_data[factor * xVal]).multiply(100).divide(largest_number))
       if(yVal != null && point_data[factor * xVal] != null){
-          if(i%(Math.round(noOfDps/10)) == 0 && i != 0 && !recorded){
+          if(i== 23 || i == 72){
               recorded = true
               var label = ""+format_account_balance_figure(point_data[factor * xVal])
               dps.push({x: xVal,y: yVal, indexLabel: label});
@@ -6269,7 +6268,7 @@ function filter_transfer_events_for_end_and_spend_transactions2(events){
   const income_stream_records = {}
   var total_volume = bigInt(0)
   events.forEach(event => {
-      if(event.returnValues.p1 == 5 && event.returnValues.p5/* timestamp */ > time_limit){
+      if(event.returnValues.p1 == 5 && parseInt(event.returnValues.p5/* timestamp */) > time_limit){
           if(income_stream_records[event.returnValues.p2/* sender */] == null){
               income_stream_records[event.returnValues.p2/* sender */] = {}
           }
@@ -6277,7 +6276,7 @@ function filter_transfer_events_for_end_and_spend_transactions2(events){
               income_stream_records[event.returnValues.p2/* sender */][event.returnValues.p3/* receiver */] = []
           }
           const receivers_time_array = income_stream_records[event.returnValues.p2/* sender */][event.returnValues.p3/* receiver */]
-          if(receivers_time_array.length == 0 || event.returnValues.p5/* timestamp */ - receivers_time_array[receivers_time_array.length-1] > (60*60*2.3)){
+          if(receivers_time_array.length == 0 || parseInt(event.returnValues.p5/* timestamp */) - parseInt(receivers_time_array[receivers_time_array.length-1]) > (60*60*2.3)){
               spend_events.push(event)
               if(income_stream_data[event.returnValues.p3/* receiver */] == null){
                   income_stream_data[event.returnValues.p3/* receiver */] = bigInt(0) 
@@ -6291,7 +6290,7 @@ function filter_transfer_events_for_end_and_spend_transactions2(events){
   });
 
   if(spend_events.length == 0){
-      return 0
+    return 0
   }
 
   const filtered_income_stream_data = getBottomPercentAccounts(income_stream_data)
