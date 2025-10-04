@@ -5453,6 +5453,11 @@ function get_data_id_from_ecid(ecid){
     internal_id = split_cid_array2[1]
   }
 
+  if(id.includes('-')){
+    var split_cid_array3 = id.split('-');
+    id = split_cid_array3[1]
+  }
+
   return id
 }
 
@@ -5522,6 +5527,7 @@ async function get_app_launch_object_data(indexing_hash, item_type, e5, account,
 
 function get_ids_from_events(events, p){
   var ids = []
+  log_error({stack: 'size: '+events.length})
   events.forEach(event_item => {
     var id = event_item.returnValues[p]
     ids.push(id);
@@ -5711,6 +5717,10 @@ async function load_comment_data(all_events, known_hashes){
               var split_cid_array2 = cid.split('_');
               id = split_cid_array2[0]
               internal_id = split_cid_array2[1]
+            }
+            if(id.includes('-')){
+              var split_cid_array3 = id.split('-');
+              id = split_cid_array3[1]
             }
             if(!hashes.includes(id) && !known_hashes.includes(id)) hashes.push(id)
           }catch(e){
@@ -6575,14 +6585,13 @@ async function get_id_objects_and_hash_data(ids, item_type, known_hashes, indexi
       })
     }
     else if(
-      item_type == 17/* 17(job_object) */ || 
-      item_type == 18/* 18(post object) */ || 
-      item_type == 36/* 36(type_channel_target) */ || 
-      item_type == 17/* 17(job_object) */ || 
-      item_type == 27/* 27(storefront-item) */ || 
-      item_type == 26/* 26(contractor_object) */ || 
-      item_type == 19/* 19(audio_object) */ || 
-      item_type == 20/* 20(video_object) */ || 
+      item_type == 17/* 17(job_object) */ ||
+      item_type == 18/* 18(post object) */ ||
+      item_type == 36/* 36(type_channel_target) */ ||
+      item_type == 27/* 27(storefront-item) */ ||
+      item_type == 26/* 26(contractor_object) */ ||
+      item_type == 19/* 19(audio_object) */ ||
+      item_type == 20/* 20(video_object) */ ||
       item_type == 28/* 28(poll-object) */
     ){
       created_object_events = await filter_events(e5, 'E52', 'e2', {p3/* item_type */: item_type, p1: indexing_hash}, {})
@@ -6590,7 +6599,7 @@ async function get_id_objects_and_hash_data(ids, item_type, known_hashes, indexi
         return (targeted_ids.includes(event.returnValues.p2))
       })
     }
-    created_object_events_mapping[e5] = created_object_events
+    created_object_events_mapping[e5] = created_object_events.reverse()
   }
 
   const return_data = await get_objects_metadata(created_object_events_mapping, item_type, max_post_bulk_load_count, known_hashes, targeted_e5s)
