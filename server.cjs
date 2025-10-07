@@ -3521,33 +3521,34 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
     const focused_data_point = object_data[pos]
     yVal = 0
     if(focused_data_point != null && focused_data_point['count'] != 0 && largest_number != 0){
-        yVal = parseInt(bigInt(focused_data_point['count']).multiply(100).divide(largest_number))
+      yVal = parseInt(bigInt(focused_data_point['count']).multiply(100).divide(largest_number))
     }
     
     if(yVal != null && focused_data_point != null){
       if(v == 25 || v == 76){
-          const price_data =  focused_data_point['price_data']['prices']
-          var selected_price_item = price_data[0]
-          for(var p = 0; p < price_data.length; p++) {
-              const price_item = price_data[p]
-              if(price_item['id'] == 3 || price_item['id'] == 5){
-                  if(selected_price_item['id'] != 3 && selected_price_item['id'] != 5){
-                      selected_price_item = price_item
-                  }
-              }
+        const price_data =  focused_data_point['price_data']['prices']
+        var selected_price_item = price_data[0]
+        for(var p = 0; p < price_data.length; p++) {
+          const price_item = price_data[p]
+          if(price_item['id'] == 3 || price_item['id'] == 5){
+            if(selected_price_item['id'] != 3 && selected_price_item['id'] != 5){
+              selected_price_item = price_item
+            }
           }
-          const final_price_amount = bigInt(selected_price_item['amount']).multiply(focused_data_point['count'])
-          const token_name = token_name_data[selected_price_item['id']]
+        }
+        const final_price_amount = bigInt(selected_price_item['amount']).multiply(focused_data_point['count'])
+        const token_name = token_name_data[selected_price_item['id']]
 
-          dps.push({x: xVal,y: (yVal+10), indexLabel: ""+format_account_balance_figure(final_price_amount)+` ${token_name}`});//
+        dps.push({x: xVal,y: (yVal+10), indexLabel: ""+format_account_balance_figure(final_price_amount)+` ${token_name}`});//
       }else{
-          dps.push({x: xVal, y: (yVal+10)});//
+        dps.push({x: xVal, y: (yVal+10)});//
       }
       xVal++;
     }
   }
 
-  return { object_data: {dps, total_payment_data}, success:true }
+  const scale = bigInt(largest_number).divide(100) == 0 ? 1 : bigInt(largest_number).divide(100)
+  return { object_data: {dps, total_payment_data, scale}, success:true }
 }
 
 /* gets the largest figure from an array of items */
