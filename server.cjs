@@ -2399,7 +2399,8 @@ async function filter_events(requested_e5, requested_contract, requested_event_i
         }
       }catch(e){}
       if(is_array == true){
-        if(!filter[key].includes(eventt['returnValues'][key]) && eventt['returnValues'][key] != filter[key]){
+        const hasPrefix = filter[key].some(item => eventt['returnValues'][key].startsWith(item));
+        if(!filter[key].includes(eventt['returnValues'][key]) && eventt['returnValues'][key] != filter[key] && !hasPrefix){
           accepted = false
         }
       }else{
@@ -5396,8 +5397,18 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     }
 
     return_data['nitro_objects_data'] = await get_app_launch_object_data(indexing_hash, 21/* 21(nitro_object) */, e5, e5_account_id, max_post_bulk_load_count, known_hashes)
+
+    return_data['nitro_alias_data'] = await fetch_object_author_alias_event_data(return_data['nitro_objects_data']['created_object_events'], 'p5', max_post_bulk_load_count, e5)
+
+
     return_data['job_objects_data'] = await get_app_launch_object_data(indexing_hash, 17/* 17(job_object) */, e5, e5_account_id, max_post_bulk_load_count, known_hashes)
+
+    return_data['job_alias_data'] = await fetch_object_author_alias_event_data(return_data['job_objects_data']['created_object_events'], 'p5', max_post_bulk_load_count, e5)
+
+
     return_data['exchange_objects_data'] = await get_app_launch_object_data(indexing_hash, 31/* token_exchange */, e5, e5_account_id, max_post_bulk_load_count, known_hashes, my_state_exchanges)
+
+    return_data['exchange_alias_data'] = await fetch_object_author_alias_event_data(return_data['exchange_objects_data']['created_object_events'], 'p3', max_post_bulk_load_count, e5)
 
     if(e5_charts_data_object[e5] == null || e5_charts_data_object[e5]['time'] < Date.now()-(1000*60*23)){
       //generate new data
@@ -5581,15 +5592,21 @@ async function get_objects_metadata(created_object_events_mapping, item_type, ma
     if(created_object_events == null){
       continue;
     }
+    var author_p = ''
     if(item_type == 33/* subscription_object */ || item_type == 30/* contract_obj_id */){
       return_data['objects_data'] = await get_subscription_or_contract_object_data_from_indexing_events(created_object_events, item_type, e5, max_post_bulk_load_count, known_hashes)
+      author_p = 'p3'
     }
     else if(item_type == 32/* 32(consensus_request) */){
       return_data['objects_data'] = await get_proposal_object_data_from_indexing_events(created_object_events, e5, max_post_bulk_load_count, known_hashes)
+      author_p = 'p4'
     }
     else{
       return_data['objects_data'] = await get_object_data_from_indexing_events(created_object_events, item_type, e5, max_post_bulk_load_count, known_hashes)
+      author_p = item_type == 25/* 25(storefront_bag_object) */ ? 'p3' : 'p5'
     }
+    return_data['alias_data'] = await fetch_object_author_alias_event_data(created_object_events, author_p, max_post_bulk_load_count, e5)
+
     all_return_data[e5] = return_data
   }
 
@@ -6605,6 +6622,11 @@ async function get_id_objects_and_hash_data(ids, item_type, known_hashes, indexi
   const return_data = await get_objects_metadata(created_object_events_mapping, item_type, max_post_bulk_load_count, known_hashes, targeted_e5s)
   
   return { return_data, created_object_events_mapping } 
+}
+
+async function fetch_object_author_alias_event_data(created_object_events, p, max_post_bulk_load_count, e5){
+  const object_author_ids = get_ids_from_events(created_object_events, p).slice(0, max_post_bulk_load_count)
+  return await filter_events(e5, 'E52', 'e4', {p1/* target_id */: 11, p2/* sender_acc_id */: object_author_ids}, {})
 }
 
 
@@ -7688,6 +7710,10 @@ app.post(`/${endpoint_info['store_data']}/:privacy_signature`, async (req, res) 
   }
   else if(!is_basic_data_upload_size_valid(file_datas)){
     res.send(JSON.stringify({ message: 'One of the data objects has an invalid size', success:false }));
+    return;
+  }
+  else if(file_datas.length > 1024){
+    res.send(JSON.stringify({ message: 'Too many files!', success:false }));
     return;
   }
   else{

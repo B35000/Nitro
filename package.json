@@ -1,8 +1,8 @@
 {
-  "name": "e5servertest",
+  "name": "e5_indexer",
   "version": "2.0",
   "description": "",
-  "main": "index.js",
+  "main": "server.cjs",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
