@@ -2388,23 +2388,15 @@ async function filter_events(requested_e5, requested_contract, requested_event_i
   const check_event = (eventt) => {
     var accepted = true
     for (const key in filter) {
-      var is_array = false
-      try{
-        if(typeof filter[key] === 'string'){
-          is_array = false
-        }else{
-          var clone = filter[key].slice()
-          clone.concat(clone)
-          is_array = true
-        }
-      }catch(e){}
+      const is_array = filter[key].toString().startsWith('$$:')
+      const filter_key = is_array == true ? filter[key].slice(3).split("|") : filter[key]
       if(is_array == true){
-        const hasPrefix = filter[key].some(item => eventt['returnValues'][key].startsWith(item));
-        if(!filter[key].includes(eventt['returnValues'][key]) && eventt['returnValues'][key] != filter[key] && !hasPrefix){
+        const hasPrefix = filter_key.some(item => eventt['returnValues'][key].startsWith(item));
+        if(!filter_key.includes(eventt['returnValues'][key]) && eventt['returnValues'][key] != filter_key && !hasPrefix){
           accepted = false
         }
       }else{
-        if(eventt['returnValues'][key] != filter[key]){
+        if(eventt['returnValues'][key] != filter_key){
           accepted = false
         }
       }
@@ -6626,7 +6618,11 @@ async function get_id_objects_and_hash_data(ids, item_type, known_hashes, indexi
 
 async function fetch_object_author_alias_event_data(created_object_events, p, max_post_bulk_load_count, e5){
   const object_author_ids = get_ids_from_events(created_object_events, p).slice(0, max_post_bulk_load_count)
-  return await filter_events(e5, 'E52', 'e4', {p1/* target_id */: 11, p2/* sender_acc_id */: object_author_ids}, {})
+  return await filter_events(e5, 'E52', 'e4', {p1/* target_id */: 11, p2/* sender_acc_id */: process_array_for_indexer_query(object_author_ids)}, {})
+}
+
+function process_array_for_indexer_query(arr){
+  return '$$:'+arr.join("|");
 }
 
 
