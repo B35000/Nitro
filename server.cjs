@@ -47,6 +47,7 @@ const CERTIFICATE_RESOURCE = process.env.CERTIFICATE_RESOURCE
 const HTTPS_PORT = process.env.HTTPS_PORT
 const AUTO_CERTIFICATE_RENEWAL_ENABLED = process.env.AUTO_CERTIFICATE_RENEWAL == null ? false : (process.env.AUTO_CERTIFICATE_RENEWAL == 'true'); // <---- change this to false if you dont want auto renewal of https certificates using certbot
 const ENPOINT_UPDATES_ENABLED = process.env.ENPOINT_UPDATES_ENABLED == null ? false : (process.env.ENPOINT_UPDATES_ENABLED == 'true'); // <---- change this to false if you prefer manually updating your node
+const ENDPOINT_URL = process.env.ENDPOINT_URL
 var logStream;
 var sync_block_number = 0;
 var server_public_key = null;
@@ -6681,6 +6682,156 @@ async function is_socket_privacy_signature_valid(privacy_signature){
 
 
 
+function handle_incoming_node_message({ to, message }) {
+  if(get_object_size_in_kbs(message) > 24){
+    return;
+  }
+  const target = connected_users.get(to);
+  if (target) {
+    target.emit('message', { from: message.author, message, remote: true });
+  } else {
+    // forward to other nodes to ensure full propagation if enabled
+    if(message.propagate_all == true) Object.values(node_connection_map).forEach(n => n.emit('node_message', { to, message }));
+  }
+}
+
+function handle_node_connection_to_new_node(nodeUrl){
+  console.log('Connected to', nodeUrl)
+  node_connection_map[nodeUrl] = nodeSocket
+}
+
+function handle_node_disconnection_from_node(nodeUrl){
+  console.log('Disconnected from ', nodeUrl)
+  delete node_connection_map[nodeUrl];
+}
+
+function record_socket_data_for_target(target, message){
+  const start_today = start_of_day_in_milliseconds()
+  if(socket_data[start_today] == null){
+    socket_data[start_today] = {}
+  }
+  if(socket_data[start_today][target] == null){
+    socket_data[start_today][target] = {}
+  }
+  if(socket_data[start_today][target][message.id] == null){
+    socket_data[start_today][target][message.id] = message
+  }
+}
+
+function start_of_day_in_milliseconds(){
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  return startOfDay.getTime()
+}
+
+function set_up_indexer_mesh_network(){
+  const otherNodes = get_all_nitro_links();
+
+  for (const nodeUrl of otherNodes) {
+    if(node_connection_map[nodeUrl] == null){
+      const nodeSocket = ClientIO(nodeUrl, { transports: ['websocket'], reconnection: true, reconnectionAttempts: 10, reconnectionDelay: 5000 });
+      nodeSocket.on('connect', () => handle_node_connection_to_new_node(nodeUrl));
+      nodeSocket.on('disconnect', () => handle_node_disconnection_from_node(nodeUrl));
+      nodeSocket.on('node_message', handle_incoming_node_message);
+      nodeSocket.on('forward_joined_room', handle_user_joined_room_message)
+      nodeSocket.on('forward_signal', handle_signal_message)
+      nodeSocket.on('forward_room_key', handle_room_key_message)
+      nodeSocket.on('forward_user_left', handle_user_left_message)
+    }
+  }
+}
+
+function get_all_nitro_links(){
+  const nodes = []
+  Object.keys(data['nitro_link_data']).forEach(e5 => {
+    Object.values(data['nitro_link_data'][e5]).forEach(link => {
+      if(!nodes.includes(link) && link != ENDPOINT_URL) nodes.push(link);
+    });
+  });
+  return nodes
+}
+
+function delete_old_socket_data(){
+  const keys = Object.keys(socket_data)
+  const cutoff = Date.now() - (3*24*60*60*1000)
+  keys.forEach(time_key => {
+    if(parseInt(time_key) < cutoff){
+      delete socket_data[time_key]
+    }
+  });
+}
+
+function get_object_size_in_kbs(obj) {
+  const bytes = new TextEncoder().encode(JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)).length;
+  return (bytes / (1024)).toFixed(2); // Convert bytes to KB
+}
+
+
+
+
+
+
+function handle_user_joined_room_message({roomId, userId, user_pub_key}){
+  if (!rooms[roomId]) {
+    rooms[roomId] = [];
+  }
+  const usersInRoom = rooms[roomId];
+  const userId_target = connected_users.get(userId);
+  
+  usersInRoom.forEach(existing_user => {
+    if(userId_target){
+      userId_target.emit("user_in_room", existing_user);
+    } 
+    const existing_userId_target = connected_users.get(existing_user);
+    if(existing_userId_target){
+      existing_userId_target.emit("user_joined", {userId: userId, user_pub_key});
+    }
+  });
+
+  rooms[roomId].push(userId);
+}
+
+function handle_signal_message({from, to, data, isInitiator}){
+  const signalType = data.type || 'unknown';
+  const target = connected_users.get(to);
+  if(target){
+    if (isInitiator && signalType === 'offer') {
+      // This is an offer, send it as offer-received
+      if(target) target.emit("offer_received", { from, signal: data });
+    } else {
+      // This is an answer or other signal, relay normally
+      if(target) target.emit("signal", { from, data });
+    }
+  }
+}
+
+function handle_room_key_message({to, encrypted_key}){
+  const target = connected_users.get(to);
+  if(target) target.emit('room_key', encrypted_key);
+}
+
+function handle_user_left_message({userId, roomId}){
+  if(rooms[roomId] != null){
+    const index = rooms[roomId].indexOf(userId);
+    if (index !== -1) {
+      rooms[roomId].splice(index, 1);
+    }
+    if (rooms[roomId].length === 0) {
+      delete rooms[roomId];
+    }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
 /* endpoint for returning E5 event data tracked by the node */
 app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
@@ -8575,8 +8726,8 @@ io.on('connection', socket => {
   /* 
     you might think that using a Redis adapter here is a good idea but ive elected to keep things like this to maintain a decentralized system. I mean, its all well and good until the adapter itself goes offline for some reason (since its just another server), then the entire system goes offline in the process.
   */
-  // console.log('User connected:', socket.id);
 
+  /* register user in current node */
   socket.on('register', async ({userId, privacy_signature}) => {
     if(!await is_socket_privacy_signature_valid(privacy_signature)){
       socket.emit('register_status', { success: false, time: Date.now(), reason: 'invalid privacy signature' });
@@ -8587,23 +8738,37 @@ io.on('connection', socket => {
     }
   });
 
-  socket.on('send_message', ({ to, message }) => {
-    if(socket.userId == null){
+  /* send message to another account in indexer or across network */
+  socket.on('send_message', ({ to, message, log_message }) => {
+    /* 
+      message structure:
+      { 
+        target: str, 
+        propagate_all: bool, 
+        author: str, 
+        data: str  
+      }
+    */
+    if(socket.userId == null || get_object_size_in_kbs(message) > 24){
       return;
     }
     const target = connected_users.get(to);
     if (target) {
-      target.emit('message', { from: socket.userId, message });
+      target.emit('message', { from: socket.userId, message, remote: false });
+      if(log_message == true){
+        record_socket_data_for_target(message.target, message);
+      }
     } else {
       // Forward to other nodes
       Object.values(node_connection_map).forEach(nodeSocket => {
-        nodeSocket.emit('node_message', { to, message });
+        nodeSocket.emit('node_message', { to, message, log_message });
       });
     }
   });
 
+  /* log some data in the node */
   socket.on('log_data', ({ target, message }) => {
-    if(socket.userId == null){
+    if(socket.userId == null || get_object_size_in_kbs(message) > 24){
       return;
     }
     record_socket_data_for_target(target, message);
@@ -8645,6 +8810,11 @@ io.on('connection', socket => {
     // Add user to room tracking
     rooms[roomId].push(socket.userId);
     console.log(`Room ${roomId} now has ${rooms[roomId].length} users:`, rooms[roomId]);
+
+    // Forward to other nodes
+    Object.values(node_connection_map).forEach(nodeSocket => {
+      nodeSocket.emit('forward_joined_room', { roomId, userId: socket.userId, user_pub_key: 'eee' });
+    });
   });
 
   /* when signal is being sent */
@@ -8652,12 +8822,19 @@ io.on('connection', socket => {
     const signalType = data.type || 'unknown';
     console.log(`Relaying ${signalType} signal from ${socket.id} to ${to}, isInitiator: ${isInitiator}`);
     const target = connected_users.get(to);
-    if (isInitiator && signalType === 'offer') {
-      // This is an offer, send it as offer-received
-      if(target) target.emit("offer_received", { from: socket.userId, signal: data });
-    } else {
-      // This is an answer or other signal, relay normally
-      if(target) target.emit("signal", { from: socket.userId, data });
+    if(target){
+      if (isInitiator && signalType === 'offer') {
+        // This is an offer, send it as offer-received
+        if(target) target.emit("offer_received", { from: socket.userId, signal: data });
+      } else {
+        // This is an answer or other signal, relay normally
+        if(target) target.emit("signal", { from: socket.userId, data });
+      }
+    }else{
+      // Forward to other nodes
+      Object.values(node_connection_map).forEach(nodeSocket => {
+        nodeSocket.emit('forward_signal', { from: socket.userId, to, data, isInitiator });
+      });
     }
   });
 
@@ -8665,6 +8842,11 @@ io.on('connection', socket => {
   socket.on('room_key', ({ to, encrypted_key }) => {
     const target = connected_users.get(to);
     if(target) target.emit('room_key', encrypted_key);
+
+    // Forward to other nodes
+    Object.values(node_connection_map).forEach(nodeSocket => {
+      nodeSocket.emit('forward_room_key', { to, encrypted_key });
+    });
   });
 
   /* when socket is disconnected */
@@ -8678,6 +8860,10 @@ io.on('connection', socket => {
         rooms[roomId].splice(index, 1);
         // Notify others in the room
         socket.to(roomId).emit("user_left", socket.userId);
+        // Forward to other nodes
+        Object.values(node_connection_map).forEach(nodeSocket => {
+          nodeSocket.emit('forward_user_left', { userId: socket.userId, roomId });
+        });
         // Clean up empty rooms
         if (rooms[roomId].length === 0) {
           delete rooms[roomId];
@@ -8687,86 +8873,6 @@ io.on('connection', socket => {
     });
   });
 });
-
-
-
-
-
-
-
-function handle_incoming_node_message({ to, message }) {
-  const target = connected_users.get(to);
-  if (target) {
-    target.emit('message', { from: 'remote', message });
-  } else {
-    // forward to other nodes to ensure full propagation if enabled
-    if(message.propagate_all == true) Object.values(node_connection_map).forEach(n => n.emit('node_message', { to, message }));
-  }
-}
-
-function handle_node_connection_to_new_node(nodeUrl){
-  console.log('Connected to', nodeUrl)
-  node_connection_map[nodeUrl] = nodeSocket
-}
-
-function handle_node_disconnection_from_node(nodeUrl){
-  console.log('Disconnected from ', nodeUrl)
-  delete node_connection_map[nodeUrl];
-}
-
-function record_socket_data_for_target(target, message){
-  const start_today = start_of_day_in_milliseconds()
-  if(socket_data[start_today] == null){
-    socket_data[start_today] = {}
-  }
-  if(socket_data[start_today][target] == null){
-    socket_data[start_today][target] = {}
-  }
-  if(socket_data[start_today][target][message.id] == null){
-    socket_data[start_today][target][message.id] = message
-  }
-}
-
-function start_of_day_in_milliseconds(){
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-  return startOfDay.getTime()
-}
-
-function set_up_indexer_mesh_network(){
-  const otherNodes = get_all_nitro_links();
-
-  for (const nodeUrl of otherNodes) {
-    if(node_connection_map[nodeUrl] == null){
-      const nodeSocket = ClientIO(nodeUrl, { transports: ['websocket'], reconnection: true, reconnectionAttempts: 10, reconnectionDelay: 5000 });
-      nodeSocket.on('connect', () => handle_node_connection_to_new_node(nodeUrl));
-      nodeSocket.on('disconnect', () => handle_node_disconnection_from_node(nodeUrl));
-      nodeSocket.on('node_message', handle_incoming_node_message);
-    }
-  }
-}
-
-function get_all_nitro_links(){
-  const nodes = []
-  Object.keys(data['nitro_link_data']).forEach(e5 => {
-    Object.values(data['nitro_link_data'][e5]).forEach(link => {
-      if(!nodes.includes(link)) nodes.push(link)
-    });
-  });
-  return nodes
-}
-
-function delete_old_socket_data(){
-  const keys = Object.keys(socket_data)
-  const cutoff = Date.now() - (3*24*60*60*1000)
-  keys.forEach(time_key => {
-    if(parseInt(time_key) < cutoff){
-      delete socket_data[time_key]
-    }
-  });
-}
-
-
 
 
 
