@@ -27,3 +27,5 @@ yarn-error.log*
 .env
 .testfile.js
 .testfile2.js
+stuff.cjs
+calls.cjs

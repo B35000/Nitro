@@ -32,7 +32,9 @@ const { exec } = require('child_process');
 const path = require('path');
 // const CryptoJS = require("crypto-js");
 const nacl = require("tweetnacl");
-const { json } = require('stream/consumers');
+// const { json } = require('stream/consumers');
+const Server = require('socket.io')
+const ClientIO = require('socket.io-client')
 
 const app = express();
 app.use(cors());
@@ -180,6 +182,10 @@ const endpoint_info = {}
 let trafficHistory = [];
 const originalFetch = global.fetch;
 var e5_charts_data_object = {}
+const connected_users = new Map();
+const node_connection_map = {}
+const socket_data = {}
+const rooms = {};
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -2131,6 +2137,7 @@ async function store_back_up_of_data(){
     'failed_ecids':failed_ecids, 
     'file_data_steams':file_data_steams,
     'upload_view_trends_data':upload_view_trends_data,
+    'socket_data':socket_data
   }
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -2212,6 +2219,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       }
       if(obj['upload_view_trends_data'] != null){
         upload_view_trends_data = obj['upload_view_trends_data']
+      }
+      if(obj['socket_data'] != null){
+        Object.assign(socket_data, obj['socket_data'])
       }
       
       console.log('successfully loaded back-up data')
@@ -2392,7 +2402,7 @@ async function filter_events(requested_e5, requested_contract, requested_event_i
       const filter_key = is_array == true ? filter[key].slice(3).split("|") : filter[key]
       if(is_array == true){
         const hasPrefix = filter_key.some(item => eventt['returnValues'][key].startsWith(item));
-        if(!filter_key.includes(eventt['returnValues'][key]) && eventt['returnValues'][key] != filter_key && !hasPrefix){
+        if(!filter_key.includes(eventt['returnValues'][key].toString()) && eventt['returnValues'][key] != filter_key && !hasPrefix){
           accepted = false
         }
       }else{
@@ -4994,7 +5004,7 @@ global.fetch = async (url, options = {}) => {
 };
 
 function set_endpoint_ids(){
-  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', /* 'stream_file', */ 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files'];
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -6624,6 +6634,45 @@ async function fetch_object_author_alias_event_data(created_object_events, p, ma
 function process_array_for_indexer_query(arr){
   return '$$:'+arr.join("|");
 }
+
+function get_socket_data(targets, filter_time){
+  const return_data = {}
+  const time_keys = Object.keys(socket_data)
+  time_keys.forEach(socket_data_time_key => {
+    if(parseInt(socket_data_time_key) > filter_time){
+      return_data[socket_data_time_key] = {}
+      targets.forEach(target => {
+        if(socket_data[socket_data_time_key][target] != null){
+          return_data[socket_data_time_key][target] = socket_data[socket_data_time_key][target]
+        }
+      });
+    }
+  });
+  return return_data;
+}
+
+async function is_socket_privacy_signature_valid(privacy_signature){
+  try{
+    if(privacy_signature != null && privacy_signature != 'e'){
+      const encrypted_signature_data_array = decodeURIComponent(privacy_signature).split('|')
+      const registered_user = encrypted_signature_data_array[0]
+      const encrypted_signature = encrypted_signature_data_array[1]
+      if(userKeysMap.get(registered_user) == null){
+        return false
+      }
+      else{
+        const registered_users_key = userKeysMap.get(registered_user)['key']
+        const decrypted_signature = await decrypt_secure_data(encrypted_signature, registered_users_key)
+        return await is_privacy_signature_valid(decrypted_signature)
+      }
+    }
+  }
+  catch(e){
+    return false
+  }
+}
+
+
 
 
 
@@ -8390,6 +8439,32 @@ app.post(`/${endpoint_info['pre_fetch_object_data']}/:privacy_signature`, async 
   }
 });
 
+/* fetch socket data from a specified set of targets */
+app.post(`/${endpoint_info['socket_data_fetch']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { targets, filter_time } = await process_request_body(req.body);
+  if(targets == null || !Array.isArray(targets) || isNaN(filter_time)){
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    return;
+  }
+  else{
+    const target_data = get_socket_data(targets, filter_time)
+    record_request('/socket_data_fetch')
+    res.send(
+      await encrypt_call_result(
+        JSON.stringify({ message: 'socket_data_fetch request processed Successfully', target_data: target_data, success:true }), registered_users_key
+      )
+    );
+  }
+});
+
+
+
+
 
 
 app.get('/:privacy_signature', async (req, res) => {
@@ -8478,41 +8553,226 @@ async function when_server_killed(){
 
 
 
-// const options = {
-//   key: fs.readFileSync(`${PRIVATE_KEY_RESOURCE}`), 
-//   cert: fs.readFileSync(`${CERTIFICATE_RESOURCE}`)
-//   // set the directory for the keys and cerificates your using here
-// };
+const options = {
+  key: fs.readFileSync(`${PRIVATE_KEY_RESOURCE}`), 
+  cert: fs.readFileSync(`${CERTIFICATE_RESOURCE}`)
+  // set the directory for the keys and cerificates your using here
+};
 
 
-//npm install express web3 crypto-js
-//npm install pm2@latest -g
-//npm install big-integer
-//npm install crypto
-//npm install os
-//npm install check-disk-space
-//npm install mime-types
-//npm install dotenv
-//npm install tweetnacl
-
-//pm2 start server.js --no-daemon
-//pm2 ls
-//pm2 stop all | 0
-//sudo pm2 kill
-//sudo pm2 start server.cjs --no-daemon
-
-//client-cert.pem  contract-listener  package-lock.json
-//client-key.pem   hash_data          package.json
-//client.csr
-
-//or node server.js if youre debugging
-//ps aux | grep node
-//kill [processID]
 
 
 // Start server
-app.listen(4000, when_server_started);// <-------- use this if youre testing, then comment out 'options'
-// https.createServer(options, app).listen(HTTPS_PORT, when_server_started);
+// app.listen(4000, when_server_started);// <-------- use this if youre testing, then comment out 'options'
+const server = https.createServer(options, app)
+const io = new Server(server, { cors: { origin: '*' } });
+
+
+
+
+
+io.on('connection', socket => {
+  /* 
+    you might think that using a Redis adapter here is a good idea but ive elected to keep things like this to maintain a decentralized system. I mean, its all well and good until the adapter itself goes offline for some reason (since its just another server), then the entire system goes offline in the process.
+  */
+  // console.log('User connected:', socket.id);
+
+  socket.on('register', async ({userId, privacy_signature}) => {
+    if(!await is_socket_privacy_signature_valid(privacy_signature)){
+      socket.emit('register_status', { success: false, time: Date.now(), reason: 'invalid privacy signature' });
+    }else{
+      socket.userId = userId;
+      connected_users.set(userId, socket);
+      socket.emit('register_status', { success: true, time: Date.now() });
+    }
+  });
+
+  socket.on('send_message', ({ to, message }) => {
+    if(socket.userId == null){
+      return;
+    }
+    const target = connected_users.get(to);
+    if (target) {
+      target.emit('message', { from: socket.userId, message });
+    } else {
+      // Forward to other nodes
+      Object.values(node_connection_map).forEach(nodeSocket => {
+        nodeSocket.emit('node_message', { to, message });
+      });
+    }
+  });
+
+  socket.on('log_data', ({ target, message }) => {
+    if(socket.userId == null){
+      return;
+    }
+    record_socket_data_for_target(target, message);
+    // Forward to other nodes
+    Object.values(node_connection_map).forEach(nodeSocket => {
+      nodeSocket.emit('log_data', { target, message });
+    });
+  });
+
+
+
+  //-----------------------------------GROUP_CALLS----------------------------------------
+
+  /* when user is joining a room */
+  socket.on("join_room", (roomId) => {
+    console.log(`${socket.id} joining room: ${roomId}`);
+    // Initialize room if it doesn't exist
+
+    if(socket.userId == null){
+      return;
+    }
+
+    if (!rooms[roomId]) {
+      rooms[roomId] = [];
+    }
+    // Get existing users in the room
+    const usersInRoom = rooms[roomId];
+    // Join the room
+    socket.join(roomId);
+    // Notify existing users that a new user joined
+    // They will initiate connections to the new user
+    socket.to(roomId).emit("user_joined", {userId: socket.userId, user_pub_key: 'eee'});
+    
+    // Send existing users to the new joiner
+    // They will wait for connection offers
+    usersInRoom.forEach(userId => {
+      socket.emit("user_in_room", userId);
+    });
+    // Add user to room tracking
+    rooms[roomId].push(socket.userId);
+    console.log(`Room ${roomId} now has ${rooms[roomId].length} users:`, rooms[roomId]);
+  });
+
+  /* when signal is being sent */
+  socket.on("signal", ({ to, data, isInitiator }) => {
+    const signalType = data.type || 'unknown';
+    console.log(`Relaying ${signalType} signal from ${socket.id} to ${to}, isInitiator: ${isInitiator}`);
+    const target = connected_users.get(to);
+    if (isInitiator && signalType === 'offer') {
+      // This is an offer, send it as offer-received
+      if(target) target.emit("offer_received", { from: socket.userId, signal: data });
+    } else {
+      // This is an answer or other signal, relay normally
+      if(target) target.emit("signal", { from: socket.userId, data });
+    }
+  });
+
+  /* when encrypted key is being sent */
+  socket.on('room_key', ({ to, encrypted_key }) => {
+    const target = connected_users.get(to);
+    if(target) target.emit('room_key', encrypted_key);
+  });
+
+  /* when socket is disconnected */
+  socket.on('disconnect', () => {
+    if(socket.userId == null) return;
+    if (socket.userId) connected_users.delete(socket.userId);
+    // Remove user from all rooms
+    Object.keys(rooms).forEach(roomId => {
+      const index = rooms[roomId].indexOf(socket.userId);
+      if (index !== -1) {
+        rooms[roomId].splice(index, 1);
+        // Notify others in the room
+        socket.to(roomId).emit("user_left", socket.userId);
+        // Clean up empty rooms
+        if (rooms[roomId].length === 0) {
+          delete rooms[roomId];
+        }
+        console.log(`User ${socket.userId} removed from room ${roomId}`);
+      }
+    });
+  });
+});
+
+
+
+
+
+
+
+function handle_incoming_node_message({ to, message }) {
+  const target = connected_users.get(to);
+  if (target) {
+    target.emit('message', { from: 'remote', message });
+  } else {
+    // forward to other nodes to ensure full propagation if enabled
+    if(message.propagate_all == true) Object.values(node_connection_map).forEach(n => n.emit('node_message', { to, message }));
+  }
+}
+
+function handle_node_connection_to_new_node(nodeUrl){
+  console.log('Connected to', nodeUrl)
+  node_connection_map[nodeUrl] = nodeSocket
+}
+
+function handle_node_disconnection_from_node(nodeUrl){
+  console.log('Disconnected from ', nodeUrl)
+  delete node_connection_map[nodeUrl];
+}
+
+function record_socket_data_for_target(target, message){
+  const start_today = start_of_day_in_milliseconds()
+  if(socket_data[start_today] == null){
+    socket_data[start_today] = {}
+  }
+  if(socket_data[start_today][target] == null){
+    socket_data[start_today][target] = {}
+  }
+  if(socket_data[start_today][target][message.id] == null){
+    socket_data[start_today][target][message.id] = message
+  }
+}
+
+function start_of_day_in_milliseconds(){
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  return startOfDay.getTime()
+}
+
+function set_up_indexer_mesh_network(){
+  const otherNodes = get_all_nitro_links();
+
+  for (const nodeUrl of otherNodes) {
+    if(node_connection_map[nodeUrl] == null){
+      const nodeSocket = ClientIO(nodeUrl, { transports: ['websocket'], reconnection: true, reconnectionAttempts: 10, reconnectionDelay: 5000 });
+      nodeSocket.on('connect', () => handle_node_connection_to_new_node(nodeUrl));
+      nodeSocket.on('disconnect', () => handle_node_disconnection_from_node(nodeUrl));
+      nodeSocket.on('node_message', handle_incoming_node_message);
+    }
+  }
+}
+
+function get_all_nitro_links(){
+  const nodes = []
+  Object.keys(data['nitro_link_data']).forEach(e5 => {
+    Object.values(data['nitro_link_data'][e5]).forEach(link => {
+      if(!nodes.includes(link)) nodes.push(link)
+    });
+  });
+  return nodes
+}
+
+function delete_old_socket_data(){
+  const keys = Object.keys(socket_data)
+  const cutoff = Date.now() - (3*24*60*60*1000)
+  keys.forEach(time_key => {
+    if(parseInt(time_key) < cutoff){
+      delete socket_data[time_key]
+    }
+  });
+}
+
+
+
+
+
+
+server.listen(HTTPS_PORT, when_server_started);
+
 
 setInterval(attempt_loading_failed_ecids, 53*60*1000)
 setInterval(load_events_for_all_e5s, 2*60*1000);
@@ -8533,11 +8793,14 @@ setTimeout(update_logStream, milliseconds_till_midnight());
 setInterval(write_block_number, 11*1000)
 setInterval(stash_old_trends_in_cold_storage, 20*24*60*60*1000)
 setInterval(trim_block_record_data, 3*24*60*60*1000)
+setInterval(set_up_indexer_mesh_network, 5*60*1000)
+setInterval(delete_old_socket_data, 24*60*60*1000)
 
 
 
 set_up_error_logs_filestream()
 schedule_certificate_renewal()
+set_up_indexer_mesh_network()
 
 
 
