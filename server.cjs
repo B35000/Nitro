@@ -32,8 +32,7 @@ const { exec } = require('child_process');
 const path = require('path');
 // const CryptoJS = require("crypto-js");
 const nacl = require("tweetnacl");
-// const { json } = require('stream/consumers');
-const Server = require('socket.io')
+const { Server } = require('socket.io')
 const ClientIO = require('socket.io-client')
 
 const app = express();
@@ -47,7 +46,7 @@ const CERTIFICATE_RESOURCE = process.env.CERTIFICATE_RESOURCE
 const HTTPS_PORT = process.env.HTTPS_PORT
 const AUTO_CERTIFICATE_RENEWAL_ENABLED = process.env.AUTO_CERTIFICATE_RENEWAL == null ? false : (process.env.AUTO_CERTIFICATE_RENEWAL == 'true'); // <---- change this to false if you dont want auto renewal of https certificates using certbot
 const ENPOINT_UPDATES_ENABLED = process.env.ENPOINT_UPDATES_ENABLED == null ? false : (process.env.ENPOINT_UPDATES_ENABLED == 'true'); // <---- change this to false if you prefer manually updating your node
-const ENDPOINT_URL = process.env.ENDPOINT_URL
+const ENDPOINT_URL = process.env.ENDPOINT_URL // <---- set this value to be the domain for this node.
 var logStream;
 var sync_block_number = 0;
 var server_public_key = null;
@@ -105,6 +104,7 @@ var data = {
   'data_indexes':{},
   'target_storage_space_unit_denomination_multiplier':1,
   'target_storage_streaming_multiplier':0,
+  'voice_calls_subscription_objects':{}
 }
 
 const E5_CONTRACT_ABI = [
@@ -187,6 +187,8 @@ const connected_users = new Map();
 const node_connection_map = {}
 const socket_data = {}
 const rooms = {};
+const forward_ids = {};
+const socket_transaction_times = {};
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -937,7 +939,11 @@ async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_co
   const basic_transaction_data = await e5_contract.methods.f287(accounts).call((error, result) => {});
   accounts.forEach((account, index) => {
     all_users[account]['withdraw_balance'] = withdraw_balance[index]
-    all_users[account]['basic_transaction_data'] = basic_transaction_data[index]
+    if(data[e5]['addresses'][0] == '0xF3895fe95f423A4EBDdD16232274091a320c5284'){
+      all_users[account]['basic_transaction_data'] = basic_transaction_data[index]
+    }else{
+      all_users[account]['basic_transaction_data'] = basic_transaction_data[0][index]
+    }
   });
 
   //load the balance in ether for e5
@@ -961,10 +967,15 @@ async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_co
 
 
   const main_contract_data = await g5_contract.methods.f78([2], true).call((error, result) => {});
-  var primary_account_transaction_data = {}
+  var primary_account_transaction_data = []
   if(main_contract_data[0][1][39] != 0 && main_contract_data[0][1][40] != 0){
     const primary_acc = main_contract_data[0][1][39];
-    primary_account_transaction_data = await e5_contract.methods.f287([primary_acc], false).call((error, result) => {});
+    if(data[e5]['addresses'][0] == '0xF3895fe95f423A4EBDdD16232274091a320c5284'){
+      primary_account_transaction_data = await e5_contract.methods.f287([primary_acc], false).call((error, result) => {});
+    }
+    else{
+      primary_account_transaction_data = (await e5_contract.methods.f287([primary_acc], false).call((error, result) => {}))[0]
+    }
   }
 
 
@@ -2332,10 +2343,9 @@ async function get_subscription_payment_information(e5, signature_data, subscrip
     var payments = await f5_contract.methods.f229([subscription], [[address_account]]).call((error, result) => {});
     var subscription_payment = payments[0][0]
 
-    return {'account':address_account, 'address':original_address, 'expiry_time':subscription_payment, success:false}
+    return {'account':address_account, 'address':original_address, 'expiry_time':subscription_payment, success: true}
   }catch(e){
-    console.log(e)
-    return null
+    return {'account':0, 'address':'', 'expiry_time':0, success: false}
   }
 }
 
@@ -4373,7 +4383,7 @@ function update_logStream(){
 
 
 
-
+/* TODO */
 async function check_if_log_file_exists(file) {
   try {
     await fs.access(file);
@@ -4651,6 +4661,7 @@ function stash_old_trends_in_cold_storage(){
     keys.forEach(timestamp => {
       if(parseInt(timestamp) < cutoff_timestamp){
         record_obj[timestamp] = structuredClone(upload_view_trends_data[timestamp])
+        delete upload_view_trends_data[timestamp]
       }
     });
 
@@ -4749,6 +4760,7 @@ function trim_block_record_data(){
   });
 }
 
+/* here */
 async function record_https_certificate_info(){
   data['certificate_expiry_time'] = await fetch_current_certificate_expiry()
   get_active_interface((err, interfaceName) => {
@@ -5005,7 +5017,7 @@ global.fetch = async (url, options = {}) => {
 };
 
 function set_endpoint_ids(){
-  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch'];
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -6636,42 +6648,6 @@ function process_array_for_indexer_query(arr){
   return '$$:'+arr.join("|");
 }
 
-function get_socket_data(targets, filter_time){
-  const return_data = {}
-  const time_keys = Object.keys(socket_data)
-  time_keys.forEach(socket_data_time_key => {
-    if(parseInt(socket_data_time_key) > filter_time){
-      return_data[socket_data_time_key] = {}
-      targets.forEach(target => {
-        if(socket_data[socket_data_time_key][target] != null){
-          return_data[socket_data_time_key][target] = socket_data[socket_data_time_key][target]
-        }
-      });
-    }
-  });
-  return return_data;
-}
-
-async function is_socket_privacy_signature_valid(privacy_signature){
-  try{
-    if(privacy_signature != null && privacy_signature != 'e'){
-      const encrypted_signature_data_array = decodeURIComponent(privacy_signature).split('|')
-      const registered_user = encrypted_signature_data_array[0]
-      const encrypted_signature = encrypted_signature_data_array[1]
-      if(userKeysMap.get(registered_user) == null){
-        return false
-      }
-      else{
-        const registered_users_key = userKeysMap.get(registered_user)['key']
-        const decrypted_signature = await decrypt_secure_data(encrypted_signature, registered_users_key)
-        return await is_privacy_signature_valid(decrypted_signature)
-      }
-    }
-  }
-  catch(e){
-    return false
-  }
-}
 
 
 
@@ -6680,20 +6656,6 @@ async function is_socket_privacy_signature_valid(privacy_signature){
 
 
 
-
-
-function handle_incoming_node_message({ to, message }) {
-  if(get_object_size_in_kbs(message) > 24){
-    return;
-  }
-  const target = connected_users.get(to);
-  if (target) {
-    target.emit('message', { from: message.author, message, remote: true });
-  } else {
-    // forward to other nodes to ensure full propagation if enabled
-    if(message.propagate_all == true) Object.values(node_connection_map).forEach(n => n.emit('node_message', { to, message }));
-  }
-}
 
 function handle_node_connection_to_new_node(nodeUrl){
   console.log('Connected to', nodeUrl)
@@ -6705,7 +6667,7 @@ function handle_node_disconnection_from_node(nodeUrl){
   delete node_connection_map[nodeUrl];
 }
 
-function record_socket_data_for_target(target, message){
+function record_socket_data_for_target(target, message, object_hash){
   const start_today = start_of_day_in_milliseconds()
   if(socket_data[start_today] == null){
     socket_data[start_today] = {}
@@ -6713,8 +6675,8 @@ function record_socket_data_for_target(target, message){
   if(socket_data[start_today][target] == null){
     socket_data[start_today][target] = {}
   }
-  if(socket_data[start_today][target][message.id] == null){
-    socket_data[start_today][target][message.id] = message
+  if(socket_data[start_today][target][object_hash] == null){
+    socket_data[start_today][target][object_hash] = message
   }
 }
 
@@ -6729,14 +6691,22 @@ function set_up_indexer_mesh_network(){
 
   for (const nodeUrl of otherNodes) {
     if(node_connection_map[nodeUrl] == null){
-      const nodeSocket = ClientIO(nodeUrl, { transports: ['websocket'], reconnection: true, reconnectionAttempts: 10, reconnectionDelay: 5000 });
+      const nodeSocket = ClientIO(nodeUrl, { 
+        transports: ['websocket'], 
+        reconnection: true, 
+        reconnectionAttempts: 10, 
+        reconnectionDelay: 5000 
+      });
+
       nodeSocket.on('connect', () => handle_node_connection_to_new_node(nodeUrl));
       nodeSocket.on('disconnect', () => handle_node_disconnection_from_node(nodeUrl));
-      nodeSocket.on('node_message', handle_incoming_node_message);
-      nodeSocket.on('forward_joined_room', handle_user_joined_room_message)
-      nodeSocket.on('forward_signal', handle_signal_message)
-      nodeSocket.on('forward_room_key', handle_room_key_message)
-      nodeSocket.on('forward_user_left', handle_user_left_message)
+      nodeSocket.on('forward_send_message', handle_user_send_message);
+      nodeSocket.on('forward_joined_room', handle_user_joined_room_message);
+      nodeSocket.on('forward_signal', handle_signal_message);
+      nodeSocket.on('forward_room_message', handle_room_message);
+      nodeSocket.on('forward_user_left', handle_user_left_message);
+      nodeSocket.on('forward_joined_chatroom', handle_user_joined_chatroom_message);
+      nodeSocket.on('forward_chatroom_message', handle_chatroom_message);
     }
   }
 }
@@ -6751,16 +6721,6 @@ function get_all_nitro_links(){
   return nodes
 }
 
-function delete_old_socket_data(){
-  const keys = Object.keys(socket_data)
-  const cutoff = Date.now() - (3*24*60*60*1000)
-  keys.forEach(time_key => {
-    if(parseInt(time_key) < cutoff){
-      delete socket_data[time_key]
-    }
-  });
-}
-
 function get_object_size_in_kbs(obj) {
   const bytes = new TextEncoder().encode(JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)).length;
   return (bytes / (1024)).toFixed(2); // Convert bytes to KB
@@ -6770,28 +6730,54 @@ function get_object_size_in_kbs(obj) {
 
 
 
+function handle_user_send_message({ to, message, forward_id, target, object_hash, secondary_target, forward_origin }) {
+  if(does_forward_id_exist(forward_id) || get_object_size_in_kbs(message) > 24 && !ensure_valid_message(message, object_hash)){
+    return;
+  }
+  const userId_target = connected_users.get(to);
+  if (userId_target) {
+    userId_target.emit('send_message', { from: message.author, message, remote: true, target, object_hash });
+  } else {
+    // forward to other nodes to ensure full propagation if enabled
+    Object.entries(node_connection_map).forEach(([url, n]) => {
+      if(url != forward_origin) n.emit('forward_send_message', { to, message, forward_id, target, object_hash, secondary_target, forward_origin })
+    });
+  }
 
-function handle_user_joined_room_message({roomId, userId, user_pub_key}){
+  record_socket_data_for_target(target, message, object_hash);
+  record_socket_data_for_target(secondary_target, message, object_hash);
+}
+
+function handle_user_joined_room_message({roomId, userId, forward_id, forward_origin}){
+  if(does_forward_id_exist(forward_id)) return;
   if (!rooms[roomId]) {
     rooms[roomId] = [];
   }
   const usersInRoom = rooms[roomId];
   const userId_target = connected_users.get(userId);
+
+  if(usersInRoom.length > 0){
+    const existing_userId_target = connected_users.get(usersInRoom[0]);
+    if(existing_userId_target){
+      existing_userId_target.to(roomId).emit("user_joined", {userId, roomId});
+    }
+  }
   
   usersInRoom.forEach(existing_user => {
     if(userId_target){
-      userId_target.emit("user_in_room", existing_user);
-    } 
-    const existing_userId_target = connected_users.get(existing_user);
-    if(existing_userId_target){
-      existing_userId_target.emit("user_joined", {userId: userId, user_pub_key});
+      userId_target.emit("user_in_room", {userId: existing_user, roomId});
     }
   });
 
   rooms[roomId].push(userId);
+
+  Object.entries(node_connection_map).forEach(([url, n]) => {
+    if(url != forward_origin) n.emit('forward_joined_room', { roomId, userId, forward_id, forward_origin })
+  });
 }
 
-function handle_signal_message({from, to, data, isInitiator}){
+function handle_signal_message({from, to, data, isInitiator, forward_id, forward_origin}){
+  if(does_forward_id_exist(forward_id)) return;
   const signalType = data.type || 'unknown';
   const target = connected_users.get(to);
   if(target){
@@ -6803,25 +6789,336 @@ function handle_signal_message({from, to, data, isInitiator}){
       if(target) target.emit("signal", { from, data });
     }
   }
+
+  Object.entries(node_connection_map).forEach(([url, n]) => {
+    if(url != forward_origin) n.emit('forward_signal', { from, to, data, isInitiator, forward_id, forward_origin })
+  });
 }
 
-function handle_room_key_message({to, encrypted_key}){
-  const target = connected_users.get(to);
-  if(target) target.emit('room_key', encrypted_key);
+function handle_room_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
+  if(does_forward_id_exist(forward_id) && !ensure_valid_message(message, object_hash)) return;
+  const usersInRoom = rooms[roomId];
+  if(usersInRoom.length > 0){
+    const existing_userId_target = connected_users.get(usersInRoom[0]);
+    if(existing_userId_target){
+      existing_userId_target.to(roomId).emit("room_message", {userId, message, roomId, target, object_hash});
+      record_socket_data_for_target(target, message, object_hash);
+    }
+  }
+  Object.entries(node_connection_map).forEach(([url, n]) => {
+    if(url != forward_origin) n.emit('forward_room_message', { userId, roomId, message, forward_id, target, object_hash, forward_origin })
+  });
 }
 
-function handle_user_left_message({userId, roomId}){
+function handle_user_left_message({userId, roomId, forward_id, forward_origin}){
+  if(does_forward_id_exist(forward_id)) return;
   if(rooms[roomId] != null){
     const index = rooms[roomId].indexOf(userId);
     if (index !== -1) {
       rooms[roomId].splice(index, 1);
+      const usersInRoom = rooms[roomId];
+      if(usersInRoom.length > 0){
+        const existing_userId_target = connected_users.get(usersInRoom[0]);
+        if(existing_userId_target){
+          existing_userId_target.to(roomId).emit("user_left", {userId, roomId});
+        }
+      }
     }
+    
     if (rooms[roomId].length === 0) {
       delete rooms[roomId];
     }
   }
+
+  Object.entries(node_connection_map).forEach(([url, n]) => {
+    if(url != forward_origin) n.emit('forward_user_left', { userId, roomId, forward_id, forward_origin })
+  });
 }
 
+function handle_user_joined_chatroom_message({roomId, userId, forward_id, forward_origin}){
+  if(does_forward_id_exist(forward_id)) return;
+  if (!rooms[roomId]) {
+    rooms[roomId] = [];
+  }
+  const usersInRoom = rooms[roomId];
+  if(usersInRoom.length > 0){
+    const existing_userId_target = connected_users.get(usersInRoom[0]);
+    if(existing_userId_target){
+      existing_userId_target.to(roomId).emit("user_joined_chatroom", {userId, roomId});
+    }
+  }
+
+  const userId_target = connected_users.get(userId);
+  usersInRoom.forEach(existing_user => {
+    if(userId_target){
+      userId_target.emit("user_in_chatroom", {userId: existing_user, roomId});
+    }
+  });
+
+  rooms[roomId].push(userId);
+
+  Object.entries(node_connection_map).forEach(([url, n]) => {
+    if(url != forward_origin) n.emit('forward_joined_chatroom', { roomId, userId, forward_id, forward_origin })
+  });
+}
+
+function handle_chatroom_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
+  if(does_forward_id_exist(forward_id) && !ensure_valid_message(message, object_hash)) return;
+  const usersInRoom = rooms[roomId];
+  if(usersInRoom.length > 0){
+    const existing_userId_target = connected_users.get(usersInRoom[0]);
+    if(existing_userId_target){
+      existing_userId_target.to(roomId).emit("chatroom_message", {userId, message, roomId, target, object_hash});
+      record_socket_data_for_target(target, message, object_hash);
+    }
+  }
+  Object.entries(node_connection_map).forEach(([url, n]) => {
+    if(url != forward_origin) n.emit('forward_chatroom_message', { userId, roomId, message, forward_id, target, object_hash, forward_origin })
+  });
+}
+
+
+
+
+
+
+
+function stash_old_socket_data_in_cold_storage(){
+  const keys = Object.keys(socket_data)
+  if(keys.length > 0){
+    const record_obj = {}
+    const cutoff_timestamp = Date.now() - (10*60*1000)
+    keys.forEach(timestamp => {
+      if(parseInt(timestamp) < cutoff_timestamp){
+        record_obj[timestamp] = structuredClone(socket_data[timestamp])
+        delete socket_data[timestamp]
+      }
+    });
+
+    if(Object.keys(record_obj).length > 0){
+      write_stat_to_cold_storage(record_obj, 'socket_data_history', 'cold_storage_socket_data_records', true)
+    }
+  }
+}
+
+async function get_socket_data(targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, target_channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time){
+  const return_data = {}
+  const time_keys = Object.keys(socket_data)
+  const filter_object_function = (target_object) => {
+    const filter_object_return_obj = structuredClone(target_object)
+    if(target_channeling != ''){
+      filter_object_return_obj = Object.fromEntries(
+        Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['channeling'] == target_channeling)
+      );
+    }
+    if(target_e5 != ''){
+      filter_object_return_obj = Object.fromEntries(
+        Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['e5'] == target_e5)
+      );
+    }
+    if(target_lan != ''){
+      filter_object_return_obj = Object.fromEntries(
+        Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['lan'] == target_lan)
+      );
+    }
+    if(target_state != ''){
+      filter_object_return_obj = Object.fromEntries(
+        Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['state'] == target_state)
+      );
+    }
+    if(filter_authors.length > 0){
+      filter_object_return_obj = Object.fromEntries(
+        Object.entries(filter_object_return_obj).filter(([key, value]) =>  filter_authors.includes(value['author']))
+      );
+    }
+    if(filter_recipients.length > 0){
+      filter_object_return_obj = Object.fromEntries(
+        Object.entries(filter_object_return_obj).filter(([key, value]) =>  filter_recipients.includes(value['recipient']))
+      );
+    }
+    if(filter_tags.length > 0){
+      const filter_fun = (target_array, filter_tags) => {
+        const setA = new Set(target_array);
+        return filter_tags.some(el => setA.has(el));
+      }
+      filter_object_return_obj = Object.fromEntries(
+        Object.entries(filter_object_return_obj).filter(([key, value]) =>  filter_fun(value['tags'], filter_tags))
+      );
+    }
+    if(all_tags_present.length > 0){
+      const filter_all_fun = (target_array, filter_tags) => {
+        const setA = new Set(target_array);
+        return filter_tags.every(el => setA.has(el));
+      }
+      filter_object_return_obj = Object.fromEntries(
+        Object.entries(filter_object_return_obj).filter(([key, value]) =>  filter_all_fun(value['tags'], all_tags_present))
+      );
+    }
+    return filter_object_return_obj
+  }
+  time_keys.forEach(socket_data_time_key => {
+    if(parseInt(socket_data_time_key) >= filter_end_time && parseInt(socket_data_time_key) <= parseInt(filter_start_time)){
+      return_data[socket_data_time_key] = {}
+      targets.forEach(target => {
+        if(socket_data[socket_data_time_key][target] != null){
+          return_data[socket_data_time_key][target] = filter_object_function(socket_data[socket_data_time_key][target])
+        }
+      });
+    }
+  });
+
+  const selected_cold_storage_request_stat_files = data['cold_storage_socket_data_records'].filter(function (time) {
+    return (parseInt(time) >= parseInt(filter_end_time) && parseInt(time) <= parseInt(filter_start_time))
+  }).reverse();
+
+  for(var i=0; i<selected_cold_storage_request_stat_files; i++){
+    if(get_object_size_in_kbs(return_data) > size_limit_in_kbs) continue;
+    const focused_file = selected_cold_storage_request_stat_files[i]
+    const object = await read_file(focused_file, 'socket_data_history')
+    const time_keys = Object.keys(object)
+    time_keys.forEach(socket_data_time_key => {
+      if(parseInt(socket_data_time_key) > filter_time){
+        return_data[socket_data_time_key] = {}
+        targets.forEach(target => {
+          if(object[socket_data_time_key][target] != null){
+            return_data[socket_data_time_key][target] = filter_object_function(object[socket_data_time_key][target])
+          }
+        });
+      }
+    });
+  }
+
+  return return_data;
+}
+
+async function is_socket_privacy_signature_valid(privacy_signature, e5, signature, signature_data, userId){
+  try{
+    if(privacy_signature != null && privacy_signature != 'e' && data['e'].includes(e5)){
+      const encrypted_signature_data_array = decodeURIComponent(privacy_signature).split('|')
+      const registered_user = encrypted_signature_data_array[0]
+      const encrypted_signature = encrypted_signature_data_array[1]
+      if(userKeysMap.get(registered_user) == null || is_e5_locked(e5) || !await is_signature_valid(signature, e5, signature_data, userId)){
+        return false
+      }
+      else{
+        const registered_users_key = userKeysMap.get(registered_user)['key']
+        const decrypted_signature = await decrypt_secure_data(encrypted_signature, registered_users_key)
+        return await is_privacy_signature_valid(decrypted_signature)
+      }
+    }
+    return false
+  }
+  catch(e){
+    return false
+  }
+}
+
+function is_e5_locked(e5){
+  try{
+    const primary_account_transaction_data = data['data_indexes'][e5]['primary_account_transaction_data'];
+    const main_contract = data['data_indexes'][e5]['created_contract_data'][2];
+    const primary_account_last_tx_time = primary_account_transaction_data[0][1/* last_transaction_time */]
+    const time_diff = (Date.now()/1000) - parseInt(primary_account_last_tx_time)
+    return time_diff > main_contract[1][40];
+  }catch(e){
+    return false;
+  }
+}
+
+async function is_signature_valid(signature, e5, signature_data, userId){
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+  try{
+    if(parseInt(signature_data) < (Date.now() - (5*60*1000))){
+      return false
+    }
+    const original_address = await web3.eth.accounts.recover(signature_data.toString(), signature)
+    const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
+    const accounts = await e5_contract.methods.f167([],[original_address], 2).call((error, result) => {});
+    const does_account_exist = accounts[0] != 0 && accounts[0] > 1000
+    const balance = await web3.eth.getBalance(original_address)
+    const required_balance = bigInt(data['target_minimum_balance_amounts'][e5]) || bigInt(1)
+    const does_account_have_enough_ether = !bigInt(balance).isZero() && bigInt(balance).greaterOrEquals(required_balance)
+    return does_account_exist == true && does_account_have_enough_ether == true && original_address == userId;
+  }catch(e){
+    return false
+  }
+}
+
+function does_forward_id_exist(forward_id){
+  if(forward_ids[forward_id] == null){
+    forward_ids[forward_id] = Date.now()
+    return false
+  }
+  return true;
+}
+
+function delete_old_forward_data(){
+  const cut_off_timestamp = Date.now() - (60*60*1000)
+  Object.keys(forward_ids).forEach(forward_id => {
+    if(forward_ids[forward_id] < cut_off_timestamp){
+      delete forward_ids[forward_id]
+    }
+  });
+}
+
+
+
+
+
+
+
+
+async function has_user_paid_subscription_for_calls_functionality(signature, signature_data, e5){
+  if(!data['e'].includes(e5)){
+    return false
+  }
+  if(data['voice_calls_subscription_objects'][e5] == null && Object.keys(data['voice_calls_subscription_objects']).length > 0){
+    return false;
+  }
+  else if(Object.keys(data['voice_calls_subscription_objects']).length == 0){
+    return true;
+  }
+
+  const subscription_id = data['voice_calls_subscription_objects'][e5]
+  const account_payment_information = await get_subscription_payment_information(e5, signature_data, subscription_id, signature)
+
+  return account_payment_information['expiry_time'] > Date.now() / 1000
+}
+
+function is_users_transaction_valid(userId){
+  if(socket_transaction_times[userId] == null){
+    socket_transaction_times[userId] = Date.now()
+    return true
+  }else{
+    const difference = Date.now() - socket_transaction_times[userId]
+    if(difference < (5*1000)){
+      socket_transaction_times[userId] = Date.now()
+      return false
+    }else{
+      socket_transaction_times[userId] = Date.now()
+      return true
+    }
+  }
+}
+
+function delete_old_transaction_id_data(){
+  const cut_off_timestamp = Date.now() - (60*60*1000)
+  Object.keys(socket_transaction_times).forEach(userId => {
+    if(socket_transaction_times[userId] < cut_off_timestamp){
+      delete socket_transaction_times[userId]
+    }
+  });
+}
+
+function ensure_valid_message(message, hash){
+  const message_string = (JSON.stringify(message, (_, v) => typeof v === 'bigint' ? v.toString() : v));
+  const message_hash = hash_my_data(message_string)
+  return message_hash == hash;
+}
+
+function record_object_tags_if_any(target, message){
+  if(target == 'jobs' || target == 'posts') record_trend('uploads', message['tags'], message['lan'], message['state'], message['item_type'], {});
+}
 
 
 
@@ -8562,7 +8859,7 @@ app.post(`/${endpoint_info['pre_launch_fetch']}/:privacy_signature`, async (req,
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
     return;
   }
-});//ok ----
+});//ok----
 
 /* endpoint for fetching app section object data */
 app.post(`/${endpoint_info['pre_fetch_object_data']}/:privacy_signature`, async (req, res) => {
@@ -8588,7 +8885,7 @@ app.post(`/${endpoint_info['pre_fetch_object_data']}/:privacy_signature`, async 
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
     return;
   }
-});
+});//ok-------
 
 /* fetch socket data from a specified set of targets */
 app.post(`/${endpoint_info['socket_data_fetch']}/:privacy_signature`, async (req, res) => {
@@ -8597,17 +8894,44 @@ app.post(`/${endpoint_info['socket_data_fetch']}/:privacy_signature`, async (req
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  const { targets, filter_time } = await process_request_body(req.body);
-  if(targets == null || !Array.isArray(targets) || isNaN(filter_time)){
+  const { targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time } = await process_request_body(req.body);
+  if(targets == null || !Array.isArray(targets) || isNaN(filter_end_time) || !Array.isArray(filter_tags) || !Array.isArray(filter_authors) || !Array.isArray(filter_recipients) || !Array.isArray(all_tags_present) || channeling == null || target_e5 == null || target_lan == null || target_state == null || isNaN(size_limit_in_kbs) || isNaN(filter_start_time) || filter_end_time > filter_start_time){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
   else{
-    const target_data = get_socket_data(targets, filter_time)
+    const target_data = await get_socket_data(targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time);
     record_request('/socket_data_fetch')
     res.send(
       await encrypt_call_result(
         JSON.stringify({ message: 'socket_data_fetch request processed Successfully', target_data: target_data, success:true }), registered_users_key
+      )
+    );
+  }
+});
+
+/* fetch socket data from a specified set of targets */
+app.post(`/${endpoint_info['accounts_in_room']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  const { account_ids, room_id } = await process_request_body(req.body);
+  if(!Array.isArray(account_ids)){
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    return;
+  }
+  else{
+    const return_object = {}
+    account_ids.forEach(account_id => {
+      return_object[account_id] = rooms[room_id].includes(account_id)
+    });
+    
+    record_request('/accounts_in_room')
+    res.send(
+      await encrypt_call_result(
+        JSON.stringify({ message: 'Account lookup successful', return_object: return_object, success:true }), registered_users_key
       )
     );
   }
@@ -8714,7 +9038,7 @@ const options = {
 
 
 // Start server
-// app.listen(4000, when_server_started);// <-------- use this if youre testing, then comment out 'options'
+// app.listen(4000, when_server_started); // <-------- use this if youre testing, then comment out 'options'
 const server = https.createServer(options, app)
 const io = new Server(server, { cors: { origin: '*' } });
 
@@ -8728,69 +9052,54 @@ io.on('connection', socket => {
   */
 
   /* register user in current node */
-  socket.on('register', async ({userId, privacy_signature}) => {
-    if(!await is_socket_privacy_signature_valid(privacy_signature)){
-      socket.emit('register_status', { success: false, time: Date.now(), reason: 'invalid privacy signature' });
+  socket.on('register', async ({userId, signature, signature_data, privacy_signature, e5}) => {
+    if(!await is_socket_privacy_signature_valid(privacy_signature, e5, signature, signature_data, userId)){
+      socket.emit('register_status', { success: false, time: Date.now(), reason: 'invalid privacy signature', userId });
     }else{
       socket.userId = userId;
       connected_users.set(userId, socket);
-      socket.emit('register_status', { success: true, time: Date.now() });
+      socket.emit('register_status', { success: true, time: Date.now(), reason: 'signature accepted', userId });
     }
   });
 
   /* send message to another account in indexer or across network */
-  socket.on('send_message', ({ to, message, log_message }) => {
-    /* 
+  socket.on('send_message', ({ to, message, target, object_hash, secondary_target }) => {
+    /*
       message structure:
-      { 
-        target: str, 
-        propagate_all: bool, 
-        author: str, 
-        data: str  
+      {
+        type: str
+        author: str,
+        recipient: str,
+        tags: arr<str>,
+        channeling: str,
+        e5: str,
+        lan: str,
+        state: str,
+        data: str
       }
     */
-    if(socket.userId == null || get_object_size_in_kbs(message) > 24){
+    if(socket.userId == null || get_object_size_in_kbs(message) > 24 || !is_users_transaction_valid(socket.userId)){
       return;
     }
-    const target = connected_users.get(to);
-    if (target) {
-      target.emit('message', { from: socket.userId, message, remote: false });
-      if(log_message == true){
-        record_socket_data_for_target(message.target, message);
-      }
+    socket.emit('send_message', { from: socket.userId, message, target, object_hash });
+    const user_target = connected_users.get(to);
+    if (user_target) {
+      user_target.emit('send_message', { from: socket.userId, message, target, object_hash });
     } else {
       // Forward to other nodes
+      const forward_id = makeid(35)
       Object.values(node_connection_map).forEach(nodeSocket => {
-        nodeSocket.emit('node_message', { to, message, log_message });
+        nodeSocket.emit('forward_send_message', { to, message, forward_id: forward_id, target, object_hash, secondary_target, forward_origin: ENDPOINT_URL});
       });
     }
+    record_socket_data_for_target(target, message, object_hash);
+    record_socket_data_for_target(secondary_target, message, object_hash);
   });
 
-  /* log some data in the node */
-  socket.on('log_data', ({ target, message }) => {
-    if(socket.userId == null || get_object_size_in_kbs(message) > 24){
-      return;
-    }
-    record_socket_data_for_target(target, message);
-    // Forward to other nodes
-    Object.values(node_connection_map).forEach(nodeSocket => {
-      nodeSocket.emit('log_data', { target, message });
-    });
-  });
-
-
-
-  //-----------------------------------GROUP_CALLS----------------------------------------
-
-  /* when user is joining a room */
-  socket.on("join_room", (roomId) => {
-    console.log(`${socket.id} joining room: ${roomId}`);
+  /* when user is joining a chatroom */
+  socket.on("join_chatroom", async (roomId) => {
+    if(socket.userId == null || !is_users_transaction_valid(socket.userId))return;
     // Initialize room if it doesn't exist
-
-    if(socket.userId == null){
-      return;
-    }
-
     if (!rooms[roomId]) {
       rooms[roomId] = [];
     }
@@ -8800,27 +9109,75 @@ io.on('connection', socket => {
     socket.join(roomId);
     // Notify existing users that a new user joined
     // They will initiate connections to the new user
-    socket.to(roomId).emit("user_joined", {userId: socket.userId, user_pub_key: 'eee'});
+    socket.to(roomId).emit("user_joined_chatroom", {userId: socket.userId, roomId});
     
     // Send existing users to the new joiner
     // They will wait for connection offers
     usersInRoom.forEach(userId => {
-      socket.emit("user_in_room", userId);
+      socket.emit("user_in_chatroom", {userId, roomId});
     });
     // Add user to room tracking
     rooms[roomId].push(socket.userId);
-    console.log(`Room ${roomId} now has ${rooms[roomId].length} users:`, rooms[roomId]);
 
     // Forward to other nodes
+    const forward_id = makeid(35)
     Object.values(node_connection_map).forEach(nodeSocket => {
-      nodeSocket.emit('forward_joined_room', { roomId, userId: socket.userId, user_pub_key: 'eee' });
+      nodeSocket.emit('forward_joined_chatroom', { roomId, userId: socket.userId, forward_id: forward_id, forward_origin: ENDPOINT_URL });
+    });
+  });
+
+  /* when chatroom message is broadcasted */
+  socket.on('chatroom_message', ({ roomId, message, target, object_hash }) => {
+    if(socket.userId == null || !is_users_transaction_valid(socket.userId)) return;
+    socket.to(roomId).emit("chatroom_message", {userId: socket.userId, message, roomId, target, object_hash});
+    record_socket_data_for_target(target, message, object_hash);
+    record_object_tags_if_any(target, message)
+
+    // Forward to other nodes
+    const forward_id = makeid(35)
+    Object.values(node_connection_map).forEach(nodeSocket => {
+      nodeSocket.emit('forward_chatroom_message', { userId: socket.userId, roomId, message, forward_id: forward_id, target, object_hash, forward_origin: ENDPOINT_URL });
+    });
+  });
+
+
+
+  //-----------------------------------CALLS----------------------------------------
+
+  /* when user is joining a room */
+  socket.on("join_room", async ({roomId, signature, signature_data, e5}) => {
+    if(socket.userId == null || !await has_user_paid_subscription_for_calls_functionality(signature, signature_data, e5) || !is_users_transaction_valid(socket.userId))return;
+    // Initialize room if it doesn't exist
+    if (!rooms[roomId]) {
+      rooms[roomId] = [];
+    }
+    // Get existing users in the room
+    const usersInRoom = rooms[roomId];
+    // Join the room
+    socket.join(roomId);
+    // Notify existing users that a new user joined
+    // They will initiate connections to the new user
+    socket.to(roomId).emit("user_joined", {userId: socket.userId, roomId});
+    
+    // Send existing users to the new joiner
+    // They will wait for connection offers
+    usersInRoom.forEach(userId => {
+      socket.emit("user_in_room", {userId, roomId});
+    });
+    // Add user to room tracking
+    rooms[roomId].push(socket.userId);
+
+    // Forward to other nodes
+    const forward_id = makeid(35)
+    Object.values(node_connection_map).forEach(nodeSocket => {
+      nodeSocket.emit('forward_joined_room', { roomId, userId: socket.userId, forward_id: forward_id, forward_origin: ENDPOINT_URL });
     });
   });
 
   /* when signal is being sent */
-  socket.on("signal", ({ to, data, isInitiator }) => {
+  socket.on("signal", async ({ to, data, isInitiator, signature, signature_data, e5 }) => {
+    if(socket.userId == null || !is_users_transaction_valid(socket.userId) || !await has_user_paid_subscription_for_calls_functionality(signature, signature_data, e5)) return;
     const signalType = data.type || 'unknown';
-    console.log(`Relaying ${signalType} signal from ${socket.id} to ${to}, isInitiator: ${isInitiator}`);
     const target = connected_users.get(to);
     if(target){
       if (isInitiator && signalType === 'offer') {
@@ -8832,21 +9189,44 @@ io.on('connection', socket => {
       }
     }else{
       // Forward to other nodes
+      const forward_id = makeid(35)
       Object.values(node_connection_map).forEach(nodeSocket => {
-        nodeSocket.emit('forward_signal', { from: socket.userId, to, data, isInitiator });
+        nodeSocket.emit('forward_signal', { from: socket.userId, to, data, isInitiator, forward_id: forward_id, forward_origin: ENDPOINT_URL});
       });
     }
   });
 
-  /* when encrypted key is being sent */
-  socket.on('room_key', ({ to, encrypted_key }) => {
-    const target = connected_users.get(to);
-    if(target) target.emit('room_key', encrypted_key);
+  /* when room message is sent */
+  socket.on('room_message', async ({ roomId, message, signature, signature_data, e5, target, object_hash }) => {
+    if(socket.userId == null || !is_users_transaction_valid(socket.userId) || !await has_user_paid_subscription_for_calls_functionality(signature, signature_data, e5)) return;
+    socket.to(roomId).emit("room_message", {userId: socket.userId, message, roomId, target});
+    record_socket_data_for_target(target, message, object_hash);
 
     // Forward to other nodes
+    const forward_id = makeid(35)
     Object.values(node_connection_map).forEach(nodeSocket => {
-      nodeSocket.emit('forward_room_key', { to, encrypted_key });
+      nodeSocket.emit('forward_room_message', { userId: socket.userId, roomId, message, forward_id: forward_id, target, object_hash, forward_origin: ENDPOINT_URL });
     });
+  });
+
+  /* when user leaves room */
+  socket.on('leave_room', (roomId) => {
+    if(socket.userId == null || !is_users_transaction_valid(socket.userId)) return;
+    const index = rooms[roomId].indexOf(socket.userId);
+    if (index !== -1) {
+      rooms[roomId].splice(index, 1);
+      // Notify others in the room
+      socket.to(roomId).emit("user_left", {userId: socket.userId, roomId});
+      // Forward to other nodes
+      const forward_id = makeid(35)
+      Object.values(node_connection_map).forEach(nodeSocket => {
+        nodeSocket.emit('forward_user_left', { userId: socket.userId, roomId, forward_id: forward_id, forward_origin: ENDPOINT_URL });
+      });
+      // Clean up empty rooms
+      if (rooms[roomId].length === 0) {
+        delete rooms[roomId];
+      }
+    }
   });
 
   /* when socket is disconnected */
@@ -8859,19 +9239,20 @@ io.on('connection', socket => {
       if (index !== -1) {
         rooms[roomId].splice(index, 1);
         // Notify others in the room
-        socket.to(roomId).emit("user_left", socket.userId);
+        socket.to(roomId).emit("user_left", {userId: socket.userId, roomId});
         // Forward to other nodes
+        const forward_id = makeid(35)
         Object.values(node_connection_map).forEach(nodeSocket => {
-          nodeSocket.emit('forward_user_left', { userId: socket.userId, roomId });
+          nodeSocket.emit('forward_user_left', { userId: socket.userId, roomId, forward_id: forward_id, forward_origin: ENDPOINT_URL });
         });
         // Clean up empty rooms
         if (rooms[roomId].length === 0) {
           delete rooms[roomId];
         }
-        console.log(`User ${socket.userId} removed from room ${roomId}`);
       }
     });
   });
+
 });
 
 
@@ -8900,7 +9281,9 @@ setInterval(write_block_number, 11*1000)
 setInterval(stash_old_trends_in_cold_storage, 20*24*60*60*1000)
 setInterval(trim_block_record_data, 3*24*60*60*1000)
 setInterval(set_up_indexer_mesh_network, 5*60*1000)
-setInterval(delete_old_socket_data, 24*60*60*1000)
+setInterval(stash_old_socket_data_in_cold_storage, 10*60*1000)
+setInterval(delete_old_forward_data, 60*60*1000)
+setInterval(delete_old_transaction_id_data, 60*60*1000)
 
 
 
