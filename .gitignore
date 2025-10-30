@@ -24,8 +24,15 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+
+/backup_data
+/logs
+/object_data
+/socket_data_history
+
 .env
 .testfile.js
 .testfile2.js
 stuff.cjs
 calls.cjs
+.gitignore

@@ -34,6 +34,7 @@ const path = require('path');
 const nacl = require("tweetnacl");
 const { Server } = require('socket.io')
 const ClientIO = require('socket.io-client')
+const { createServer } = require('http');
 
 const app = express();
 app.use(cors());
@@ -104,7 +105,8 @@ var data = {
   'data_indexes':{},
   'target_storage_space_unit_denomination_multiplier':1,
   'target_storage_streaming_multiplier':0,
-  'voice_calls_subscription_objects':{}
+  'voice_calls_subscription_objects':{},
+  'cold_storage_socket_data_records':[],
 }
 
 const E5_CONTRACT_ABI = [
@@ -1257,7 +1259,7 @@ async function resolve_objects_in_specific_files(data_object, data_type, e5){
   const content_redistribution_object = {}
   const object_ids = Object.keys(data_object)
   object_ids.forEach(object_id => {
-    const general_bucket_identifier = Math.floor(object_id / 100_000)
+    const general_bucket_identifier = Math.floor(parseInt(object_id) / 100_000)
     if(content_redistribution_object[general_bucket_identifier] == null){
       content_redistribution_object[general_bucket_identifier] = {}
     }
@@ -1359,7 +1361,7 @@ async function remove_existing_updates_after_specific_block(e5, reorg_block_numb
 async function unresolve_objects_in_specific_files(object_ids, e5){
   const content_redistribution_object = {}
   object_ids.forEach(object_id => {
-    const general_bucket_identifier = Math.floor(object_id / 100_000)
+    const general_bucket_identifier = Math.floor(parseInt(object_id) / 100_000)
     if(content_redistribution_object[general_bucket_identifier] == null){
       content_redistribution_object[general_bucket_identifier] = {}
     }
@@ -1462,7 +1464,7 @@ async function fetch_objects_in_specific_files(object_ids, data_type, e5){
   }
   else{
     object_ids.forEach(object_id => {
-      const general_bucket_identifier = Math.floor(object_id / 100_000)
+      const general_bucket_identifier = Math.floor(parseInt(object_id) / 100_000)
       if(content_redistribution_object[general_bucket_identifier] == null){
         content_redistribution_object[general_bucket_identifier] = []
       }
@@ -2412,7 +2414,10 @@ async function filter_events(requested_e5, requested_contract, requested_event_i
       const is_array = filter[key].toString().startsWith('$$:')
       const filter_key = is_array == true ? filter[key].slice(3).split("|") : filter[key]
       if(is_array == true){
-        const hasPrefix = filter_key.some(item => eventt['returnValues'][key].startsWith(item));
+        const isString = (value) =>{
+          return typeof value === 'string' || value instanceof String;
+        }
+        const hasPrefix = filter_key.some(item => isString(eventt['returnValues'][key]) && eventt['returnValues'][key].toString().startsWith(item));
         if(!filter_key.includes(eventt['returnValues'][key].toString()) && eventt['returnValues'][key] != filter_key && !hasPrefix){
           accepted = false
         }
@@ -6668,7 +6673,7 @@ function handle_node_disconnection_from_node(nodeUrl){
 }
 
 function record_socket_data_for_target(target, message, object_hash){
-  const start_today = start_of_day_in_milliseconds()
+  const start_today = (Math.floor(Date.now() / (10*60*1000))) * (10*60*1000)
   if(socket_data[start_today] == null){
     socket_data[start_today] = {}
   }
@@ -6680,11 +6685,11 @@ function record_socket_data_for_target(target, message, object_hash){
   }
 }
 
-function start_of_day_in_milliseconds(){
-  const startOfDay = new Date();
-  startOfDay.setHours(0, 0, 0, 0);
-  return startOfDay.getTime()
-}
+// function start_of_day_in_milliseconds(){
+//   const startOfDay = new Date();
+//   startOfDay.setHours(0, 0, 0, 0);
+//   return startOfDay.getTime()
+// }
 
 function set_up_indexer_mesh_network(){
   const otherNodes = get_all_nitro_links();
@@ -6907,36 +6912,43 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
   const filter_object_function = (target_object) => {
     const filter_object_return_obj = structuredClone(target_object)
     if(target_channeling != ''){
+      console.log('filtering by channel...')
       filter_object_return_obj = Object.fromEntries(
         Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['channeling'] == target_channeling)
       );
     }
     if(target_e5 != ''){
+      console.log('filtering by e5...')
       filter_object_return_obj = Object.fromEntries(
         Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['e5'] == target_e5)
       );
     }
     if(target_lan != ''){
+      console.log('filtering by language...')
       filter_object_return_obj = Object.fromEntries(
         Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['lan'] == target_lan)
       );
     }
     if(target_state != ''){
+      console.log('filtering by state...')
       filter_object_return_obj = Object.fromEntries(
         Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['state'] == target_state)
       );
     }
     if(filter_authors.length > 0){
+      console.log('filtering by filter_authors...')
       filter_object_return_obj = Object.fromEntries(
         Object.entries(filter_object_return_obj).filter(([key, value]) =>  filter_authors.includes(value['author']))
       );
     }
     if(filter_recipients.length > 0){
+      console.log('filtering by filter_recipients...')
       filter_object_return_obj = Object.fromEntries(
         Object.entries(filter_object_return_obj).filter(([key, value]) =>  filter_recipients.includes(value['recipient']))
       );
     }
     if(filter_tags.length > 0){
+      console.log('filtering by filter tags...')
       const filter_fun = (target_array, filter_tags) => {
         const setA = new Set(target_array);
         return filter_tags.some(el => setA.has(el));
@@ -6946,6 +6958,7 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
       );
     }
     if(all_tags_present.length > 0){
+      console.log('filtering by filter tags for all tags present...')
       const filter_all_fun = (target_array, filter_tags) => {
         const setA = new Set(target_array);
         return filter_tags.every(el => setA.has(el));
@@ -6956,6 +6969,7 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
     }
     return filter_object_return_obj
   }
+
   time_keys.forEach(socket_data_time_key => {
     if(parseInt(socket_data_time_key) >= filter_end_time && parseInt(socket_data_time_key) <= parseInt(filter_start_time)){
       return_data[socket_data_time_key] = {}
@@ -6967,17 +6981,19 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
     }
   });
 
+  console.log('return_data after in memory filtering', return_data)
+
   const selected_cold_storage_request_stat_files = data['cold_storage_socket_data_records'].filter(function (time) {
     return (parseInt(time) >= parseInt(filter_end_time) && parseInt(time) <= parseInt(filter_start_time))
   }).reverse();
 
-  for(var i=0; i<selected_cold_storage_request_stat_files; i++){
+  for(var i=0; i<selected_cold_storage_request_stat_files.length; i++){
     if(get_object_size_in_kbs(return_data) > size_limit_in_kbs) continue;
     const focused_file = selected_cold_storage_request_stat_files[i]
     const object = await read_file(focused_file, 'socket_data_history')
     const time_keys = Object.keys(object)
     time_keys.forEach(socket_data_time_key => {
-      if(parseInt(socket_data_time_key) > filter_time){
+      if(parseInt(socket_data_time_key) > filter_end_time){
         return_data[socket_data_time_key] = {}
         targets.forEach(target => {
           if(object[socket_data_time_key][target] != null){
@@ -6988,6 +7004,8 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
     });
   }
 
+  console.log('return_data after cold storage filtering', return_data)
+
   return return_data;
 }
 
@@ -6997,7 +7015,7 @@ async function is_socket_privacy_signature_valid(privacy_signature, e5, signatur
       const encrypted_signature_data_array = decodeURIComponent(privacy_signature).split('|')
       const registered_user = encrypted_signature_data_array[0]
       const encrypted_signature = encrypted_signature_data_array[1]
-      if(userKeysMap.get(registered_user) == null || is_e5_locked(e5) || !await is_signature_valid(signature, e5, signature_data, userId)){
+      if(userKeysMap.get(registered_user) == null || is_e5_locked(e5) || !(await is_signature_valid(signature, e5, signature_data, userId))){
         return false
       }
       else{
@@ -7019,6 +7037,7 @@ function is_e5_locked(e5){
     const main_contract = data['data_indexes'][e5]['created_contract_data'][2];
     const primary_account_last_tx_time = primary_account_transaction_data[0][1/* last_transaction_time */]
     const time_diff = (Date.now()/1000) - parseInt(primary_account_last_tx_time)
+    console.log('e5_locked?: ', time_diff > main_contract[1][40])
     return time_diff > main_contract[1][40];
   }catch(e){
     return false;
@@ -8895,6 +8914,7 @@ app.post(`/${endpoint_info['socket_data_fetch']}/:privacy_signature`, async (req
     return;
   }
   const { targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time } = await process_request_body(req.body);
+
   if(targets == null || !Array.isArray(targets) || isNaN(filter_end_time) || !Array.isArray(filter_tags) || !Array.isArray(filter_authors) || !Array.isArray(filter_recipients) || !Array.isArray(all_tags_present) || channeling == null || target_e5 == null || target_lan == null || target_state == null || isNaN(size_limit_in_kbs) || isNaN(filter_start_time) || filter_end_time > filter_start_time){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
@@ -9028,18 +9048,18 @@ async function when_server_killed(){
 
 
 
-const options = {
-  key: fs.readFileSync(`${PRIVATE_KEY_RESOURCE}`), 
-  cert: fs.readFileSync(`${CERTIFICATE_RESOURCE}`)
-  // set the directory for the keys and cerificates your using here
-};
+// const options = {
+//   key: fs.readFileSync(`${PRIVATE_KEY_RESOURCE}`), 
+//   cert: fs.readFileSync(`${CERTIFICATE_RESOURCE}`)
+//   // set the directory for the keys and cerificates your using here
+// };
 
 
 
 
 // Start server
-// app.listen(4000, when_server_started); // <-------- use this if youre testing, then comment out 'options'
-const server = https.createServer(options, app)
+// const server = https.createServer(options, app)
+const server = createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
 
 
@@ -9258,7 +9278,8 @@ io.on('connection', socket => {
 
 
 
-server.listen(HTTPS_PORT, when_server_started);
+// server.listen(HTTPS_PORT, when_server_started);
+server.listen(4000, when_server_started);
 
 
 setInterval(attempt_loading_failed_ecids, 53*60*1000)
