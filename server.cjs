@@ -1746,19 +1746,20 @@ function remove_ecids(ecids){
 }
 
 async function schedule_delete_hash_data(cids){
-  var included_cids = []
-  for(var i=0; i<cids.length; i++){
-    var ecid_obj = get_ecid_obj(cids[i])
-    if(!included_cids.includes(ecid_obj['cid'])){
-      ecids.push(ecid_obj)
-      included_cids.push(ecid_obj['cid'])
-    }
-  }
-  data['scheduled_ecids_to_delete'] = data['scheduled_ecids_to_delete'].concat(included_cids)
-  if(data['is_ecid_delete_scheduled'] != true){
-    setTimeout(delete_hash_data, 18*24*60*60*1000);
-    data['is_ecid_delete_scheduled'] = true
-  }
+  return;
+  // var included_cids = []
+  // for(var i=0; i<cids.length; i++){
+  //   var ecid_obj = get_ecid_obj(cids[i])
+  //   if(!included_cids.includes(ecid_obj['cid'])){
+  //     ecids.push(ecid_obj)
+  //     included_cids.push(ecid_obj['cid'])
+  //   }
+  // }
+  // data['scheduled_ecids_to_delete'] = data['scheduled_ecids_to_delete'].concat(included_cids)
+  // if(data['is_ecid_delete_scheduled'] != true){
+  //   setTimeout(delete_hash_data, 18*24*60*60*1000);
+  //   data['is_ecid_delete_scheduled'] = true
+  // }
 }
 
 async function delete_hash_data(){
@@ -4133,7 +4134,7 @@ async function is_privacy_signature_valid(signature){
   try{
     var current_block_number = sync_block_number != 0 ? sync_block_number : Number(await web3.eth.getBlockNumber())
     // const block_mod = data['block_mod'] == null ? 10 : data['block_mod']
-    const block_mod = 10;
+    const block_mod = 40;
     var signature_data = Math.floor(current_block_number/block_mod)
     var value1 = await check_privacy_signature(signature, web3, signature_data)
     if(value1 == true){
@@ -6978,6 +6979,9 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
           return_data[socket_data_time_key][target] = filter_object_function(socket_data[socket_data_time_key][target])
         }
       });
+      if(Object.keys(return_data[socket_data_time_key]).length == 0){
+        delete return_data[socket_data_time_key]
+      }
     }
   });
 
@@ -7000,6 +7004,9 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
             return_data[socket_data_time_key][target] = filter_object_function(object[socket_data_time_key][target])
           }
         });
+        if(Object.keys(return_data[socket_data_time_key]).length == 0){
+          delete return_data[socket_data_time_key]
+        }
       }
     });
   }
@@ -8907,13 +8914,15 @@ app.post(`/${endpoint_info['pre_fetch_object_data']}/:privacy_signature`, async 
 });//ok-------
 
 /* fetch socket data from a specified set of targets */
-app.post(`/${endpoint_info['socket_data_fetch']}/:privacy_signature`, async (req, res) => {
+app.get(`/${endpoint_info['socket_data_fetch']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  const { targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time } = await process_request_body(req.body);
+
+  const arg_string = await decrypt_secure_data(req.query.arg_string, registered_users_key)
+  const { targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time } = JSON.parse(arg_string)
 
   if(targets == null || !Array.isArray(targets) || isNaN(filter_end_time) || !Array.isArray(filter_tags) || !Array.isArray(filter_authors) || !Array.isArray(filter_recipients) || !Array.isArray(all_tags_present) || channeling == null || target_e5 == null || target_lan == null || target_state == null || isNaN(size_limit_in_kbs) || isNaN(filter_start_time) || filter_end_time > filter_start_time){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
@@ -8931,13 +8940,14 @@ app.post(`/${endpoint_info['socket_data_fetch']}/:privacy_signature`, async (req
 });
 
 /* fetch socket data from a specified set of targets */
-app.post(`/${endpoint_info['accounts_in_room']}/:privacy_signature`, async (req, res) => {
+app.get(`/${endpoint_info['accounts_in_room']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  const { account_ids, room_id } = await process_request_body(req.body);
+  const arg_string = await decrypt_secure_data(req.query.arg_string, registered_users_key)
+  const { account_ids, room_id } = JSON.parse(arg_string)
   if(!Array.isArray(account_ids)){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
