@@ -4254,8 +4254,7 @@ function delete_older_request_stats(){
   write_stat_to_cold_storage(storage_object, 'request_stats_history', 'cold_storage_request_stats')
 }
 
-function write_stat_to_cold_storage(storage_object, directory, datapoint, should_watch_file = false){
-  const timestamp_id = Date.now()
+function write_stat_to_cold_storage(storage_object, directory, datapoint, should_watch_file = false, timestamp_id=Date.now()){
   const write_data = JSON.stringify(storage_object, (_, v) => typeof v === 'bigint' ? v.toString() : v)
   var dir = `./${directory}`
   if (!fs.existsSync(dir)){
@@ -5037,6 +5036,8 @@ function set_endpoint_ids(){
   endpoint_info['marco'] = 'marco'
   endpoint_info['stream_file'] = 'stream_file'
   endpoint_info['token_price'] = 'token_price'
+  endpoint_info['coin_and_externals_data'] = 'coin_and_externals_data'
+  endpoint_info['send_signature_request'] = 'send_signature_request'
 }
 
 set_endpoint_ids()
@@ -6889,22 +6890,46 @@ function handle_chatroom_message({userId, roomId, message, forward_id, target, o
 
 
 
-function stash_old_socket_data_in_cold_storage(){
+async function stash_old_socket_data_in_cold_storage(){
   const keys = Object.keys(socket_data)
+  const now = Date.now()
   if(keys.length > 0){
+    const records_file = await read_file('cold_storage_records_file', 'cold_storage_records_folder')
     const record_obj = {}
     const cutoff_timestamp = Date.now() - (10*60*1000)
     keys.forEach(timestamp => {
       if(parseInt(timestamp) < cutoff_timestamp){
         record_obj[timestamp] = structuredClone(socket_data[timestamp])
+        Object.keys(socket_data[timestamp]).forEach(target_record => {
+          if(records_file[now] == null){
+            records_file[now] = []
+          }
+          records_file[now].push(target_record)
+        });
         delete socket_data[timestamp]
       }
     });
 
     if(Object.keys(record_obj).length > 0){
-      write_stat_to_cold_storage(record_obj, 'socket_data_history', 'cold_storage_socket_data_records', true)
+      write_stat_to_cold_storage(record_obj, 'socket_data_history', 'cold_storage_socket_data_records', true, now)
     }
+
+    await rewrite_file('cold_storage_records_file', 'cold_storage_records_folder', records_file)
   }
+}
+
+async function rewrite_file(records_file, directory, storage_object){
+  const write_data = JSON.stringify(storage_object, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+  var dir = `./${directory}`
+  if (!fs.existsSync(dir)){
+    fs.mkdirSync(dir);
+  }
+  const file_path = `${directory}/${records_file}.json`
+  fs.writeFile(file_path, write_data, (error) => {
+    if (error) {
+      log_error(error)
+    }
+  });
 }
 
 async function get_socket_data(targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, target_channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time){
@@ -6985,10 +7010,17 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
     }
   });
 
-  console.log('return_data after in memory filtering', return_data)
-
+  const records_file = await read_file('cold_storage_records_file', 'cold_storage_records_folder')
   const selected_cold_storage_request_stat_files = data['cold_storage_socket_data_records'].filter(function (time) {
-    return (parseInt(time) >= parseInt(filter_end_time) && parseInt(time) <= parseInt(filter_start_time))
+    const filter_fun = (target_array, filter_tags) => {
+      const setA = new Set(target_array);
+      return filter_tags.some(el => setA.has(el));
+    }
+    return (
+      parseInt(time) >= parseInt(filter_end_time) && 
+      parseInt(time) <= parseInt(filter_start_time) && 
+      ((records_file[time] != null && filter_fun(records_file[time], targets)) || time < 1762433953000)
+    )
   }).reverse();
 
   for(var i=0; i<selected_cold_storage_request_stat_files.length; i++){
@@ -7144,6 +7176,216 @@ function ensure_valid_message(message, hash){
 
 function record_object_tags_if_any(target, message){
   if(target == 'jobs' || target == 'posts') record_trend('uploads', message['tags'], message['lan'], message['state'], message['item_type'], {});
+}
+
+
+
+
+
+
+
+
+async function update_coin_transaction_fees(){
+  const bitcoin_fees = await get_bitcoin_fees()
+  const litecoin_fees = await get_litecoin_fees()
+  const dogecoin_fees = await get_dogecoin_fees()
+  const dash_fees = await get_dash_fees()
+  const exchange_rates = await get_exchange_rates()
+  
+  data['fees_object'] = {
+    'bitcoin':bitcoin_fees,
+    'litecoin':litecoin_fees, 
+    'dogecoin':dogecoin_fees, 
+    'dash':dash_fees
+  }
+  if(exchange_rates != null){
+    data['exchange_rates'] = exchange_rates
+  }
+}
+
+get_bitcoin_fees = async () => {
+  var request = `https://api.blockcypher.com/v1/btc/main`
+  try{
+    const response = await fetch(request);
+    if (!response.ok) {
+      console.log(response)
+      // throw new Error(`Failed to retrieve data. Status: ${response}`);
+      return 14.37
+    }
+    var data = await response.text();
+    var parsed_obj = JSON.parse(data);
+    return (parsed_obj['medium_fee_per_kb'] / 1024)
+  }
+  catch(e){
+    console.log('coin',e)
+    return 14.37
+  }
+}
+
+get_litecoin_fees = async () => {
+  var request = `https://api.blockcypher.com/v1/ltc/main`
+  try{
+    const response = await fetch(request);
+    if (!response.ok) {
+      console.log(response)
+      // throw new Error(`Failed to retrieve data. Status: ${response}`);
+      return 32.5
+    }
+    var data = await response.text();
+    var parsed_obj = JSON.parse(data);
+    return parsed_obj['medium_fee_per_kb'] / 1024
+  }
+  catch(e){
+    console.log('coin',e)
+    return 32.5
+  }
+}
+
+get_dogecoin_fees = async () => {
+  var request = `https://api.blockcypher.com/v1/doge/main`
+  try{
+    const response = await fetch(request);
+    if (!response.ok) {
+      console.log(response)
+      // throw new Error(`Failed to retrieve data. Status: ${response}`);
+      return 1600000
+    }
+    var data = await response.text();
+    var parsed_obj = JSON.parse(data);
+    return parsed_obj['medium_fee_per_kb'] / 1024
+  }
+  catch(e){
+    console.log('coin', e)
+    return 1600000
+  }
+}
+
+get_dash_fees = async () => {
+  var request = `https://api.blockcypher.com/v1/dash/main`
+  try{
+    const response = await fetch(request);
+    if (!response.ok) {
+      console.log('coin',response)
+      // throw new Error(`Failed to retrieve data. Status: ${response}`);
+      return 100
+    }
+    var data = await response.text();
+    var parsed_obj = JSON.parse(data);
+    return parsed_obj['medium_fee_per_kb'] / 1024
+  }
+  catch(e){
+    console.log('coin',e)
+    return 100
+  }
+}
+
+get_exchange_rates = async () => {
+  const key = process.env.EXCHANGE_RATES_KEY;
+  if(key == null || key == '') return;
+  const request = `https://v6.exchangerate-api.com/v6/${key}/latest/USD`
+  try{
+    const response = await fetch(request);
+    if (!response.ok) {
+      console.log('coin',response)
+      throw new Error(`Failed to retrieve data. Status: ${response}`);
+    }
+    var data = await response.text();
+    var parsed_obj = JSON.parse(data);
+    if(parsed_obj['result'] == 'success'){
+      return parsed_obj['conversion_rates']
+    }
+  }
+  catch(e){
+    log_error(e)
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+async function get_accounts_address(account_id, e5){
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+  const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
+  return await e5_contract.methods.f289(account_id).call((error, result) => {});
+}
+
+function isValidURL(string){
+  let url;
+  try {
+    url = new URL(string);
+  } catch (_) {
+    return false;  
+  }
+  return url.protocol === "https:" || url.protocol === "wss:";
+}
+
+async function send_signature_request_to_target(target_account_id, target_e5, signature_data, target_webhook_url, sender_account, sender_account_e5, signature_request_id){
+  const target_address = await this.get_accounts_address(target_account_id, target_e5)
+  const sender_address = await this.get_accounts_address(sender_account, sender_account_e5)
+
+  if(target_address == '0x0000000000000000000000000000000000000000' || sender_address == '0x0000000000000000000000000000000000000000'){
+    return false;
+  }
+
+  const signature_request = {
+    'sender_account': sender_account,
+    'sender_account_e5': sender_account_e5,
+    'signature_data': signature_data,
+    'target_address': target_address,
+    'sender_address':sender_address,
+    'signature_request_id': signature_request_id,
+    'target_webhook_url': target_webhook_url,
+    'time': Date.now(),
+  }
+
+  const object_as_string = JSON.stringify(signature_request, (key, value) =>
+    typeof value === 'bigint' ? value.toString() : value
+  )
+
+  const author = sender_account
+  const e5 = sender_account_e5
+  const recipient = ''
+  const channeling = ''
+  const lan = ''
+  const state = ''
+
+  const message = {
+    type: 'open_signature_request',
+    author: author,
+    id: signature_request_id,
+    recipient: recipient,
+    tags: tags,
+    channeling: channeling,
+    e5: e5,
+    lan: lan,
+    state: state,
+    data: object_as_string,
+    nitro_id: '',
+    time: Math.round(Date.now()/1000),
+    block: sync_block_number,
+  }
+  const object_hash = hash_my_data(message)
+  const target = 'open_signature_request|'+target_address
+  const user_target = connected_users.get(target_address);
+
+  if (user_target) {
+    user_target.emit('send_message', { from: sender_address, message, target, object_hash });
+  } else {
+    // Forward to other nodes
+    const forward_id = makeid(35)
+    Object.values(node_connection_map).forEach(nodeSocket => {
+      nodeSocket.emit('forward_send_message', { to, message, forward_id: forward_id, target, object_hash, forward_id, forward_origin: ENDPOINT_URL});
+    });
+  }
+  record_socket_data_for_target(target, message, object_hash);
+  return true;
 }
 
 
@@ -8937,7 +9179,7 @@ app.get(`/${endpoint_info['socket_data_fetch']}/:privacy_signature`, async (req,
       )
     );
   }
-});
+});//ok--------
 
 /* fetch socket data from a specified set of targets */
 app.get(`/${endpoint_info['accounts_in_room']}/:privacy_signature`, async (req, res) => {
@@ -8965,6 +9207,91 @@ app.get(`/${endpoint_info['accounts_in_room']}/:privacy_signature`, async (req, 
       )
     );
   }
+});//ok------
+
+/* endpoint for fetching coin and external currencies data */
+app.get(`/${endpoint_info['coin_and_externals_data']}`, async (req, res) => {
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
+  try{
+    const return_data = {
+      'fees_object': data['fees_object'], 
+      'exchange_rates': data['exchange_rates']
+    }
+    const string_obj = JSON.stringify(return_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/coin_and_externals_data')
+    res.send(string_obj);
+  }catch(e){
+    console.log(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+});//ok-----
+
+/* endpoint for sending a signature request to a specified target */
+app.post(`/${endpoint_info['send_signature_request']}`, async (req, res) => {
+  const { target_account_id, target_e5, signature_data, target_webhook_url, sender_account, sender_account_e5, signature_request_id } = req.body
+  /*
+    REQUEST:
+    const signature_request = {
+      'target_account_id' -> the account set to receive the signature request 
+      'target_e5' -> the target account id's e5
+      'signature_data' -> the data thats to be used for the signature
+      'target_webhook_url' -> the url that will be called (POST Call) by the user when sending your requested singature.
+      'sender_account' -> the account that is requesting the signature 
+      'sender_account_e5' -> the account's e5 that is requesting the singature
+      'signature_request_id'  -> a unique identifier used to identify the signature request being processed.
+    }
+
+    RESPONSE:
+    const signature_response = {
+      'sender_account' -> the account that was sent the signature request
+      'sender_account_e5' -> the accounts e5 
+      'sender_address' -> the accounts address
+      'signature' -> the signature created from the requested data (signature_data)
+      'target_address' -> the address of the account that requested the signature
+      'signature_request_id' -> the unique identifier for the signature request
+      'signature_response_id' -> a unique identifier for the signature response
+      'time' -> the time of the response
+    }
+    
+    While it would make more sense to implement webhooks here and send the responses from the  indexer, Ive opted to instead take the more direct route for fulfilling signature requests. This way, less mediators are involved and less resources are consumed on the indexer's side. While I dont really expect this to remain this way in the future (especially with the future implementation of the indexer layers feature), its a good place to start.
+  */
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
+  else if(isNaN(target_account_id) || !data['e'].includes(target_e5) || isNaN(sender_account) ||
+   !data['e'].includes(sender_account_e5) || signature_data == null || signature_data == '' ||
+    !isValidURL(target_webhook_url) || signature_request_id == null || signature_request_id ==
+    '' || parseInt(target_account_id) < 1001 || parseInt(sender_account) < 1001 || 
+    target_account_id.toString().includes('.') || sender_account.toString().includes('.')){
+    res.status(404).send(JSON.stringify({ message: 'Invalid body arguments', success:false }));
+    return;
+  }
+  try{
+    if(target_account_id+target_e5 == sender_account+sender_account_e5){
+      res.status(404).send(JSON.stringify({ message: 'You cant send a signature request to yourself.', success:false }));
+      return;
+    }
+    
+    const success_broadcasting = await send_signature_request_to_target(target_account_id, target_e5, signature_data, target_webhook_url, sender_account, sender_account_e5, signature_request_id)
+
+    if(success_broadcasting == false){
+      res.status(404).send(JSON.stringify({ message: 'One of the specified accounts does not exist.', success:false }));
+      return;
+    }
+
+    const string_obj = JSON.stringify({ message: 'Signature request sent successfully.',
+    success:true })
+    record_request('/send_signature_request')
+    res.send(string_obj);
+  }catch(e){
+    console.log(e)
+    res.status(500).send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+
 });
 
 
@@ -9315,12 +9642,14 @@ setInterval(set_up_indexer_mesh_network, 5*60*1000)
 setInterval(stash_old_socket_data_in_cold_storage, 10*60*1000)
 setInterval(delete_old_forward_data, 60*60*1000)
 setInterval(delete_old_transaction_id_data, 60*60*1000)
+setInterval(update_coin_transaction_fees, 3*60*60*1000)
 
 
 
 set_up_error_logs_filestream()
 schedule_certificate_renewal()
 set_up_indexer_mesh_network()
+update_coin_transaction_fees()
 
 
 
