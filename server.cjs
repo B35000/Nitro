@@ -6674,7 +6674,7 @@ function handle_node_disconnection_from_node(nodeUrl){
   delete node_connection_map[nodeUrl];
 }
 
-function record_socket_data_for_target(target, message, object_hash){
+async function record_socket_data_for_target(target, message, object_hash){
   const start_today = (Math.floor(Date.now() / (10*60*1000))) * (10*60*1000)
   if(socket_data[start_today] == null){
     socket_data[start_today] = {}
@@ -6685,13 +6685,34 @@ function record_socket_data_for_target(target, message, object_hash){
   if(socket_data[start_today][target][object_hash] == null){
     socket_data[start_today][target][object_hash] = message
   }
+  else{
+    if(socket_data[start_today][target][object_hash]['mutable'] == true){
+      if(await is_mutable_signature_valid(socket_data[start_today][target][object_hash], message, target) == true){
+        socket_data[start_today][target][object_hash] = message
+      }
+    }
+  }
 }
 
-// function start_of_day_in_milliseconds(){
-//   const startOfDay = new Date();
-//   startOfDay.setHours(0, 0, 0, 0);
-//   return startOfDay.getTime()
-// }
+async function is_mutable_signature_valid(original_object, message, target){
+  const e5 = original_object['e5'];
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+  const signature = message['signature']
+  const signature_data = message['signature_data']
+  try{
+    if(parseInt(signature_data) < (Date.now() - (5*60*1000))){
+      return false;
+    }
+    if(original_object['signature_data'] == message['signature_data'] || original_object['signature'] == message['signature']){
+      return false;
+    }
+    const final_signature_data = hash_my_data(signature_data+target+message['data'])
+    const derived_address = await web3.eth.accounts.recover(final_signature_data, signature)
+    return derived_address == original_object['author']
+  }catch(e){
+    return false
+  }
+}
 
 function set_up_indexer_mesh_network(){
   const otherNodes = get_all_nitro_links();
