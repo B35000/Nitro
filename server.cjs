@@ -7190,6 +7190,7 @@ function delete_old_transaction_id_data(){
 }
 
 function ensure_valid_message(message, hash){
+  if(message.mutable == true) return true;
   const message_string = (JSON.stringify(message, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   const message_hash = hash_my_data(message_string)
   return message_hash == hash;
@@ -7550,7 +7551,7 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
   //apply rate limits
   const rate_limit_results = ip_limits(req.ip)
   if(rate_limit_results.success == false){
-    return res.status(429).json({ message: rate_limit_results.message});
+    // return res.status(429).json({ message: rate_limit_results.message});
   }
   var ipfs_hashes = load_count
   var storage_accounts_length = Object.keys(data['storage_data']).length
@@ -9218,7 +9219,7 @@ app.get(`/${endpoint_info['accounts_in_room']}/:privacy_signature`, async (req, 
   else{
     const return_object = {}
     account_ids.forEach(account_id => {
-      return_object[account_id] = rooms[room_id].includes(account_id)
+      return_object[account_id] = rooms[room_id] == null ? false : rooms[room_id].includes(account_id)
     });
     
     record_request('/accounts_in_room')
