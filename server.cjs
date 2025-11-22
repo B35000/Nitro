@@ -2828,6 +2828,7 @@ async function update_storage_renewal_payment_information(e5, target_storage_pur
       }
     }
     const startOfYear = new Date(new Date().getFullYear(), 0, 1).getTime()
+    const startOfLastYear = new Date(new Date().getFullYear()-1, 0, 1).getTime()
     const last_year = new Date().getFullYear() - 1
     for (const account in accounts_space_units) {
       var acquired_space = accounts_space_units[account] * data['target_storage_space_unit_denomination_multiplier']
@@ -2841,11 +2842,17 @@ async function update_storage_renewal_payment_information(e5, target_storage_pur
             const files_years_stream_count = await fetch_files_year_streaming_totals(file, startOfYear-1)
             const file_upload_time = data['uploaded_files_data'][file]['time']
             const is_file_deleted = data['uploaded_files_data'][file]['deleted']
+            var multiplier = 1
             if(file_upload_time < startOfYear && is_file_deleted != true){
-              total_space_to_be_paid_for += file_size
+              if(time > startOfLastYear){
+                const difference = file_upload_time - startOfLastYear
+                multiplier = 1 - (difference / 31556952000)
+              }
+              total_space_to_be_paid_for += (file_size * multiplier)
               files.push(file)
               if(data['target_storage_streaming_multiplier'] != 0 && !bigInt(files_years_stream_count).isZero()){
-                total_space_to_be_paid_for += (bigInt(files_years_stream_count).divide(file_size)).divide(data['target_storage_streaming_multiplier']).divide(1024).divide(1024)
+                total_space_to_be_paid_for += (files_years_stream_count / 
+                  (file_size * data['target_storage_streaming_multiplier'] * 1024 * 1024))
               }
             }
           }
