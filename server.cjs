@@ -5308,6 +5308,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
   const hashes_to_fetch = []
   const all_data = {}
   var all_concatenated_data = []
+  var account_exists = false;
   for(var i=0; i<all_supported_e5s.length; i++){
     const return_data = {}
     const e5 = all_supported_e5s[i]
@@ -5321,6 +5322,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     //   account_id => data['data_indexes'][e5]['all_users'][account_id]['address'] == target_address
     // );
     if(e5_account_id != null){
+      account_exists = true
       return_data['account_id'] = e5_account_id
       return_data['account_data'] = await fetch_objects_in_specific_files([e5_account_id], 29/* 29(account_obj_id) */, e5)
     }
@@ -5422,7 +5424,6 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
 
     return_data['nitro_alias_data'] = await fetch_object_author_alias_event_data(return_data['nitro_objects_data']['created_object_events'], 'p5', max_post_bulk_load_count, e5)
 
-
     return_data['job_objects_data'] = await get_app_launch_object_data(indexing_hash, 17/* 17(job_object) */, e5, e5_account_id, max_post_bulk_load_count, known_hashes)
 
     return_data['job_alias_data'] = await fetch_object_author_alias_event_data(return_data['job_objects_data']['created_object_events'], 'p5', max_post_bulk_load_count, e5)
@@ -5461,6 +5462,12 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     }
     all_return_data[e5]['load_traffic_proportion_data'] = load_traffic_proportion_data(all_data[e5], all_concatenated_data, e5)
   }
+
+  const socket_targets = account_exists == false ? ['jobs'] : ['jobs', 'open_signature_request|'
+  +target_address, 'open_signature_response|'+target_address, 'call_invites|'+target_address]
+
+  all_return_data['socket_objects_data'] = await get_socket_data(socket_targets, Date.now() -
+  (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*53, Date.now())
 
 
   const hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
@@ -5630,6 +5637,11 @@ async function get_objects_metadata(created_object_events_mapping, item_type, ma
     return_data['alias_data'] = await fetch_object_author_alias_event_data(created_object_events, author_p, max_post_bulk_load_count, e5)
 
     all_return_data[e5] = return_data
+  }
+
+  if(item_type == 18/* 18(post object) */){
+    all_return_data['socket_post_objects_data'] = await get_socket_data(['posts'], Date.now() -
+    (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*53, Date.now())
   }
 
   return all_return_data
@@ -6674,7 +6686,7 @@ function handle_node_disconnection_from_node(nodeUrl){
   delete node_connection_map[nodeUrl];
 }
 
-async function record_socket_data_for_target(target, message, object_hash){
+function record_socket_data_for_target(target, message, object_hash){
   const start_today = (Math.floor(Date.now() / (10*60*1000))) * (10*60*1000)
   if(socket_data[start_today] == null){
     socket_data[start_today] = {}
@@ -6685,34 +6697,34 @@ async function record_socket_data_for_target(target, message, object_hash){
   if(socket_data[start_today][target][object_hash] == null){
     socket_data[start_today][target][object_hash] = message
   }
-  else{
-    if(socket_data[start_today][target][object_hash]['mutable'] == true){
-      if(await is_mutable_signature_valid(socket_data[start_today][target][object_hash], message, target) == true){
-        socket_data[start_today][target][object_hash] = message
-      }
-    }
-  }
+  // else{
+  //   if(socket_data[start_today][target][object_hash]['mutable'] == true){
+  //     if(await is_mutable_signature_valid(socket_data[start_today][target][object_hash], message, target) == true){
+  //       socket_data[start_today][target][object_hash] = message
+  //     }
+  //   }
+  // }
 }
 
-async function is_mutable_signature_valid(original_object, message, target){
-  const e5 = original_object['e5'];
-  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
-  const signature = message['signature']
-  const signature_data = message['signature_data']
-  try{
-    if(parseInt(signature_data) < (Date.now() - (5*60*1000))){
-      return false;
-    }
-    if(original_object['signature_data'] == message['signature_data'] || original_object['signature'] == message['signature']){
-      return false;
-    }
-    const final_signature_data = hash_my_data(signature_data+target+message['data'])
-    const derived_address = await web3.eth.accounts.recover(final_signature_data, signature)
-    return derived_address == original_object['author']
-  }catch(e){
-    return false
-  }
-}
+// async function is_mutable_signature_valid(original_object, message, target){
+//   const e5 = original_object['e5'];
+//   const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+//   const signature = message['signature']
+//   const signature_data = message['signature_data']
+//   try{
+//     if(parseInt(signature_data) < (Date.now() - (5*60*1000))){
+//       return false;
+//     }
+//     if(original_object['signature_data'] == message['signature_data'] || original_object['signature'] == message['signature']){
+//       return false;
+//     }
+//     const final_signature_data = hash_my_data(signature_data+target+message['data'])
+//     const derived_address = await web3.eth.accounts.recover(final_signature_data, signature)
+//     return derived_address == original_object['author']
+//   }catch(e){
+//     return false
+//   }
+// }
 
 function set_up_indexer_mesh_network(){
   const otherNodes = get_all_nitro_links();
@@ -7064,7 +7076,7 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
     });
   }
 
-  console.log('return_data after cold storage filtering', return_data)
+  console.log('return_data after cold storage filtering', socket_data, return_data, targets)
 
   return return_data;
 }
@@ -9221,6 +9233,8 @@ app.get(`/${endpoint_info['accounts_in_room']}/:privacy_signature`, async (req, 
     account_ids.forEach(account_id => {
       return_object[account_id] = rooms[room_id] == null ? false : rooms[room_id].includes(account_id)
     });
+
+    return_object['participant_count'] = rooms[room_id] == null ? 0 : rooms[room_id].length
     
     record_request('/accounts_in_room')
     res.send(
@@ -9457,7 +9471,10 @@ io.on('connection', socket => {
         data: str
       }
     */
-    if(socket.userId == null || get_object_size_in_kbs(message) > 24 || !is_users_transaction_valid(socket.userId)){
+    const tx_size = get_object_size_in_kbs(message)
+    const is_emit_valid = is_users_transaction_valid(socket.userId)
+    if(socket.userId == null || tx_size > 24 || !is_emit_valid){
+      console.log('send_message', 'transaction not valid.', tx_size, is_emit_valid)
       return;
     }
     socket.emit('send_message', { from: socket.userId, message, target, object_hash });
@@ -9471,6 +9488,7 @@ io.on('connection', socket => {
         nodeSocket.emit('forward_send_message', { to, message, forward_id: forward_id, target, object_hash, secondary_target, forward_origin: ENDPOINT_URL});
       });
     }
+    console.log('send_message', 'record_socket_data_for_target')
     record_socket_data_for_target(target, message, object_hash);
     record_socket_data_for_target(secondary_target, message, object_hash);
   });
@@ -9524,8 +9542,8 @@ io.on('connection', socket => {
   //-----------------------------------CALLS----------------------------------------
 
   /* when user is joining a room */
-  socket.on("join_room", async ({roomId, signature, signature_data, e5}) => {
-    if(socket.userId == null || !await has_user_paid_subscription_for_calls_functionality(signature, signature_data, e5) || !is_users_transaction_valid(socket.userId))return;
+  socket.on("join_room", async ({roomId}) => {
+    if(socket.userId == null)return;
     // Initialize room if it doesn't exist
     if (!rooms[roomId]) {
       rooms[roomId] = [];
@@ -9554,8 +9572,8 @@ io.on('connection', socket => {
   });
 
   /* when signal is being sent */
-  socket.on("signal", async ({ to, data, isInitiator, signature, signature_data, e5 }) => {
-    if(socket.userId == null || !is_users_transaction_valid(socket.userId) || !await has_user_paid_subscription_for_calls_functionality(signature, signature_data, e5)) return;
+  socket.on("signal", async ({ to, data, isInitiator }) => {
+    if(socket.userId == null) return;
     const signalType = data.type || 'unknown';
     const target = connected_users.get(to);
     if(target){
@@ -9576,8 +9594,8 @@ io.on('connection', socket => {
   });
 
   /* when room message is sent */
-  socket.on('room_message', async ({ roomId, message, signature, signature_data, e5, target, object_hash }) => {
-    if(socket.userId == null || !is_users_transaction_valid(socket.userId) || !await has_user_paid_subscription_for_calls_functionality(signature, signature_data, e5)) return;
+  socket.on('room_message', async ({ roomId, message, target, object_hash }) => {
+    if(socket.userId == null) return;
     socket.to(roomId).emit("room_message", {userId: socket.userId, message, roomId, target});
     record_socket_data_for_target(target, message, object_hash);
 
@@ -9590,7 +9608,7 @@ io.on('connection', socket => {
 
   /* when user leaves room */
   socket.on('leave_room', (roomId) => {
-    if(socket.userId == null || !is_users_transaction_valid(socket.userId)) return;
+    if(socket.userId == null) return;
     const index = rooms[roomId].indexOf(socket.userId);
     if (index !== -1) {
       rooms[roomId].splice(index, 1);

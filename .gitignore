@@ -29,6 +29,7 @@ yarn-error.log*
 /logs
 /object_data
 /socket_data_history
+/cold_storage_records_folder
 
 .env
 .testfile.js
