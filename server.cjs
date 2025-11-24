@@ -5045,6 +5045,7 @@ function set_endpoint_ids(){
   endpoint_info['token_price'] = 'token_price'
   endpoint_info['coin_and_externals_data'] = 'coin_and_externals_data'
   endpoint_info['send_signature_request'] = 'send_signature_request'
+  endpoint_info['send_prepurchase_transaction'] = 'send_prepurchase_transaction'
 }
 
 set_endpoint_ids()
@@ -6778,7 +6779,7 @@ function get_object_size_in_kbs(obj) {
 
 
 function handle_user_send_message({ to, message, forward_id, target, object_hash, secondary_target, forward_origin }) {
-  if(does_forward_id_exist(forward_id) || get_object_size_in_kbs(message) > 24 && !ensure_valid_message(message, object_hash)){
+  if(does_forward_id_exist(forward_id) || get_object_size_in_kbs(message) > 24 || !is_message_valid_if_pre_purchase(message)){
     return;
   }
   const userId_target = connected_users.get(to);
@@ -6843,7 +6844,7 @@ function handle_signal_message({from, to, data, isInitiator, forward_id, forward
 }
 
 function handle_room_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
-  if(does_forward_id_exist(forward_id) && !ensure_valid_message(message, object_hash)) return;
+  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message)) return;
   const usersInRoom = rooms[roomId];
   if(usersInRoom.length > 0){
     const existing_userId_target = connected_users.get(usersInRoom[0]);
@@ -6910,7 +6911,7 @@ function handle_user_joined_chatroom_message({roomId, userId, forward_id, forwar
 }
 
 function handle_chatroom_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
-  if(does_forward_id_exist(forward_id) && !ensure_valid_message(message, object_hash)) return;
+  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message)) return;
   const usersInRoom = rooms[roomId];
   if(usersInRoom.length > 0){
     const existing_userId_target = connected_users.get(usersInRoom[0]);
@@ -7350,7 +7351,6 @@ get_exchange_rates = async () => {
 
 
 
-
 async function get_accounts_address(account_id, e5){
   const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
   const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
@@ -7368,8 +7368,8 @@ function isValidURL(string){
 }
 
 async function send_signature_request_to_target(target_account_id, target_e5, signature_data, target_webhook_url, sender_account, sender_account_e5, signature_request_id){
-  const target_address = await this.get_accounts_address(target_account_id, target_e5)
-  const sender_address = await this.get_accounts_address(sender_account, sender_account_e5)
+  const target_address = await get_accounts_address(target_account_id, target_e5)
+  const sender_address = await get_accounts_address(sender_account, sender_account_e5)
 
   if(target_address == '0x0000000000000000000000000000000000000000' || sender_address == '0x0000000000000000000000000000000000000000'){
     return false;
@@ -7429,6 +7429,158 @@ async function send_signature_request_to_target(target_account_id, target_e5, si
   return true;
 }
 
+async function is_message_valid_if_pre_purchase(message){
+  if(message.type != 'pre_purchase_transaction') return true;
+  if(!data['e'].includes(message.e5)) return false;
+
+  const e5 = message.e5;
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+  const signature = message['signature']
+  const signature_data = message['data']
+  const ipfs = JSON.parse(message.data)
+  try{
+    const derived_address = await web3.eth.accounts.recover(signature_data, signature)
+    if(derived_address != ipfs['sender_address']) return false;
+
+    const contract_e5 = ipfs['contract_e5']
+    const contract_id = ipfs['contract_id']
+
+    const pre_purchase_record_events = await filter_events(contract_e5, 'E52', 'e4', {p1/* target_id */:30/* 30(contract_prepurchase_credits_sale) */, p3/* context */:contract_id, p4/* string_data */:derived_address}, {})
+
+    const pre_purchase_transfer_events = await filter_events(contract_e5, 'H52', 'e1', {p1/* exchange */:5, p3/* receiver */:contract_id}, {})
+
+    const prepurchase_awards_events = await filter_events(contract_e5, 'H52', 'e5', {p2/* awward_receiver */:id, p4/* metadata */:derived_address}, {})
+
+    const target = 'pre_purchase|'+ipfs['contract']
+    const my_emitted_transactions = await fetch_all_socket_emissions(target, [derived_address], [account])
+
+    const all_transfers = [];
+    const used_blocks = [];
+    pre_purchase_record_events.forEach(event_item => {
+      const block = event_item.returnValues.p7/* block_number */
+      const time = event_item.returnValues.p6/* timestamp */
+      const transfer_amount = event_item.returnValues.p5/* int_data */
+      
+      const award_events = prepurchase_awards_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p3/* awward_context */ == transfer_amount && item.returnValues.p4/* metadata */ == my_address);
+
+      if(award_events.length != 0){
+        const award_sender = award_events[0].returnValues.p1/* awward_sender */
+
+        const transfer_events = pre_purchase_transfer_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p4/* amount */ == transfer_amount && item.returnValues.p2/* sender */ == award_sender && !used_blocks.includes(block));
+
+        if(transfer_events.length > 0){
+          all_transfers.push({'action':'in', 'time':time, 'amount':transfer_amount})
+          used_blocks.push(block)
+        }
+      }
+    });
+
+    my_emitted_transactions.forEach(message => {
+      all_transfers.push({'action':'out', 'time':message['time'], 'amount':message['amount']})
+    });
+
+    const sorted_transactions = sortByAttributeDescending(all_transfers, 'time').reverse()
+
+    var balance = 0;
+    sorted_transactions.forEach(tx => {
+      if(tx['action'] == 'in'){
+        balance += tx['amount']
+      }else{
+        balance -= tx['amount']
+      }
+    });
+
+    return balance >= ipfs['amount'];
+  }
+  catch(e){
+    return false
+  }
+}
+
+async function fetch_all_socket_emissions(target, filter_tags, filter_authors){
+  const target_data = await get_socket_data([target], 0, filter_tags, filter_authors, [], [], '', '', '', '', (1024*100000), Date.now())
+  const return_data = []
+  const entries = Object.keys(target_data)
+  for(var j=0; j<entries.length; j++){
+    const time_entry = entries[j]
+    const target_entries = Object.keys(target_data[time_entry])
+    for(var k=0; k<target_entries.length; k++){
+      const target_entry = target_entries[k]
+      const object_hashes = Object.keys(target_data[time_entry][target_entry])
+      for(var i=0; i<object_hashes.length; i++){
+        const object_hash = object_hashes[i]
+        const object_data = target_data[time_entry][target_entry][object_hash]
+        return_data.push(object_data)
+      }
+    }
+  }
+  return return_data
+}
+
+async function emit_prepurchase_transaction(amount, contract_id, contract_e5, note, sender_address, transaction_id, signature){
+  const contract_e5_id = contract_id+contract_e5;
+  const data = {
+    'amount': amount,
+    'contract_id':contract_id,
+    'contract_e5':contract_e5,
+    'note':note,
+    'sender_address': sender_address,
+    'transaction_id': transaction_id,
+  }
+
+  const tags = [sender_address, note]
+  const block_number = sync_block_number
+  const author = sender_address
+  const e5 = contract_e5
+  const recipient = contract['e5_id']
+  const channeling = ''
+  const lan = ''
+  const state = ''
+
+  const data_to_sign = JSON.stringify(data, (key, value) =>
+    typeof value === 'bigint' ? value.toString() : value
+  )
+
+  const message = {
+    type: 'pre_purchase_transaction',
+    message_identifier: transaction_id,
+    author: author,
+    id:transaction_id,
+    recipient: recipient,
+    tags: tags,
+    channeling: channeling,
+    e5: e5,
+    lan: lan,
+    state: state,
+    data: data_to_sign,
+    nitro_id: '',
+    time: Math.round(Date.now()/1000),
+    block: parseInt(block_number),
+    signature: signature
+  }
+
+  const object_hash = hash_my_data(message)
+  const room_id = 'contracts';
+  const target = 'pre_purchase|'+contract_e5_id;
+  const user_target = connected_users.size == 0 ? null : Array.from(connected_users.values())[
+    Math.floor(Math.random() * connected_users.size)
+  ];
+  // Forward to other nodes
+  if(!is_message_valid_if_pre_purchase(message)) return false;
+
+  if(user_target != null) user_target.to(room_id).emit("chatroom_message", {userId: user_target.userId, message, room_id, target, object_hash});
+
+  record_socket_data_for_target(target, message, object_hash);
+  record_object_tags_if_any(target, message)
+
+  // Forward to other nodes
+  const forward_id = makeid(35)
+  Object.values(node_connection_map).forEach(nodeSocket => {
+    nodeSocket.emit('forward_chatroom_message', { userId: user_target.userId, room_id, message, forward_id: forward_id, target, object_hash, forward_origin: ENDPOINT_URL });
+  });
+
+  return true;
+}
 
 
 
@@ -9337,6 +9489,62 @@ app.post(`/${endpoint_info['send_signature_request']}`, async (req, res) => {
 
 });
 
+/* endpoint for broadcasting pre-purchase transactions from outside e */
+app.post(`/${endpoint_info['send_prepurchase_transaction']}`, async (req, res) => {
+  const { amount, contract_id, contract_e5, note, sender_address, transaction_id, signature } = req.body
+  const isEthereumAddress = (input) => /^0x[a-fA-F0-9]{40}$/.test(input);
+  /*
+    amount<int> --->  the amount of credits your spending 
+    contract_id<int> ---> the id of the pre-purchase contract that created the credits.
+    contract_e5 ---> the e5 of the pre-purchase contract
+    note ---> an optinally attached identifier for identifying the transaction.
+    sender_address ---> the address thats initiating the transaction.
+    transaction_id ---> an id to identify the transaction. 
+    signature ---> a signature signing the data containing the parameters for the transaction (amount, contract_id, contract_e5, note, sender_address, transaction_id). Make sure not to change the datatypes otherwise the transaction will fail to verify.
+    
+  */
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
+  else if(
+    isNaN(amount) || 
+    !data['e'].includes(contract_e5) || 
+    isNaN(contract_id) ||  
+    sender_address == null || 
+    sender_address == '' ||
+    transaction_id == null ||
+    transaction_id == '' ||
+    signature == null ||
+    signature == '' ||
+    note == null ||
+    note.toString().length > 65 ||
+    transaction_id.toString().length > 65 ||
+    contract_id.toString().includes('.') ||
+    !isEthereumAddress(sender_address)
+  ){
+    res.status(404).send(JSON.stringify({ message: 'Invalid body arguments', success:false }));
+    return;
+  }
+  try{
+    const success_broadcasting = await emit_prepurchase_transaction(amount, contract_id, contract_e5, note, sender_address, transaction_id, signature)
+
+    if(success_broadcasting == false){
+      res.status(404).send(JSON.stringify({ message: 'The transaction failed. Check your parameters and try again.', success:false }));
+      return;
+    }
+
+    const string_obj = JSON.stringify({ message: 'Transaction broadcasted successfully.',
+    success:true })
+    record_request('/send_prepurchase_transaction')
+    res.send(string_obj);
+  }catch(e){
+    console.log(e)
+    res.status(500).send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+
+});
+
 
 
 
@@ -9438,8 +9646,8 @@ async function when_server_killed(){
 
 
 // Start server
-// const server = https.createServer(options, app)
 const server = createServer(app);
+// const server = https.createServer(options, app)
 const io = new Server(server, { cors: { origin: '*' } });
 
 
@@ -9480,7 +9688,7 @@ io.on('connection', socket => {
     */
     const tx_size = get_object_size_in_kbs(message)
     const is_emit_valid = is_users_transaction_valid(socket.userId)
-    if(socket.userId == null || tx_size > 24 || !is_emit_valid){
+    if(socket.userId == null || tx_size > 24 || !is_emit_valid || !is_message_valid_if_pre_purchase(message)){
       console.log('send_message', 'transaction not valid.', tx_size, is_emit_valid)
       return;
     }
@@ -9502,7 +9710,7 @@ io.on('connection', socket => {
 
   /* when user is joining a chatroom */
   socket.on("join_chatroom", async (roomId) => {
-    if(socket.userId == null || !is_users_transaction_valid(socket.userId))return;
+    if(socket.userId == null || !is_users_transaction_valid(socket.userId)) return;
     // Initialize room if it doesn't exist
     if (!rooms[roomId]) {
       rooms[roomId] = [];
@@ -9532,7 +9740,7 @@ io.on('connection', socket => {
 
   /* when chatroom message is broadcasted */
   socket.on('chatroom_message', ({ roomId, message, target, object_hash }) => {
-    if(socket.userId == null || !is_users_transaction_valid(socket.userId)) return;
+    if(socket.userId == null || !is_users_transaction_valid(socket.userId)|| !is_message_valid_if_pre_purchase(message)) return;
     socket.to(roomId).emit("chatroom_message", {userId: socket.userId, message, roomId, target, object_hash});
     record_socket_data_for_target(target, message, object_hash);
     record_object_tags_if_any(target, message)
@@ -9602,7 +9810,7 @@ io.on('connection', socket => {
 
   /* when room message is sent */
   socket.on('room_message', async ({ roomId, message, target, object_hash }) => {
-    if(socket.userId == null) return;
+    if(socket.userId == null || !is_message_valid_if_pre_purchase(message)) return;
     socket.to(roomId).emit("room_message", {userId: socket.userId, message, roomId, target});
     record_socket_data_for_target(target, message, object_hash);
 
