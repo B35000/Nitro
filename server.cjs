@@ -191,6 +191,7 @@ const socket_data = {}
 const rooms = {};
 const forward_ids = {};
 const socket_transaction_times = {};
+const e5_event_loading_status = {};
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -806,113 +807,113 @@ async function set_up_listeners(e5) {
 
     if(beacon_chain_link != '' && data[e5]['current_block']['E5'+'e1'] == null){
       //E5
-      load_past_events(e5_contract, 'e1', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e1', e5, web3, 'E5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e5_contract, 'e2', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e2', e5, web3, 'E5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e5_contract, 'e3', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e3', e5, web3, 'E5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e5_contract, 'e4', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e4', e5, web3, 'E5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e5_contract, 'e5', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e5', e5, web3, 'E5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e5_contract, 'e6', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e6', e5, web3, 'E5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e5_contract, 'e7', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e7', e5, web3, 'E5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
       
 
       //E52
-      load_past_events(e52_contract, 'e1', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e1', e5, web3, 'E52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e52_contract, 'e2', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e2', e5, web3, 'E52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e52_contract, 'e3', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e3', e5, web3, 'E52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e52_contract, 'e4', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e4', e5, web3, 'E52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(e52_contract, 'e5', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e5', e5, web3, 'E52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
       
 
       //F5
-      load_past_events(f5_contract, 'e1', e5, web3, 'F5', latest)
+      await load_past_events(f5_contract, 'e1', e5, web3, 'F5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(f5_contract, 'e2', e5, web3, 'F5', latest)
+      await load_past_events(f5_contract, 'e2', e5, web3, 'F5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(f5_contract, 'e5', e5, web3, 'F5', latest)
+      await load_past_events(f5_contract, 'e5', e5, web3, 'F5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(f5_contract, 'e4', e5, web3, 'F5', latest)
+      await load_past_events(f5_contract, 'e4', e5, web3, 'F5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //G5
-      load_past_events(g5_contract, 'e1', e5, web3, 'G5', latest)
+      await load_past_events(g5_contract, 'e1', e5, web3, 'G5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(g5_contract, 'e2', e5, web3, 'G5', latest)
+      await load_past_events(g5_contract, 'e2', e5, web3, 'G5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //G52
-      load_past_events(g52_contract, 'e1', e5, web3, 'G52', latest)
+      await load_past_events(g52_contract, 'e1', e5, web3, 'G52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(g52_contract, 'e2', e5, web3, 'G52', latest)
+      await load_past_events(g52_contract, 'e2', e5, web3, 'G52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(g52_contract, 'e3', e5, web3, 'G52', latest)
+      await load_past_events(g52_contract, 'e3', e5, web3, 'G52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(g52_contract, 'archive', e5, web3, 'G52', latest)
+      await load_past_events(g52_contract, 'archive', e5, web3, 'G52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //H5
-      load_past_events(h5_contract, 'e1', e5, web3, 'H5', latest)
+      await load_past_events(h5_contract, 'e1', e5, web3, 'H5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(h5_contract, 'e2', e5, web3, 'H5', latest)
+      await load_past_events(h5_contract, 'e2', e5, web3, 'H5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(h5_contract, 'e3', e5, web3, 'H5', latest)
+      await load_past_events(h5_contract, 'e3', e5, web3, 'H5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //H52
-      load_past_events(h52_contract, 'e1', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'e1', e5, web3, 'H52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(h52_contract, 'e2', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'e2', e5, web3, 'H52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(h52_contract, 'e3', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'e3', e5, web3, 'H52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(h52_contract, 'e5', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'e5', e5, web3, 'H52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
-      load_past_events(h52_contract, 'power', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'power', e5, web3, 'H52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
     }else{
       //E5
-      load_multiple_past_events(e5_contract, ['e1','e2', 'e3', 'e4', 'e5', 'e6', 'e7'], e5, web3, 'E5', latest)
+      await load_multiple_past_events(e5_contract, ['e1','e2', 'e3', 'e4', 'e5', 'e6', 'e7'], e5, web3, 'E5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //E52
-      load_multiple_past_events(e52_contract, ['e1','e2', 'e3', 'e4', 'e5'], e5, web3, 'E52', latest)
+      await load_multiple_past_events(e52_contract, ['e1','e2', 'e3', 'e4', 'e5'], e5, web3, 'E52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //F5
-      load_multiple_past_events(f5_contract, ['e1','e2', 'e5', 'e4'], e5, web3, 'F5', latest)
+      await load_multiple_past_events(f5_contract, ['e1','e2', 'e5', 'e4'], e5, web3, 'F5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //G5
-      load_multiple_past_events(g5_contract, ['e1','e2'], e5, web3, 'G5', latest)
+      await load_multiple_past_events(g5_contract, ['e1','e2'], e5, web3, 'G5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //G52
-      load_multiple_past_events(g52_contract, ['e1','e2', 'e3', 'archive'], e5, web3, 'G52', latest)
+      await load_multiple_past_events(g52_contract, ['e1','e2', 'e3', 'archive'], e5, web3, 'G52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //H5
-      load_multiple_past_events(h5_contract, ['e1','e2','e3'], e5, web3, 'H5', latest)
+      await load_multiple_past_events(h5_contract, ['e1','e2','e3'], e5, web3, 'H5', latest)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //H52
-      load_multiple_past_events(h52_contract, ['e1','e2', 'e3', 'e5', 'power'], e5, web3, 'H52', latest)
+      await load_multiple_past_events(h52_contract, ['e1','e2', 'e3', 'e5', 'power'], e5, web3, 'H52', latest)
       await new Promise(resolve => setTimeout(resolve, t))
     }
     await load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_contract, h52_contract)
 
     //load nitro links
-    load_nitro_links(e5)
+    await load_nitro_links(e5)
   }catch(e){
     log_error(e)
     console.log(e)
@@ -1520,11 +1521,19 @@ async function load_events_for_all_e5s(){
   // if(app_key == null || app_key == '') return;
 
   var e5s = data['e']
-  for(var i=0; i<e5s.length; i++){ 
+  for(var i=0; i<e5s.length; i++){
     try{
       await check_for_reorgs(e5s[i])
       await check_and_set_default_rpc(e5s[i])
-      set_up_listeners(e5s[i])
+
+      const start_load_function = async () => {
+        e5_event_loading_status[e5s[i]] = true
+        await set_up_listeners(e5s[i])
+        e5_event_loading_status[e5s[i]] = false
+      }
+      if(e5_event_loading_status[e5s[i]] != true){
+        await start_load_function()
+      }
     }catch(e){
       log_error(e)
     }
@@ -6936,6 +6945,7 @@ async function stash_old_socket_data_in_cold_storage(){
   const now = Date.now()
   if(keys.length > 0){
     const records_file = await read_file('cold_storage_records_file', 'cold_storage_records_folder')
+    const tag_records_file = await read_file('cold_storage_tag_records_file', 'cold_storage_tag_records_folder')
     const record_obj = {}
     const cutoff_timestamp = Date.now() - (10*60*1000)
     keys.forEach(timestamp => {
@@ -6946,6 +6956,18 @@ async function stash_old_socket_data_in_cold_storage(){
             records_file[now] = []
           }
           records_file[now].push(target_record)
+          Object.keys(socket_data[timestamp][target_record]).forEach(object_hash => {
+            if(socket_data[timestamp][target_record][object_hash]['tags'] != null && 
+              Array.isArray(socket_data[timestamp][target_record][object_hash]['tags'])
+            ){
+              socket_data[timestamp][target_record][object_hash]['tags'].forEach(recorded_tag => {
+                if(tag_records_file[recorded_tag] == null){
+                  tag_records_file[recorded_tag] = []
+                }
+                tag_records_file[recorded_tag].push(now)
+              });
+            }
+          });
         });
         delete socket_data[timestamp]
       }
@@ -6956,6 +6978,7 @@ async function stash_old_socket_data_in_cold_storage(){
     }
 
     await rewrite_file('cold_storage_records_file', 'cold_storage_records_folder', records_file)
+    await rewrite_file('cold_storage_tag_records_file', 'cold_storage_tag_records_folder', tag_records_file)
   }
 }
 
@@ -6977,7 +7000,7 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
   const return_data = {}
   const time_keys = Object.keys(socket_data)
   const filter_object_function = (target_object) => {
-    const filter_object_return_obj = structuredClone(target_object)
+    var filter_object_return_obj = structuredClone(target_object)
     if(target_channeling != ''){
       console.log('filtering by channel...')
       filter_object_return_obj = Object.fromEntries(
@@ -7052,7 +7075,7 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
   });
 
   const records_file = await read_file('cold_storage_records_file', 'cold_storage_records_folder')
-  const selected_cold_storage_request_stat_files = data['cold_storage_socket_data_records'].filter(function (time) {
+  var selected_cold_storage_request_stat_files = data['cold_storage_socket_data_records'].filter(function (time) {
     const filter_fun = (target_array, filter_tags) => {
       const setA = new Set(target_array);
       return filter_tags.some(el => setA.has(el));
@@ -7063,6 +7086,25 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
       ((records_file[time] != null && filter_fun(records_file[time], targets)) || time < 1762433953000)
     )
   }).reverse();
+
+  if(filter_tags.length > 0 || all_tags_present.length > 0){
+    const tag_records_file = await read_file('cold_storage_tag_records_file', 'cold_storage_tag_records_folder')
+    var tag_record_files = []
+    filter_tags.forEach(tag => {
+      if(tag_records_file[tag] != null){
+        tag_record_files = tag_record_files.concat(tag_records_file[tag])
+      }
+    });
+    all_tags_present.forEach(tag => {
+      if(tag_records_file[tag] != null){
+        tag_record_files = tag_record_files.concat(tag_records_file[tag])
+      }
+    });
+
+    selected_cold_storage_request_stat_files = selected_cold_storage_request_stat_files.filter(function (time) {
+      return (tag_record_files.includes(parseInt(time)) || parseInt(time) < 1764262930000)
+    })
+  }
 
   for(var i=0; i<selected_cold_storage_request_stat_files.length; i++){
     if(get_object_size_in_kbs(return_data) > size_limit_in_kbs) continue;
@@ -7469,14 +7511,14 @@ async function is_message_valid_if_pre_purchase(message){
         const transfer_events = pre_purchase_transfer_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p4/* amount */ == transfer_amount && item.returnValues.p2/* sender */ == award_sender && !used_blocks.includes(block));
 
         if(transfer_events.length > 0){
-          all_transfers.push({'action':'in', 'time':time, 'amount':transfer_amount})
+          all_transfers.push({'action':'in', 'time':time, 'amount':parseInt(transfer_amount)})
           used_blocks.push(block)
         }
       }
     });
 
     my_emitted_transactions.forEach(message => {
-      all_transfers.push({'action':'out', 'time':message['time'], 'amount':message['amount']})
+      all_transfers.push({'action':'out', 'time':message['time'], 'amount':parseInt(message['amount'])})
     });
 
     const sorted_transactions = sortByAttributeDescending(all_transfers, 'time').reverse()
