@@ -8593,15 +8593,15 @@ app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature
   else{
     const filePath = `storage_data/${file}.${content_type}`
     const stats = fs.statSync(filePath);
-    const fileSize = stats.size;
+    // const fileSize = stats.size;
+    const fileSize = data['uploaded_files_data'][file]['size'] * (1024 * 1024)
 
     const ip = registered_user;
     const now = Date.now();
     var should_count_view = true
     var should_count_stream = true
 
-    var stream_proportion_target = fileSize > STREAM_DATA_THRESHOLD ? 
-    fileSize / STREAM_DATA_THRESHOLD : 96.0
+    var stream_proportion_target = 0.35
 
     if(ip != null){
       if(ipAccessTimestamps[ip+file] == null){
@@ -8611,11 +8611,6 @@ app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature
         ipAccessTimestamps[ip+file]['time'] = now
       }
 
-      var stream_proportion = ipAccessTimestamps[ip+file]['bytes'] == 0 ? 0 : (ipAccessTimestamps[ip+file]['bytes'] / fileSize)
-
-      if(stream_proportion > stream_proportion_target){
-        should_count_view = false
-      }
       if(ipAccessTimestamps[ip+file]['bytes'] >= fileSize){
         should_count_stream = false
       }
@@ -8639,15 +8634,13 @@ app.get(`/${endpoint_info['stream_file']}/:content_type/:file/:privacy_signature
         end: chunkEnd,
       });
 
-      let bytesSent = 0;
       stream.on('data', (chunk) => {
         if(should_count_stream == true){
           record_stream_event(file, chunk.length, ip)
         }
         if(should_count_view == true){
-          bytesSent += chunk.length;
-          const streamed_proportion = bytesSent / fileSize
-          if(!ipAccessTimestamps[ip+file]['view_counted'] && streamed_proportion >= stream_proportion_target){
+          const streamed_proportion = ipAccessTimestamps[ip+file]['bytes'] / fileSize
+          if(ipAccessTimestamps[ip+file]['view_counted'] == false && streamed_proportion >= stream_proportion_target){
             ipAccessTimestamps[ip+file]['view_counted'] = true
             record_view_event(file)
           }
