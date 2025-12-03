@@ -39,7 +39,7 @@ const { createServer } = require('http');
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "100gb" }));
-const version = '1.2'
+const version = '1.3'
 
 const SECRET = process.env.SECRET_KEY;
 const PRIVATE_KEY_RESOURCE = process.env.PRIVATE_KEY_RESOURCE
@@ -192,6 +192,8 @@ const rooms = {};
 const forward_ids = {};
 const socket_transaction_times = {};
 const e5_event_loading_status = {};
+var tag_price_index_values = {};
+var recipient_account_transaction_records = {}
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -2161,7 +2163,9 @@ async function store_back_up_of_data(){
     'failed_ecids':failed_ecids, 
     'file_data_steams':file_data_steams,
     'upload_view_trends_data':upload_view_trends_data,
-    'socket_data':socket_data
+    'socket_data':socket_data,
+    'tag_price_index_values':tag_price_index_values,
+    'recipient_account_transaction_records':recipient_account_transaction_records,
   }
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -2246,6 +2250,12 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       }
       if(obj['socket_data'] != null){
         Object.assign(socket_data, obj['socket_data'])
+      }
+      if(obj['tag_price_index_values'] != null){
+        tag_price_index_values = obj['tag_price_index_values']
+      }
+      if(obj['recipient_account_transaction_records'] != null){
+        recipient_account_transaction_records = obj['recipient_account_transaction_records']
       }
       
       console.log('successfully loaded back-up data')
@@ -5038,7 +5048,7 @@ global.fetch = async (url, options = {}) => {
 };
 
 function set_endpoint_ids(){
-  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room'];
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 'user_obligations'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -7632,6 +7642,264 @@ async function emit_prepurchase_transaction(amount, contract_id, contract_e5, no
 
 
 
+
+async function update_tag_indexer_price_tracking_info(){
+  var e5s = data['e']
+  for(var i=0; i<e5s.length; i++){
+    const e5 = e5s[i]
+    const from_block = data[e5]['tag_index_block_number'] != null && data[e5]['tag_index_block_number'] != null ? data[e5]['tag_index_block_number'] : 0
+
+    const indexer_events = await filter_events(e5, 'E52', 'e4', {p1/* target_id */: 31/* 31(tag_indexer_transaction_record) */, p3/* context */: 35}, {'p':'p7'/* block_number */, 'value':from_block})
+
+    const hashes = []
+    indexer_events.forEach(event => {
+      const hash = get_data_id_from_ecid(event.returnValues.p4)/* string_data */
+      if(!hashes.includes(hash)){
+        hashes.push(hash)
+      }
+    });
+    const hash_data = await fetch_hashes_from_file_storage_or_memory(hashes)
+
+    for(var e=0; e<hashes.length; e++){
+      const cid = hashes[e]
+      const container_data = hash_data[cid]
+      if(container_data != null){
+        try{
+          if(container_data['tags'] != null){
+            for(const key in container_data['tags']){
+              if(container_data['tags'].hasOwnProperty(key)){
+                if(key != 'color'){
+                  const index_values = container_data['tags'][key]['tags']
+                  const item_type = container_data['tags'][key]['type']
+                  const item_lan = container_data['tags'][key]['type']
+                  const item_state = container_data['tags'][key]['state']
+                  const time = container_data['tags'][key]['time']
+                  const e5_id = container_data['tags'][key]['e5_id']
+                  const e5 = container_data['tags'][key]['e5']
+                  const amounts = container_data['tags'][key]['amounts']
+                  const sender = container_data['tags'][key]['sender']
+                  const identifier = container_data['tags'][key]['identifier']
+                  const recipient_account = container_data['tags'][key]['recipient_account']
+                  const obligations = container_data['tags'][key]['obligations']
+                  
+                  const start_today = (Math.floor(parseInt(time) / (12*60*1000))) * (12*60*1000)
+                  //upload_view_trends_data[timestamp][type][language][tag][state][object_type]
+                  if(tag_price_index_values[start_today] == null){
+                    tag_price_index_values[start_today] = {}
+                  }
+                  if(tag_price_index_values[start_today][item_type] == null){
+                    tag_price_index_values[start_today][item_type] = {}
+                  }
+                  if(tag_price_index_values[start_today][item_type][item_lan] == null){
+                    tag_price_index_values[start_today][item_type][item_lan] = {}
+                  }
+                  
+                  index_values.forEach(tag => {
+                    if(tag_price_index_values[start_today][item_type][item_lan][tag] == null){
+                      tag_price_index_values[start_today][item_type][item_lan][tag] = {}
+                    }
+                    if(tag_price_index_values[start_today][item_type][item_lan][tag][item_state] == null){
+                      tag_price_index_values[start_today][item_type][item_lan][tag][item_state] = {}
+                    }
+                    if(tag_price_index_values[start_today][item_type][item_lan][tag][item_state][e5] == null){
+                      tag_price_index_values[start_today][item_type][item_lan][tag][item_state][e5] = {}
+                    }
+                    const other_tags = index_values.filter(function (contextual_tag) {
+                      return (contextual_tag != tag)
+                    });
+                    tag_price_index_values[start_today][item_type][item_lan][item_state][tag][e5][identifier] = {
+                      'sender':sender, 'amounts':amounts, 'e5_id':e5_id, 'other_tags':other_tags, 'obligations':obligations
+                    }
+                  });
+
+                  if(recipient_account_transaction_records[recipient_account] == null){
+                    recipient_account_transaction_records[recipient_account] = {}
+                  }
+                  if(recipient_account_transaction_records[recipient_account][start_today] == null){
+                    recipient_account_transaction_records[recipient_account][start_today] = {}
+                  }
+                  recipient_account_transaction_records[recipient_account][start_today][identifier] = {
+                    'tags':index_values, 'type':item_type, 'lan':item_lan, 'state':item_state, 'time':time,
+                    'object':e5_id, 'e5':e5, 'amounts':amounts, 'sender':sender, 'obligations':obligations
+                  }
+                }
+              }
+            }
+          }
+        }
+        catch(e){
+          log_error(e)
+        }
+      }
+    }
+
+    data[e5]['tag_index_block_number'] = data[e5]['current_block']['E52'+'e4']
+  }
+}
+
+function stash_old_tag_price_data_in_cold_storage(){
+  const keys = Object.keys(tag_price_index_values)
+  if(keys.length > 0){
+    const record_obj = {}
+    const now = new Date();
+    now.setMonth(now.getMonth() - 1);
+    now.setHours(0, 0, 0, 0);
+    const cutoff_timestamp = now.getTime();
+    keys.forEach(timestamp => {
+      if(parseInt(timestamp) < cutoff_timestamp){
+        record_obj[timestamp] = structuredClone(tag_price_index_values[timestamp])
+        delete tag_price_index_values[timestamp]
+      }
+    });
+
+    if(Object.keys(record_obj).length > 0){
+      write_stat_to_cold_storage(record_obj, 'tag_price_stats_history', 'cold_storage_tag_price_records', true)
+    }
+  }
+}
+
+function stash_old_user_obgligations_data_in_cold_storage(){
+  const keys = Object.keys(recipient_account_transaction_records)
+  if(keys.length > 0){
+    const record_obj = {}
+    const now = new Date();
+    now.setMonth(now.getMonth() - 1);
+    now.setHours(0, 0, 0, 0);
+    const cutoff_timestamp = now.getTime();
+    keys.forEach(timestamp => {
+      if(parseInt(timestamp) < cutoff_timestamp){
+        record_obj[timestamp] = structuredClone(recipient_account_transaction_records[timestamp])
+        delete recipient_account_transaction_records[timestamp]
+      }
+    });
+
+    if(Object.keys(record_obj).length > 0){
+      write_stat_to_cold_storage(record_obj, 'user_obligations_stats_history', 'cold_storage_obligations_records', true)
+    }
+  }
+}
+
+async function get_old_tag_price_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states, filter_e5s){
+  const selected_cold_storage_request_trends_files = data['cold_storage_tag_price_records'].filter(function (time) {
+    return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
+  });
+
+  var selected_cold_storage_request_trend_obj = {}
+  const keys = Object.keys(tag_price_index_values)
+  if(keys.length > 0){
+    keys.forEach(timestamp => {
+      if(parseInt(timestamp) >= parseInt(start_time) && parseInt(timestamp) <= parseInt(end_time)){
+        selected_cold_storage_request_trend_obj[timestamp] = structuredClone(tag_price_index_values[timestamp])
+      }
+    });
+  }
+
+  for(var i=0; i<selected_cold_storage_request_trends_files; i++){
+    const focused_file = selected_cold_storage_request_trends_files[i]
+    const object = await read_file(focused_file, 'tag_price_stats_history')
+    Object.assign(selected_cold_storage_request_trend_obj, object);
+  }
+
+  const timestamp_ids = Object.keys(selected_cold_storage_request_trend_obj)
+  timestamp_ids.forEach(timestamp_id => {
+    const types = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id])
+    types.forEach(type => {
+      const languages = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id][type])
+      languages.forEach(language => {
+        const original = selected_cold_storage_request_trend_obj[timestamp_id][type][language]
+        const filtered = keywords.length > 0 ? Object.fromEntries(
+          Object.entries(original).filter(([key, _]) =>
+            keywords.includes(key)
+          )
+        ) : structuredClone(original);
+
+        if(filter_states.length > 0){
+          Object.keys(filtered).forEach(tag => {
+            const filtered_by_states = Object.fromEntries(
+              Object.entries(filtered[tag]).filter(([key, _]) =>
+                filter_states.includes(key)
+              )
+            )
+            filtered[tag] = filtered_by_states;
+          });
+        }
+        if(filter_e5s.length > 0){
+          Object.keys(filtered).forEach(tag => {
+            Object.keys(filtered[tag]).forEach(state => {
+                const filtered_by_e5 = Object.fromEntries(
+                  Object.entries(filtered[tag][state]).filter(([key, _]) =>
+                    filter_e5s.includes(key)
+                  )
+              );
+              filtered[tag][state] = filtered_by_e5;
+            });
+          });
+        }
+        
+        selected_cold_storage_request_trend_obj[timestamp_id][type][language] = filtered
+        if(filter_languages.length > 0 && !filter_languages.includes(language)){
+          delete selected_cold_storage_request_trend_obj[timestamp_id][type][language]
+        }
+      });
+      if(filter_type != '' && type != filter_type){
+        delete selected_cold_storage_request_trend_obj[timestamp_id][type]
+      }
+    });
+  });
+
+  return selected_cold_storage_request_trend_obj
+}
+
+async function get_users_obligation_history_data(start_time, end_time, accounts){
+  const selected_cold_storage_request_trends_files = data['cold_storage_obligations_records'].filter(function (time) {
+    return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
+  });
+
+  var selected_cold_storage_request_trend_obj = {}
+  const keys = Object.keys(tag_price_index_values)
+  if(keys.length > 0){
+    keys.forEach(timestamp => {
+      if(parseInt(timestamp) >= parseInt(start_time) && parseInt(timestamp) <= parseInt(end_time)){
+        selected_cold_storage_request_trend_obj[timestamp] = structuredClone(tag_price_index_values[timestamp])
+      }
+    });
+  }
+
+  for(var i=0; i<selected_cold_storage_request_trends_files; i++){
+    const focused_file = selected_cold_storage_request_trends_files[i]
+    const object = await read_file(focused_file, 'user_obligations_stats_history')
+
+    Object.assign(selected_cold_storage_request_trend_obj, object);
+  }
+
+  const filtered_accounts_data = Object.fromEntries(
+    Object.entries(selected_cold_storage_request_trend_obj).filter(([key, _]) =>
+      accounts.includes(key)
+    )
+  )
+
+  accounts.forEach(account => {
+    const account_data = selected_cold_storage_request_trend_obj[account]
+    Object.keys(account_data).forEach(time => {
+      if(parseInt(time) < parseInt(start_time) || parseInt(time) > parseInt(end_time)){
+        delete account_data[time]
+      }
+    });
+  });
+
+  return selected_cold_storage_request_trend_obj
+}
+
+
+
+
+
+
+
+
+
+
+
 /* endpoint for returning E5 event data tracked by the node */
 app.get(`/${endpoint_info['events']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_users_key, registered_user } = await process_request_params(req.params, req.ip);
@@ -9580,6 +9848,70 @@ app.post(`/${endpoint_info['send_prepurchase_transaction']}`, async (req, res) =
 
 });
 
+/* endpoint for returning price data associated with specific tags */
+app.post(`/${endpoint_info['tag_prices']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { start_time, end_time, keywords, filter_type, filter_languages, filter_states, filter_e5s } = await process_request_body(req.body)
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  else if(start_time == null || isNaN(start_time) || end_time == null || isNaN(end_time) || keywords == null || filter_type == null || filter_languages == null || !Array.isArray(filter_languages) || filter_states == null || !Array.isArray(filter_states) || filter_e5s == null || !Array.isArray(filter_e5s)){
+    res.send(JSON.stringify({ message: 'Invalid params', success:false }));
+    return;
+  }
+  else if((parseInt(end_time) - parseInt(start_time)) < 10_000){
+    res.send(JSON.stringify({ message: 'start time value cannot be greater than end time value', success:false }));
+    return;
+  }
+  try{
+    var obj = {
+      'price_data': await get_old_tag_price_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states, filter_e5s),
+      success:true
+    }
+
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/tag_prices')
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
+  }
+});
+
+/* endpoint for returning users obligation data */
+app.post(`/${endpoint_info['user_obligations']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { start_time, end_time, accounts } = await process_request_body(req.body)
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  else if(start_time == null || isNaN(start_time) || end_time == null || isNaN(end_time) || accounts == null || !Array.isArray(accounts)){
+    res.send(JSON.stringify({ message: 'Invalid params', success:false }));
+    return;
+  }
+  else if((parseInt(end_time) - parseInt(start_time)) < 10_000){
+    res.send(JSON.stringify({ message: 'start time value cannot be greater than end time value', success:false }));
+    return;
+  }
+  try{
+    var obj = {
+      'obligations_data': await get_users_obligation_history_data(start_time, end_time, accounts),
+      success:true
+    }
+
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/user_obligations')
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
+  }
+});
+
 
 
 
@@ -9933,6 +10265,9 @@ setInterval(stash_old_socket_data_in_cold_storage, 10*60*1000)
 setInterval(delete_old_forward_data, 60*60*1000)
 setInterval(delete_old_transaction_id_data, 60*60*1000)
 setInterval(update_coin_transaction_fees, 3*60*60*1000)
+setInterval(update_tag_indexer_price_tracking_info, 12*60*1000)
+setInterval(stash_old_tag_price_data_in_cold_storage, 20*24*60*60*1000)
+setInterval(stash_old_user_obgligations_data_in_cold_storage, 20*24*60*60*1000)
 
 
 
