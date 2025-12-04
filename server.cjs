@@ -107,6 +107,7 @@ var data = {
   'target_storage_streaming_multiplier':0,
   'voice_calls_subscription_objects':{},
   'cold_storage_socket_data_records':[],
+  'cold_storage_tag_price_records':[],
 }
 
 const E5_CONTRACT_ABI = [
@@ -7645,11 +7646,13 @@ async function emit_prepurchase_transaction(amount, contract_id, contract_e5, no
 
 async function update_tag_indexer_price_tracking_info(){
   var e5s = data['e']
-  for(var i=0; i<e5s.length; i++){
-    const e5 = e5s[i]
-    const from_block = data[e5]['tag_index_block_number'] != null && data[e5]['tag_index_block_number'] != null ? data[e5]['tag_index_block_number'] : 0
+  for(var j=0; j<e5s.length; j++){
+    const e5 = e5s[j]
+    const from_block = data[e5]['tag_index_block_number'] || 0
 
     const indexer_events = await filter_events(e5, 'E52', 'e4', {p1/* target_id */: 31/* 31(tag_indexer_transaction_record) */, p3/* context */: 35}, {'p':'p7'/* block_number */, 'value':from_block})
+
+    console.log('indexer_events', indexer_events)
 
     const hashes = []
     indexer_events.forEach(event => {
@@ -7659,68 +7662,72 @@ async function update_tag_indexer_price_tracking_info(){
       }
     });
     const hash_data = await fetch_hashes_from_file_storage_or_memory(hashes)
+    console.log('hash_data', hash_data)
 
     for(var e=0; e<hashes.length; e++){
       const cid = hashes[e]
-      const container_data = hash_data[cid]
+      console.log('cid', cid)
+      const container_data = JSON.parse(hash_data[cid])
       if(container_data != null){
         try{
           if(container_data['tags'] != null){
             for(const key in container_data['tags']){
               if(container_data['tags'].hasOwnProperty(key)){
                 if(key != 'color'){
-                  const index_values = container_data['tags'][key]['tags']
-                  const item_type = container_data['tags'][key]['type']
-                  const item_lan = container_data['tags'][key]['type']
-                  const item_state = container_data['tags'][key]['state']
-                  const time = container_data['tags'][key]['time']
-                  const e5_id = container_data['tags'][key]['e5_id']
-                  const e5 = container_data['tags'][key]['e5']
-                  const amounts = container_data['tags'][key]['amounts']
-                  const sender = container_data['tags'][key]['sender']
-                  const identifier = container_data['tags'][key]['identifier']
-                  const recipient_account = container_data['tags'][key]['recipient_account']
-                  const obligations = container_data['tags'][key]['obligations']
-                  
-                  const start_today = (Math.floor(parseInt(time) / (12*60*1000))) * (12*60*1000)
-                  //upload_view_trends_data[timestamp][type][language][tag][state][object_type]
-                  if(tag_price_index_values[start_today] == null){
-                    tag_price_index_values[start_today] = {}
-                  }
-                  if(tag_price_index_values[start_today][item_type] == null){
-                    tag_price_index_values[start_today][item_type] = {}
-                  }
-                  if(tag_price_index_values[start_today][item_type][item_lan] == null){
-                    tag_price_index_values[start_today][item_type][item_lan] = {}
-                  }
-                  
-                  index_values.forEach(tag => {
-                    if(tag_price_index_values[start_today][item_type][item_lan][tag] == null){
-                      tag_price_index_values[start_today][item_type][item_lan][tag] = {}
+                  for(var i=0; i<container_data['tags'][key].length; i++){
+                    const index_values = container_data['tags'][key][i]['tags']
+                    const item_type = container_data['tags'][key][i]['type']
+                    const item_lan = container_data['tags'][key][i]['lan']
+                    const item_state = container_data['tags'][key][i]['state']
+                    const time = container_data['tags'][key][i]['time']
+                    const e5_id = container_data['tags'][key][i]['e5_id']
+                    const e5 = container_data['tags'][key][i]['e5']
+                    const amounts = container_data['tags'][key][i]['amounts']
+                    const sender = container_data['tags'][key][i]['sender']
+                    const identifier = container_data['tags'][key][i]['identifier']
+                    const recipient_account = container_data['tags'][key][i]['recipient_account']
+                    const obligations = container_data['tags'][key][i]['obligations']
+                    
+                    const start_today = (Math.floor(parseInt(time) / (12*60*1000))) * (12*60*1000)
+                    if(tag_price_index_values[start_today] == null){
+                      tag_price_index_values[start_today] = {}
                     }
-                    if(tag_price_index_values[start_today][item_type][item_lan][tag][item_state] == null){
-                      tag_price_index_values[start_today][item_type][item_lan][tag][item_state] = {}
+                    if(tag_price_index_values[start_today][item_type] == null){
+                      tag_price_index_values[start_today][item_type] = {}
                     }
-                    if(tag_price_index_values[start_today][item_type][item_lan][tag][item_state][e5] == null){
-                      tag_price_index_values[start_today][item_type][item_lan][tag][item_state][e5] = {}
+                    if(tag_price_index_values[start_today][item_type][item_lan] == null){
+                      tag_price_index_values[start_today][item_type][item_lan] = {}
                     }
-                    const other_tags = index_values.filter(function (contextual_tag) {
-                      return (contextual_tag != tag)
+                    
+                    index_values.forEach(tag => {
+                      if(tag_price_index_values[start_today][item_type][item_lan][tag] == null){
+                        tag_price_index_values[start_today][item_type][item_lan][tag] = {}
+                      }
+                      if(tag_price_index_values[start_today][item_type][item_lan][tag][item_state] == null){
+                        tag_price_index_values[start_today][item_type][item_lan][tag][item_state] = {}
+                      }
+                      if(tag_price_index_values[start_today][item_type][item_lan][tag][item_state][e5] == null){
+                        tag_price_index_values[start_today][item_type][item_lan][tag][item_state][e5] = {}
+                      }
+                      const other_tags = index_values.filter(function (contextual_tag) {
+                        return (contextual_tag != tag)
+                      });
+                      
+                      tag_price_index_values[start_today][item_type][item_lan][tag][item_state][e5][identifier] = {
+                        'sender':sender, 'amounts':amounts, 'e5_id':e5_id, 'other_tags':other_tags, 'obligations':obligations
+                      }
                     });
-                    tag_price_index_values[start_today][item_type][item_lan][item_state][tag][e5][identifier] = {
-                      'sender':sender, 'amounts':amounts, 'e5_id':e5_id, 'other_tags':other_tags, 'obligations':obligations
-                    }
-                  });
 
-                  if(recipient_account_transaction_records[recipient_account] == null){
-                    recipient_account_transaction_records[recipient_account] = {}
-                  }
-                  if(recipient_account_transaction_records[recipient_account][start_today] == null){
-                    recipient_account_transaction_records[recipient_account][start_today] = {}
-                  }
-                  recipient_account_transaction_records[recipient_account][start_today][identifier] = {
-                    'tags':index_values, 'type':item_type, 'lan':item_lan, 'state':item_state, 'time':time,
-                    'object':e5_id, 'e5':e5, 'amounts':amounts, 'sender':sender, 'obligations':obligations
+                    if(recipient_account_transaction_records[recipient_account] == null){
+                      recipient_account_transaction_records[recipient_account] = {}
+                    }
+                    if(recipient_account_transaction_records[recipient_account][start_today] == null){
+                      recipient_account_transaction_records[recipient_account][start_today] = {}
+                    }
+                    recipient_account_transaction_records[recipient_account][start_today][identifier] = {
+                      'tags':index_values, 'type':item_type, 'lan':item_lan, 'state':item_state, 'time':time,
+                      'object':e5_id, 'e5':e5, 'amounts':amounts, 'sender':sender, 'obligations':obligations
+                    }
                   }
                 }
               }
@@ -7730,6 +7737,8 @@ async function update_tag_indexer_price_tracking_info(){
         catch(e){
           log_error(e)
         }
+      }else{
+        console.log('container_data is null.')
       }
     }
 
@@ -7785,6 +7794,7 @@ async function get_old_tag_price_history_data(start_time, end_time, keywords, fi
   });
 
   var selected_cold_storage_request_trend_obj = {}
+  console.log('tag_price_index_values', tag_price_index_values)
   const keys = Object.keys(tag_price_index_values)
   if(keys.length > 0){
     keys.forEach(timestamp => {
