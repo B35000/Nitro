@@ -7117,24 +7117,35 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
     })
   }
 
+  var fetch_total = 0;
   for(var i=0; i<selected_cold_storage_request_stat_files.length; i++){
     if(get_object_size_in_kbs(return_data) > size_limit_in_kbs) continue;
-    const focused_file = selected_cold_storage_request_stat_files[i]
-    const object = await read_file(focused_file, 'socket_data_history')
-    const time_keys = Object.keys(object)
-    time_keys.forEach(socket_data_time_key => {
-      if(parseInt(socket_data_time_key) > filter_end_time){
-        return_data[socket_data_time_key] = {}
-        targets.forEach(target => {
-          if(object[socket_data_time_key][target] != null){
-            return_data[socket_data_time_key][target] = filter_object_function(object[socket_data_time_key][target])
+    const fetch_and_filter = async () => {
+      const focused_file = selected_cold_storage_request_stat_files[i]
+      const object = await read_file(focused_file, 'socket_data_history')
+      const time_keys = Object.keys(object)
+      time_keys.forEach(socket_data_time_key => {
+        if(parseInt(socket_data_time_key) > filter_end_time){
+          return_data[socket_data_time_key] = {}
+          targets.forEach(target => {
+            if(object[socket_data_time_key][target] != null){
+              return_data[socket_data_time_key][target] = filter_object_function(object[socket_data_time_key][target])
+            }
+          });
+          if(Object.keys(return_data[socket_data_time_key]).length == 0){
+            delete return_data[socket_data_time_key]
           }
-        });
-        if(Object.keys(return_data[socket_data_time_key]).length == 0){
-          delete return_data[socket_data_time_key]
         }
-      }
-    });
+      });
+      fetch_total--;
+    }
+    fetch_total++;
+    fetch_and_filter()
+  }
+
+  while (fetch_total > 0) {
+    if (fetch_total == 0) break;
+    await new Promise(resolve => setTimeout(resolve, 500))
   }
 
   console.log('return_data after cold storage filtering', socket_data, return_data, targets)
@@ -7767,7 +7778,7 @@ function stash_old_tag_price_data_in_cold_storage(){
   }
 }
 
-function stash_old_user_obgligations_data_in_cold_storage(){
+function stash_old_user_obligations_data_in_cold_storage(){
   const keys = Object.keys(recipient_account_transaction_records)
   if(keys.length > 0){
     const record_obj = {}
@@ -10277,7 +10288,7 @@ setInterval(delete_old_transaction_id_data, 60*60*1000)
 setInterval(update_coin_transaction_fees, 3*60*60*1000)
 setInterval(update_tag_indexer_price_tracking_info, 12*60*1000)
 setInterval(stash_old_tag_price_data_in_cold_storage, 20*24*60*60*1000)
-setInterval(stash_old_user_obgligations_data_in_cold_storage, 20*24*60*60*1000)
+setInterval(stash_old_user_obligations_data_in_cold_storage, 20*24*60*60*1000)
 
 
 
