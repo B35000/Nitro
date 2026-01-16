@@ -382,7 +382,7 @@ const return_data = {
     elimination_snapshot, 
     time: Date.now(), 
     consensus_tie, 
-    tie_breaker, 
+    tie_breaker,
     valid_vote_count: votes.length, 
     registered_voters, 
     vote_transfer_snapshots, 

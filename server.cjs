@@ -3682,7 +3682,7 @@ function backup_stream_count_data_if_large_enough(){
     const now = Date.now()
     var backup_obj = {}
     keys_to_backup.forEach(key => {
-      backup_obj[key] = file_data_steams[key]
+      backup_obj[now] = file_data_steams[key]
     });
     const write_data = JSON.stringify(backup_obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     var dir = './stream_data'
@@ -4075,7 +4075,12 @@ function is_file_ok_to_stream(file){
 
   var required_years = []
   for(var i=upload_year; i<current_year; i++){
-    required_years.push(i)
+    if(i == current_year-1 && new Date().getMonth() < 5){
+      
+    }
+    else{
+      required_years.push(i)
+    }
   }
 
   if(required_years.length == 0){
@@ -5349,7 +5354,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     // const e5_account_id = Object.keys(data['data_indexes'][e5]['all_users']).find(
     //   account_id => data['data_indexes'][e5]['all_users'][account_id]['address'] == target_address
     // );
-    if(e5_account_id != null){
+    if(e5_account_id != 0){
       account_exists = true
       return_data['account_id'] = e5_account_id
       return_data['account_data'] = await fetch_objects_in_specific_files([e5_account_id], 29/* 29(account_obj_id) */, e5)
@@ -5361,7 +5366,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     return_data['token_balances'] = data['data_indexes'][e5]['token_balances']
     const my_state_exchanges = data['object_targeted_states'] != null && data['object_targeted_states'][e5] != null ? Object.keys(data['object_targeted_states'][e5]).filter(key => data['object_targeted_states'][e5][key].includes(launch_state)) : [];
 
-    if(e5_account_id != null){
+    if(e5_account_id != 0){
       const exchanges_to_load_first = await load_accounts_exchange_interactions_data(e5_account_id, e5)
       exchanges_to_load_first.forEach(exchange_id => {
         if(!my_state_exchanges.includes(exchange_id)){
@@ -5543,17 +5548,17 @@ async function get_app_launch_object_data(indexing_hash, item_type, e5, account,
     created_object_events = await filter_events(e5, 'E52', 'e2', {p3/* item_type */: item_type, p1: indexing_hash}, {})
   }
 
-  if(account != null){
+  if(account != 0){
     if(item_type == 31/* token_exchange */){
       const exchanges_to_load_first = await load_accounts_exchange_interactions_data(account, e5)
       var my_posted_events = created_object_events.filter(function (event) {
         return (exchanges_to_load_first.includes(event.returnValues.p1) || my_state_exchanges.includes(event.returnValues.p1))
       })
-      // created_object_events.forEach(event => {
-      //   if(my_posted_events.find(e => e.returnValues.p1 === event.returnValues.p1) == null){
-      //     my_posted_events.push(event)
-      //   }
-      // });
+      created_object_events.forEach(event => {
+        if(my_posted_events.find(e => e.returnValues.p1 === event.returnValues.p1) == null){
+          my_posted_events.push(event)
+        }
+      });
       created_object_events = my_posted_events
     }else{
       var my_posted_events = created_object_events.filter(function (event) {
