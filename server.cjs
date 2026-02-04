@@ -108,6 +108,8 @@ var data = {
   'voice_calls_subscription_objects':{},
   'cold_storage_socket_data_records':[],
   'cold_storage_tag_price_records':[],
+  'socket_section_synchronization': 0,
+  'is_synching_socket_with_beacon': false,
 }
 
 const E5_CONTRACT_ABI = [
@@ -5071,6 +5073,7 @@ function set_endpoint_ids(){
   endpoint_info['coin_and_externals_data'] = 'coin_and_externals_data'
   endpoint_info['send_signature_request'] = 'send_signature_request'
   endpoint_info['send_prepurchase_transaction'] = 'send_prepurchase_transaction'
+  endpoint_info['sync_socket_data'] = 'sync_socket_data'
 }
 
 set_endpoint_ids()
@@ -7922,6 +7925,159 @@ async function get_users_obligation_history_data(start_time, end_time, accounts)
 
 
 
+async function get_sync_socket_data(filter_end_time, filter_start_time){
+  const return_data = {}
+  const time_keys = Object.keys(socket_data);
+
+  time_keys.forEach(socket_data_time_key => {
+    if(
+      parseInt(socket_data_time_key) >= filter_end_time && 
+      parseInt(socket_data_time_key) <= parseInt(filter_start_time) && 
+      Object.keys(socket_data[socket_data_time_key]).length != 0
+    ){
+      return_data[socket_data_time_key] = socket_data[socket_data_time_key]
+    }
+  });
+
+  var selected_cold_storage_request_stat_files = data['cold_storage_socket_data_records'].filter(function (time) {
+    return (
+      parseInt(time) >= parseInt(filter_end_time) && 
+      parseInt(time) <= parseInt(filter_start_time)
+    )
+  }).reverse();
+
+  var fetch_total = 0;
+  for(var i=0; i<selected_cold_storage_request_stat_files.length; i++){
+    const fetch_and_filter = async () => {
+      const focused_file = selected_cold_storage_request_stat_files[i]
+      const object = await read_file(focused_file, 'socket_data_history')
+      const time_keys = Object.keys(object)
+      time_keys.forEach(socket_data_time_key => {
+        if(
+          parseInt(socket_data_time_key) > filter_end_time && 
+          Object.keys(object[socket_data_time_key]).length != 0
+        ){
+          return_data[socket_data_time_key] = object[socket_data_time_key]
+        }
+      });
+      fetch_total--;
+    }
+    fetch_total++;
+    fetch_and_filter()
+  }
+
+  while (fetch_total > 0) {
+    if (fetch_total == 0) break;
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+
+  return return_data;
+}
+
+async function start_background_socket_sync(){
+  if(beacon_chain_link == '' || beacon_chain_link == null) return;
+  data['is_synching_socket_with_beacon'] = true;
+  const step = 1000*60*60*24*3;
+  const end_time = Date.now();
+  const absolute_starting_time = 1757002694000;
+  let starting_time = 1757002694000; // Thursday, September 4, 2025 4:18:14 PM
+
+  if(data['cold_storage_socket_data_records'] != null && data['cold_storage_socket_data_records'].length > 0){
+    starting_time = parseInt(data['cold_storage_socket_data_records'][data['cold_storage_socket_data_records'].length -1]);
+  }
+  
+  while(starting_time < end_time){
+    const filter_end_time = starting_time;
+    const filter_start_time = starting_time + step;
+    const sync_data = await load_socket_data_from_beacon_node(filter_end_time, filter_start_time)
+    
+    for(var i=filter_end_time; i<filter_start_time; i += (10*60*1000)){
+      const filtered = Object.fromEntries(
+        Object.entries(sync_data).filter(([key]) => {
+          const k = Number(key);
+          return k >= i && k <= (i+(10*60*1000));
+        })
+      );
+      await stash_sync_socket_data_in_cold_storage(filtered, i+(10*60*1000))
+    }
+
+    starting_time += step;
+
+    const total = end_time - absolute_starting_time;
+    const level = starting_time - absolute_starting_time;
+    data['socket_section_synchronization'] = (level / total) * 100;
+
+    await new Promise(resolve => setTimeout(resolve, 1800))
+  }
+
+  data['is_synching_socket_with_beacon'] = false;
+}
+
+async function load_socket_data_from_beacon_node(filter_end_time, filter_start_time){
+  const params = new URLSearchParams({
+    arg_string:JSON.stringify({filter_end_time, filter_start_time}),
+  });
+  const request = `${beacon_chain_link}/sync_socket_data?${params.toString()}`
+  try{
+    const response = await fetch(request);
+    if (!response.ok) {
+      throw new Error(`Failed to retrieve data. Status: ${response}`);
+    }
+    const return_data = await response.text();
+    const obj = JSON.parse(return_data);
+    return obj['data']
+  }
+  catch(e){
+    log_error(e)
+  }
+}
+
+async function stash_sync_socket_data_in_cold_storage(sync_socket_data, now){
+  const keys = Object.keys(sync_socket_data)
+  if(keys.length > 0){
+    const records_file = await read_file('cold_storage_records_file', 'cold_storage_records_folder')
+    const tag_records_file = await read_file('cold_storage_tag_records_file', 'cold_storage_tag_records_folder')
+    const record_obj = {}
+    keys.forEach(timestamp => {
+      record_obj[timestamp] = structuredClone(sync_socket_data[timestamp])
+      Object.keys(sync_socket_data[timestamp]).forEach(target_record => {
+        if(records_file[now] == null){
+          records_file[now] = []
+        }
+        records_file[now].push(target_record)
+        Object.keys(sync_socket_data[timestamp][target_record]).forEach(object_hash => {
+          if(sync_socket_data[timestamp][target_record][object_hash]['tags'] != null && 
+            Array.isArray(sync_socket_data[timestamp][target_record][object_hash]['tags'])
+          ){
+            sync_socket_data[timestamp][target_record][object_hash]['tags'].forEach(recorded_tag => {
+              if(tag_records_file[recorded_tag] == null){
+                tag_records_file[recorded_tag] = []
+              }
+              tag_records_file[recorded_tag].push(now)
+            });
+          }
+        });
+      });
+    });
+
+    if(Object.keys(record_obj).length > 0){
+      const old_object = await read_file(now, 'socket_data_history')
+      Object.assign(record_obj, old_object)
+      write_stat_to_cold_storage(record_obj, 'socket_data_history', 'cold_storage_socket_data_records', true, now)
+    }
+
+    await rewrite_file('cold_storage_records_file', 'cold_storage_records_folder', records_file)
+    await rewrite_file('cold_storage_tag_records_file', 'cold_storage_tag_records_folder', tag_records_file)
+  }
+}
+
+
+
+
+
+
+
+
 
 
 
@@ -8116,6 +8272,8 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     'target_minimum_balance_amounts':data['target_minimum_balance_amounts'],
     'target_storage_space_unit_denomination_multiplier':data['target_storage_space_unit_denomination_multiplier'],
     'target_storage_streaming_multiplier':data['target_storage_streaming_multiplier'],
+    'socket_section_synchronization':data['socket_section_synchronization'],
+    'is_synching_socket_with_beacon':data['is_synching_socket_with_beacon'],
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -9937,6 +10095,29 @@ app.post(`/${endpoint_info['user_obligations']}/:privacy_signature`, async (req,
   }
 });
 
+/* endpoint for returning socket data during synchronization process */
+app.get(`/${endpoint_info['sync_socket_data']}`, async (req, res) => {
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
+  try{
+    const { filter_end_time, filter_start_time } = JSON.parse(req.query.arg_string)
+    if(filter_start_time - filter_end_time > 1000*60*60*24*5){
+      res.send(JSON.stringify({ message: 'Invalid filter args', success:false }));
+      return;
+    }
+    const sync_socket_data = await get_sync_socket_data(filter_end_time, filter_start_time);
+    const return_data = { 'data': sync_socket_data, }
+    const string_obj = JSON.stringify(return_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/sync_socket_data')
+    res.send(string_obj);
+  }catch(e){
+    console.log(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+});
+
 
 
 
@@ -10300,6 +10481,7 @@ set_up_error_logs_filestream()
 schedule_certificate_renewal()
 set_up_indexer_mesh_network()
 update_coin_transaction_fees()
+start_background_socket_sync()
 
 
 
