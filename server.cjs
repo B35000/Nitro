@@ -4303,6 +4303,7 @@ function write_stat_to_cold_storage(storage_object, directory, datapoint, should
         data[datapoint] = []
       }
       data[datapoint].push(timestamp_id)
+      data[datapoint] = data[datapoint].slice().sort((a, b) => a - b)
       if(should_watch_file == true){
         watch_specific_file(file_path)
       }
