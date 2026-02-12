@@ -5500,7 +5500,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     all_return_data[e5]['load_traffic_proportion_data'] = load_traffic_proportion_data(all_data[e5], all_concatenated_data, e5)
   }
   const socket_targets = account_exists == false ? ['jobs'] : ['jobs', 'open_signature_request|'
-  +target_address, 'open_signature_response|'+target_address, 'call_invites|'+target_address, 'ether_coin_request|'+target_address, 'pre_purchase_request|'+target_address]
+  +target_address, 'open_signature_response|'+target_address, 'call_invites|'+target_address, 'ether_coin_request|'+target_address, 'pre_purchase_request|'+target_address, 'direct_message|'+target_address]
 
   all_return_data['socket_objects_data'] = await get_socket_data(socket_targets, Date.now() -
   (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*53, Date.now())
