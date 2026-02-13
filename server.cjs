@@ -1528,8 +1528,8 @@ async function load_events_for_all_e5s(){
   var e5s = data['e']
   for(var i=0; i<e5s.length; i++){
     try{
-      await check_for_reorgs(e5s[i])
       await check_and_set_default_rpc(e5s[i])
+      await check_for_reorgs(e5s[i])
 
       const start_load_function = async () => {
         e5_event_loading_status[e5s[i]] = true
@@ -1545,14 +1545,23 @@ async function load_events_for_all_e5s(){
   }
 }
 
+//internal
+function manual_rewrite(){
+  data['E25']['web3'] = ['https://etc.etcdesktop.com', 'https://etc.rivet.link', 'https://0xrpc.io/etc']
+  data['E25']['url'] = 0
+}
+
 async function check_and_set_default_rpc(e5){
-  if(data[e5]['url'] == null) return;
-  data[e5]['url'] = 0
+  if(data[e5]['url'] == null){
+    if(e5 == 'E25') manual_rewrite()
+    return;
+  } 
   const web3_url = data[e5]['web3'][data[e5]['url']]
   const web3 = new Web3(web3_url);
 
   var is_conn = await web3.eth.net.isListening()
-  if(!is_conn){
+  var blockNumber = await web3.eth.getBlockNumber()
+  if(!is_conn || blockNumber == null || blockNumber == 0){
     if(data[e5]['url'] < data[e5]['web3'].length - 1){
       data[e5]['url'] ++
       await check_and_set_default_rpc(e5)
@@ -1567,6 +1576,7 @@ async function check_and_set_default_rpc(e5){
 async function check_for_reorgs(e5){
   const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
   const current_block_number = parseInt(await web3.eth.getBlockNumber())
+  if(current_block_number == 0) return;
   const current_block = await web3.eth.getBlock(current_block_number);
   const current_block_hash = current_block.hash == null ? '' : current_block.hash.toString()
   const current_block_time = parseInt(current_block.timestamp)
@@ -1611,6 +1621,8 @@ async function check_for_reorgs(e5){
         const first_block = await web3.eth.getBlock(last_matching_block)
         last_matching_block_time = parseInt(first_block.timestamp)
       }
+
+      if(blocks_to_delete > 53_000) return;
 
       blocks_to_delete.forEach(invalid_block_number => {
         delete data[e5]['block_hashes'][invalid_block_number]
@@ -3117,18 +3129,17 @@ function get_all_sorted_objects_mappings(object){
 
 
 /* automatically restore the node to the most recent backup */
-const backupp = ''/* 'Thu Sep 18 2025 11:56:54 GMT+0000 (Coordinated Universal Time).txt' */
+const backupp = ''/* 'Tue Feb 10 2026 21:43:08 GMT+0000 (Coordinated Universal Time).txt' */
 function get_list_of_server_files_and_auto_backup(){
   var dir = './backup_data/'
   var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
   if(files.length == 0) return
-  //Fri Jan 10 2025 20:57:42 GMT+0000 (Coordinated Universal Time).txt
   var int_dates = []
   var int_string_date_obj = {}
   files.forEach(filename => {
     var string_date = filename.replaceAll('.txt', '')
     var date_in_mills = Date.parse(string_date)
-    if(Date.now() - date_in_mills > (1000*60*60*24*7) || (backupp != filename)){
+    if(Date.now() - date_in_mills > (1000*60*60*24*7) || (backupp != '' && backupp != filename)){
       //file is old and should be deleted
       delete_backup_file(filename)
     }else{
@@ -4676,6 +4687,7 @@ function are_executions_valid(commands){
 async function write_block_number(){
   const e5 = 'E25'
   try{
+    await check_and_set_default_rpc(e5)
     const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
     sync_block_number = Number(await web3.eth.getBlockNumber())
   }
@@ -8232,7 +8244,8 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
   var files_obj = { /* 'data':files, 'log_data':log_files */ }
   var encrypted_files_obj = JSON.stringify(files_obj)
   const total_ram = Math.floor(os.totalmem() / (1024 * 1024))
-  
+  // manual_rewrite()
+
   var obj = {
     'ipfs_hashes':`${number_with_commas(ipfs_hashes)}`,
     'tracked_E5s':data['e'],//
@@ -8275,6 +8288,8 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     'target_storage_streaming_multiplier':data['target_storage_streaming_multiplier'],
     'socket_section_synchronization':data['socket_section_synchronization'],
     'is_synching_socket_with_beacon':data['is_synching_socket_with_beacon'],
+    'e25_rpc_urls':data['E25']['web3'],
+    'e25_selected_rpc':data['E25']['url'],
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
