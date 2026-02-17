@@ -1559,7 +1559,7 @@ async function check_and_set_default_rpc(e5){
   const web3_url = data[e5]['web3'][data[e5]['url']]
   const web3 = new Web3(web3_url);
 
-  var is_conn = await web3.eth.net.isListening()
+  // var is_conn = await web3.eth.net.isListening()
   var blockNumber = await web3.eth.getBlockNumber()
   if(!is_conn || blockNumber == null || blockNumber == 0){
     if(data[e5]['url'] < data[e5]['web3'].length - 1){
@@ -6782,8 +6782,12 @@ function set_up_indexer_mesh_network(){
       const nodeSocket = ClientIO(nodeUrl, { 
         transports: ['websocket'], 
         reconnection: true, 
-        reconnectionAttempts: 10, 
-        reconnectionDelay: 5000 
+        reconnectionAttempts: 10,
+        reconnectionDelay: 1_000,
+        reconnectionDelayMax: 5_000,
+        randomizationFactor: 0.5,
+        pingInterval: 25000,
+        pingTimeout: 20_000,
       });
 
       nodeSocket.on('connect', () => handle_node_connection_to_new_node(nodeUrl));
@@ -7274,7 +7278,7 @@ function is_users_transaction_valid(userId){
     return true
   }else{
     const difference = Date.now() - socket_transaction_times[userId]
-    if(difference < (5*1000)){
+    if(difference < (350)){
       socket_transaction_times[userId] = Date.now()
       return false
     }else{
@@ -10237,7 +10241,11 @@ async function when_server_killed(){
 // Start server
 const server = createServer(app);
 // const server = https.createServer(options, app)
-const io = new Server(server, { cors: { origin: '*' } });
+const io = new Server(server, { 
+  cors: { origin: '*' } ,
+  pingInterval: 30_000,
+  pingTimeout: 60_000,
+});
 
 
 
@@ -10340,7 +10348,6 @@ io.on('connection', socket => {
       nodeSocket.emit('forward_chatroom_message', { userId: socket.userId, roomId, message, forward_id: forward_id, target, object_hash, forward_origin: ENDPOINT_URL });
     });
   });
-
 
 
   //-----------------------------------CALLS----------------------------------------
@@ -10454,6 +10461,7 @@ io.on('connection', socket => {
     });
   });
 
+  
 });
 
 
