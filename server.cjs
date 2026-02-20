@@ -6752,6 +6752,10 @@ function record_socket_data_for_target(target, message, object_hash){
   //     }
   //   }
   // }
+
+  if(message['item_type'] != null){
+    record_trend('uploads', message['tags'], message['lan'], message['state'], message['item_type'], {})
+  }
 }
 
 // async function is_mutable_signature_valid(original_object, message, target){
