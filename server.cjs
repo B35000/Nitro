@@ -2267,10 +2267,10 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
         Object.assign(socket_data, obj['socket_data'])
       }
       if(obj['tag_price_index_values'] != null){
-        tag_price_index_values = obj['tag_price_index_values']
+        Object.assign(tag_price_index_values, obj['tag_price_index_values'])
       }
       if(obj['recipient_account_transaction_records'] != null){
-        recipient_account_transaction_records = obj['recipient_account_transaction_records']
+        Object.assign(recipient_account_transaction_records, obj['recipient_account_transaction_records'])
       }
       
       console.log('successfully loaded back-up data')
@@ -3746,7 +3746,7 @@ async function get_data_streams_for_files(files){
         is_loading_file = true
         fs.readFile(`stream_data/${cold_storage_file_name}.json`, (error, data) => {
           if (error) {
-            console.error(error);
+            // console.error(error);
           }else{
             var cold_storage_obj = JSON.parse(data.toString())
             Object.keys(cold_storage_obj).forEach(recorded_times => {
@@ -4728,6 +4728,8 @@ async function get_old_trends_history_data(start_time, end_time, keywords, filte
     return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
   });
 
+  console.log('get_old_trends_history_data', 'selected_cold_storage_request_trends_files', selected_cold_storage_request_trends_files)
+
   var selected_cold_storage_request_trend_obj = {}
   const keys = Object.keys(upload_view_trends_data)
   if(keys.length > 0){
@@ -4738,11 +4740,31 @@ async function get_old_trends_history_data(start_time, end_time, keywords, filte
     });
   }
 
-  for(var i=0; i<selected_cold_storage_request_trends_files; i++){
+  console.log('get_old_trends_history_data', 'selected_cold_storage_request_trend_obj', selected_cold_storage_request_trend_obj)
+
+  let count = 0
+  for(var i=0; i<selected_cold_storage_request_trends_files.length; i++){
     const focused_file = selected_cold_storage_request_trends_files[i]
-    const object = await read_file(focused_file, 'trends_stats_history')
-    Object.assign(selected_cold_storage_request_trend_obj, object);
+    const write = async () => {
+      const object = await read_file(focused_file, 'trends_stats_history')
+      Object.assign(selected_cold_storage_request_trend_obj, object);
+      count++
+    }
+    write()
   }
+
+  await new Promise(resolve => {
+    const checkReady = () => {
+      if (count == selected_cold_storage_request_trends_files.length) {
+        resolve();
+      } else {
+        setTimeout(checkReady, 100);
+      }
+    };
+    checkReady();
+  });
+
+  console.log('get_old_trends_history_data', 'selected_cold_storage_request_trend_obj', 'after file reads', selected_cold_storage_request_trend_obj)
 
   const timestamp_ids = Object.keys(selected_cold_storage_request_trend_obj)
   timestamp_ids.forEach(timestamp_id => {
@@ -4790,6 +4812,8 @@ async function get_old_trends_history_data(start_time, end_time, keywords, filte
       }
     });
   });
+
+  console.log('get_old_trends_history_data', 'selected_cold_storage_request_trend_obj', 'after filter', selected_cold_storage_request_trend_obj)
 
   return selected_cold_storage_request_trend_obj
 }
@@ -6752,10 +6776,6 @@ function record_socket_data_for_target(target, message, object_hash){
   //     }
   //   }
   // }
-
-  if(message['item_type'] != null){
-    record_trend('uploads', message['tags'], message['lan'], message['state'], message['item_type'], {})
-  }
 }
 
 // async function is_mutable_signature_valid(original_object, message, target){
@@ -7706,6 +7726,7 @@ async function update_tag_indexer_price_tracking_info(){
     for(var e=0; e<hashes.length; e++){
       const cid = hashes[e]
       console.log('cid', cid)
+      if(hash_data[cid] == null) continue;
       const container_data = JSON.parse(hash_data[cid])
       if(container_data != null){
         try{
@@ -7832,8 +7853,9 @@ async function get_old_tag_price_history_data(start_time, end_time, keywords, fi
     return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
   });
 
+  console.log('get_old_tag_price_history_data', 'selected_cold_storage_request_trends_files', selected_cold_storage_request_trends_files, tag_price_index_values)
+
   var selected_cold_storage_request_trend_obj = {}
-  console.log('tag_price_index_values', tag_price_index_values)
   const keys = Object.keys(tag_price_index_values)
   if(keys.length > 0){
     keys.forEach(timestamp => {
@@ -7843,12 +7865,29 @@ async function get_old_tag_price_history_data(start_time, end_time, keywords, fi
     });
   }
 
-  for(var i=0; i<selected_cold_storage_request_trends_files; i++){
+  let count = 0
+  for(var i=0; i<selected_cold_storage_request_trends_files.length; i++){
     const focused_file = selected_cold_storage_request_trends_files[i]
-    const object = await read_file(focused_file, 'tag_price_stats_history')
-    Object.assign(selected_cold_storage_request_trend_obj, object);
+    const write = async () => {
+      const object = await read_file(focused_file, 'tag_price_stats_history')
+      Object.assign(selected_cold_storage_request_trend_obj, object);
+      count++
+    }
+    write();
   }
 
+  await new Promise(resolve => {
+    const checkReady = () => {
+      if (count == selected_cold_storage_request_trends_files.length) {
+        resolve();
+      } else {
+        setTimeout(checkReady, 100);
+      }
+    };
+    checkReady();
+  });
+
+  console.log('get_old_tag_price_history_data', selected_cold_storage_request_trend_obj)
   const timestamp_ids = Object.keys(selected_cold_storage_request_trend_obj)
   timestamp_ids.forEach(timestamp_id => {
     const types = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id])
@@ -7928,7 +7967,7 @@ async function get_users_obligation_history_data(start_time, end_time, accounts)
   )
 
   accounts.forEach(account => {
-    const account_data = selected_cold_storage_request_trend_obj[account]
+    const account_data = filtered_accounts_data[account]
     Object.keys(account_data).forEach(time => {
       if(parseInt(time) < parseInt(start_time) || parseInt(time) > parseInt(end_time)){
         delete account_data[time]
@@ -7936,7 +7975,7 @@ async function get_users_obligation_history_data(start_time, end_time, accounts)
     });
   });
 
-  return selected_cold_storage_request_trend_obj
+  return filtered_accounts_data
 }
 
 
@@ -10492,7 +10531,7 @@ setInterval(delete_older_ram_rom_usage_stats, 20*24*60*60*1000)
 setInterval(delete_older_request_stats, 20*24*60*60*1000)
 setTimeout(update_logStream, milliseconds_till_midnight());
 setInterval(write_block_number, 11*1000)
-setInterval(stash_old_trends_in_cold_storage, 20*24*60*60*1000)
+setInterval(stash_old_trends_in_cold_storage, 14*24*60*60*1000)
 setInterval(trim_block_record_data, 3*24*60*60*1000)
 setInterval(set_up_indexer_mesh_network, 5*60*1000)
 setInterval(stash_old_socket_data_in_cold_storage, 10*60*1000)
@@ -10500,7 +10539,7 @@ setInterval(delete_old_forward_data, 60*60*1000)
 setInterval(delete_old_transaction_id_data, 60*60*1000)
 setInterval(update_coin_transaction_fees, 3*60*60*1000)
 setInterval(update_tag_indexer_price_tracking_info, 12*60*1000)
-setInterval(stash_old_tag_price_data_in_cold_storage, 20*24*60*60*1000)
+setInterval(stash_old_tag_price_data_in_cold_storage, 14*24*60*60*1000)
 setInterval(stash_old_user_obligations_data_in_cold_storage, 20*24*60*60*1000)
 
 
