@@ -2016,6 +2016,9 @@ function record_trend(type, keys, language, state, object_type, tag_type_mapping
     if(upload_view_trends_data[timestamp] == null){
       upload_view_trends_data[timestamp] = {'uploads':{}, 'views':{} }
     }
+    if(upload_view_trends_data[timestamp][type] == null){
+      upload_view_trends_data[timestamp][type] = {}
+    }
     if(upload_view_trends_data[timestamp][type][language] == null){
       upload_view_trends_data[timestamp][type][language] = {}
     }
@@ -5617,9 +5620,16 @@ async function get_app_launch_object_data(indexing_hash, item_type, e5, account,
 
   const hashes_to_fetch = []
   const id_to_hash_mapping = {}
+  const e5_ids = []
+  const all_object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: process_array_for_indexer_query(object_ids)}, {})
+
   for(var i=0; i<object_ids.length; i++){
     const target_id = object_ids[i]
-    const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+    e5_ids.push(target_id+e5)
+    // const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+    const object_metadata_events = all_object_metadata_events.filter((event) => {
+      return (parseInt(event.returnValues.p1/* target_obj_id */) == parseInt(target_id) )
+    })
 
     if(object_metadata_events.length > 0){
       const latest_event = object_metadata_events[object_metadata_events.length - 1];
@@ -5635,7 +5645,9 @@ async function get_app_launch_object_data(indexing_hash, item_type, e5, account,
   }
 
   const object_hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
-  return { object_hash_data, created_object_events, id_to_hash_mapping }
+  const view_data = await get_old_trends_history_data(1771762377000, Date.now(), e5_ids, '', [], [], [])
+
+  return { object_hash_data, created_object_events, id_to_hash_mapping, view_data }
 }
 
 function get_ids_from_events(events, p){
@@ -5725,9 +5737,16 @@ async function get_object_data_from_indexing_events(created_object_events, item_
 
   const hashes_to_fetch = []
   const id_to_hash_mapping = {}
+  const e5_ids = []
+  const all_object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: process_array_for_indexer_query(object_ids)}, {})
+
   for(var i=0; i<object_ids.length; i++){
     const target_id = object_ids[i]
-    const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+    e5_ids.push(target_id+e5)
+    // const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+    const object_metadata_events = all_object_metadata_events.filter((event) => {
+      return (parseInt(event.returnValues.p1/* target_obj_id */) == parseInt(target_id) )
+    })
 
     if(object_metadata_events.length > 0){
       const latest_event = object_metadata_events[object_metadata_events.length - 1];
@@ -5743,7 +5762,8 @@ async function get_object_data_from_indexing_events(created_object_events, item_
   }
 
   const object_hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
-  return { object_hash_data, id_to_hash_mapping }
+  const view_data = await get_old_trends_history_data(1771762377000, Date.now(), e5_ids, '', [], [], [])
+  return { object_hash_data, id_to_hash_mapping, view_data }
 }
 
 async function get_subscription_or_contract_object_data_from_indexing_events(created_object_events, item_type, e5, max_post_bulk_load_count, known_hashes){
@@ -5757,9 +5777,16 @@ async function get_subscription_or_contract_object_data_from_indexing_events(cre
 
   const hashes_to_fetch = []
   const id_to_hash_mapping = {}
+  const e5_ids = []
+  const all_object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: process_array_for_indexer_query(object_ids)}, {})
+
   for(var i=0; i<object_ids.length; i++){
     const target_id = object_ids[i]
-    const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+    e5_ids.push(target_id+e5)
+    // const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+    const object_metadata_events = all_object_metadata_events.filter((event) => {
+      return (parseInt(event.returnValues.p1/* target_obj_id */) == parseInt(target_id) )
+    })
 
     if(object_metadata_events.length > 0){
       const latest_event = object_metadata_events[object_metadata_events.length - 1];
@@ -5775,7 +5802,8 @@ async function get_subscription_or_contract_object_data_from_indexing_events(cre
   }
 
   const object_hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
-  return { object_hash_data, id_to_hash_mapping, object_data }
+  const view_data = await get_old_trends_history_data(1771762377000, Date.now(), e5_ids, '', [], [], [])
+  return { object_hash_data, id_to_hash_mapping, object_data, view_data }
 }
 
 async function get_proposal_object_data_from_indexing_events(created_object_events, e5, max_post_bulk_load_count, known_hashes){
@@ -5797,9 +5825,16 @@ async function get_proposal_object_data_from_indexing_events(created_object_even
 
   const hashes_to_fetch = []
   const id_to_hash_mapping = {}
+  const e5_ids = []
+  const all_object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: process_array_for_indexer_query(object_ids)}, {})
+
   for(var i=0; i<object_ids.length; i++){
     const target_id = object_ids[i]
-    const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+    e5_ids.push(target_id+e5)
+    // const object_metadata_events = await filter_events(e5, 'E52', 'e5', {p1/* target_obj_id */: target_id}, {})
+    const object_metadata_events = all_object_metadata_events.filter((event) => {
+      return (parseInt(event.returnValues.p1/* target_obj_id */) == parseInt(target_id) )
+    })
 
     if(object_metadata_events.length > 0){
       const latest_event = object_metadata_events[object_metadata_events.length - 1];
@@ -5815,7 +5850,8 @@ async function get_proposal_object_data_from_indexing_events(created_object_even
   }
 
   const object_hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
-  return { object_hash_data, id_to_hash_mapping, object_data }
+  const view_data = await get_old_trends_history_data(1771762377000, Date.now(), e5_ids, '', [], [], [])
+  return { object_hash_data, id_to_hash_mapping, object_data, view_data }
 }
 
 async function load_comment_data(all_events, known_hashes){
@@ -6760,6 +6796,10 @@ function handle_node_disconnection_from_node(nodeUrl){
 
 function record_socket_data_for_target(target, message, object_hash){
   const start_today = (Math.floor(Date.now() / (10*60*1000))) * (10*60*1000)
+  if(message['record_view'] == true){
+    record_trend(message['record_type'], message['record_id'], 'en', '0x', 1, {})
+    return;
+  }
   if(socket_data[start_today] == null){
     socket_data[start_today] = {}
   }
