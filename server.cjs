@@ -5542,7 +5542,14 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
   +target_address, 'open_signature_response|'+target_address, 'call_invites|'+target_address, 'ether_coin_request|'+target_address, 'pre_purchase_request|'+target_address, 'direct_message|'+target_address]
 
   all_return_data['socket_objects_data'] = await get_socket_data(socket_targets, Date.now() -
-  (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*53, Date.now())
+  (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*153, Date.now())
+
+
+  const view_targets = ['follow_account', 'unfollow_account', 'repost_object_event', 
+  'object_views']
+
+  all_return_data['socket_view_objects_data'] = await get_socket_data(view_targets,
+  1771762377000, [], [target_address], [], [], '', '', '', '', 1024*153, Date.now())
 
 
   const hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
