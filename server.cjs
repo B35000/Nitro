@@ -197,6 +197,7 @@ const socket_transaction_times = {};
 const e5_event_loading_status = {};
 var tag_price_index_values = {};
 var recipient_account_transaction_records = {}
+const user_obligation_records = {}
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -2008,7 +2009,7 @@ function record_objects_targeted_states_in_memory(object_id, targeted_countries,
   data['object_targeted_states'][e5][object_id] = targeted_countries
 }
 
-function record_trend(type, keys, language, state, object_type, tag_type_mapping){
+function record_trend(type, keys, language, state, object_type, tag_type_mapping, value=1){
   const now = new Date();
   now.setMinutes(0, 0, 0);
   const timestamp = now.getTime()
@@ -2037,13 +2038,13 @@ function record_trend(type, keys, language, state, object_type, tag_type_mapping
         if(upload_view_trends_data[timestamp][type][language][tag][state][final_object_type] == null){
           upload_view_trends_data[timestamp][type][language][tag][state][final_object_type] = { 'hits':0 }
         }
-        upload_view_trends_data[timestamp][type][language][tag][state][final_object_type]['hits'] ++
+        upload_view_trends_data[timestamp][type][language][tag][state][final_object_type]['hits'] += value
       });
     }else{
       if(upload_view_trends_data[timestamp][type][language][tag][state][object_type] == null){
         upload_view_trends_data[timestamp][type][language][tag][state][object_type] = { 'hits':0 }
       }
-      upload_view_trends_data[timestamp][type][language][tag][state][object_type]['hits'] ++
+      upload_view_trends_data[timestamp][type][language][tag][state][object_type]['hits'] += value
     }
     
   });
@@ -2184,6 +2185,7 @@ async function store_back_up_of_data(){
     'socket_data':socket_data,
     'tag_price_index_values':tag_price_index_values,
     'recipient_account_transaction_records':recipient_account_transaction_records,
+    'user_obligation_records':user_obligation_records,
   }
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -2261,10 +2263,10 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
         failed_ecids = obj['failed_ecids']
       }
       if(obj['file_data_steams'] != null){
-        file_data_steams = obj['file_data_steams']
+        Object.assign(file_data_steams, obj['file_data_steams'])
       }
       if(obj['upload_view_trends_data'] != null){
-        upload_view_trends_data = obj['upload_view_trends_data']
+        Object.assign(upload_view_trends_data, obj['upload_view_trends_data'])
       }
       if(obj['socket_data'] != null){
         Object.assign(socket_data, obj['socket_data'])
@@ -2274,6 +2276,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       }
       if(obj['recipient_account_transaction_records'] != null){
         Object.assign(recipient_account_transaction_records, obj['recipient_account_transaction_records'])
+      }
+      if(obj['user_obligation_records'] != null){
+        Object.assign(user_obligation_records, obj['user_obligation_records'])
       }
       
       console.log('successfully loaded back-up data')
@@ -2753,6 +2758,8 @@ async function update_storage_payment_information(e5, target_storage_purchase_re
       }else{
         data['storage_data'][account]['acquired_space'] = parseFloat(data['storage_data'][account]['acquired_space']+acquired_space)
       }
+
+      record_trend('storage', ['storage_acquisition'], 'en', '0x', 1, {}, parseFloat(acquired_space))
       // console.log(`updated storage space for account ${account} to ${data['storage_data'][account]['acquired_space']} mbs`)
     }
   }
@@ -2903,6 +2910,7 @@ async function update_storage_renewal_payment_information(e5, target_storage_pur
               data['uploaded_files_data'][file]['renewals'].push(last_year)
             }
           });
+          record_trend('storage', ['storage_renewal'], 'en', '0x', 1, {}, parseFloat(acquired_space))
         }
       }
     }
@@ -5462,6 +5470,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
         }
       });
       const from_filter = event_fetch_data_params['from_filter'] || {}
+      const fetch_last_data_p_pos = event_fetch_data_params['fetch_last_data_p_pos'] || 'p4'
       const filtered_events = (should_run_filter == false || ignore == true) ? [] : await filter_events(e5, requested_contract, requested_event_id, filter, from_filter)
       return_data[fetch_identifier] = filtered_events
 
@@ -5469,7 +5478,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
         //fetch the last data hash for the selected event id
         if(filtered_events.length > 0){
           const latest_event = filtered_events[filtered_events.length - 1];
-          const ecid_identifier = latest_event.returnValues.p4
+          const ecid_identifier = latest_event.returnValues[fetch_last_data_p_pos]
           try{
             const content_id = get_data_id_from_ecid(ecid_identifier)
             if(!hashes_to_fetch.includes(content_id) && !known_hashes.includes(content_id)){
@@ -5483,7 +5492,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
       else if(fetch_last_data == 'all'){
         //fetch all the hashes logged under the selected event id
         filtered_events.forEach(obtained_event => {
-          const ecid_identifier = obtained_event.returnValues.p4
+          const ecid_identifier = obtained_event.returnValues[fetch_last_data_p_pos]
           try{
             const content_id = get_data_id_from_ecid(ecid_identifier)
             if(!hashes_to_fetch.includes(content_id) && !known_hashes.includes(content_id)){
@@ -5508,6 +5517,8 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     return_data['exchange_objects_data'] = await get_app_launch_object_data(indexing_hash, 31/* token_exchange */, e5, e5_account_id, max_post_bulk_load_count, known_hashes, my_state_exchanges)
 
     return_data['exchange_alias_data'] = await fetch_object_author_alias_event_data(return_data['exchange_objects_data']['created_object_events'], 'p3', max_post_bulk_load_count, e5)
+
+    return_data['obligation_data'] = await get_accounts_obligation_history_data(1772477290, Date.now(), [], [], [e5_account_id+e5])
 
     if(e5_charts_data_object[e5] == null || e5_charts_data_object[e5]['time'] < Date.now()-(1000*60*23)){
       //generate new data
@@ -5544,9 +5555,8 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
   all_return_data['socket_objects_data'] = await get_socket_data(socket_targets, Date.now() -
   (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*153, Date.now())
 
-
   const view_targets = ['follow_account', 'unfollow_account', 'repost_object_event', 
-  'object_views']
+  'object_views', 'obligation_subscription']
 
   all_return_data['socket_view_objects_data'] = await get_socket_data(view_targets,
   1771762377000, [], [target_address], [], [], '', '', '', '', 1024*153, Date.now())
@@ -7825,16 +7835,16 @@ async function update_tag_indexer_price_tracking_info(){
                       }
                     });
 
-                    if(recipient_account_transaction_records[recipient_account] == null){
-                      recipient_account_transaction_records[recipient_account] = {}
-                    }
-                    if(recipient_account_transaction_records[recipient_account][start_today] == null){
-                      recipient_account_transaction_records[recipient_account][start_today] = {}
-                    }
-                    recipient_account_transaction_records[recipient_account][start_today][identifier] = {
-                      'tags':index_values, 'type':item_type, 'lan':item_lan, 'state':item_state, 'time':time,
-                      'object':e5_id, 'e5':e5, 'amounts':amounts, 'sender':sender, 'obligations':obligations
-                    }
+                    // if(recipient_account_transaction_records[recipient_account] == null){
+                    //   recipient_account_transaction_records[recipient_account] = {}
+                    // }
+                    // if(recipient_account_transaction_records[recipient_account][start_today] == null){
+                    //   recipient_account_transaction_records[recipient_account][start_today] = {}
+                    // }
+                    // recipient_account_transaction_records[recipient_account][start_today][identifier] = {
+                    //   'tags':index_values, 'type':item_type, 'lan':item_lan, 'state':item_state, 'time':time,
+                    //   'object':e5_id, 'e5':e5, 'amounts':amounts, 'sender':sender, 'obligations':obligations
+                    // }
                   }
                 }
               }
@@ -7874,26 +7884,26 @@ function stash_old_tag_price_data_in_cold_storage(){
   }
 }
 
-function stash_old_user_obligations_data_in_cold_storage(){
-  const keys = Object.keys(recipient_account_transaction_records)
-  if(keys.length > 0){
-    const record_obj = {}
-    const now = new Date();
-    now.setMonth(now.getMonth() - 1);
-    now.setHours(0, 0, 0, 0);
-    const cutoff_timestamp = now.getTime();
-    keys.forEach(timestamp => {
-      if(parseInt(timestamp) < cutoff_timestamp){
-        record_obj[timestamp] = structuredClone(recipient_account_transaction_records[timestamp])
-        delete recipient_account_transaction_records[timestamp]
-      }
-    });
+// function stash_old_user_obligations_data_in_cold_storage(){
+//   const keys = Object.keys(recipient_account_transaction_records)
+//   if(keys.length > 0){
+//     const record_obj = {}
+//     const now = new Date();
+//     now.setMonth(now.getMonth() - 1);
+//     now.setHours(0, 0, 0, 0);
+//     const cutoff_timestamp = now.getTime();
+//     keys.forEach(timestamp => {
+//       if(parseInt(timestamp) < cutoff_timestamp){
+//         record_obj[timestamp] = structuredClone(recipient_account_transaction_records[timestamp])
+//         delete recipient_account_transaction_records[timestamp]
+//       }
+//     });
 
-    if(Object.keys(record_obj).length > 0){
-      write_stat_to_cold_storage(record_obj, 'user_obligations_stats_history', 'cold_storage_obligations_records', true)
-    }
-  }
-}
+//     if(Object.keys(record_obj).length > 0){
+//       write_stat_to_cold_storage(record_obj, 'user_obligations_stats_history', 'cold_storage_obligations_records', true)
+//     }
+//   }
+// }
 
 async function get_old_tag_price_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states, filter_e5s){
   const selected_cold_storage_request_trends_files = data['cold_storage_tag_price_records'].filter(function (time) {
@@ -7985,45 +7995,45 @@ async function get_old_tag_price_history_data(start_time, end_time, keywords, fi
   return selected_cold_storage_request_trend_obj
 }
 
-async function get_users_obligation_history_data(start_time, end_time, accounts){
-  const selected_cold_storage_request_trends_files = data['cold_storage_obligations_records'].filter(function (time) {
-    return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
-  });
+// async function get_users_obligation_history_data(start_time, end_time, accounts){
+//   const selected_cold_storage_request_trends_files = data['cold_storage_obligations_records'].filter(function (time) {
+//     return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
+//   });
 
-  var selected_cold_storage_request_trend_obj = {}
-  const keys = Object.keys(tag_price_index_values)
-  if(keys.length > 0){
-    keys.forEach(timestamp => {
-      if(parseInt(timestamp) >= parseInt(start_time) && parseInt(timestamp) <= parseInt(end_time)){
-        selected_cold_storage_request_trend_obj[timestamp] = structuredClone(tag_price_index_values[timestamp])
-      }
-    });
-  }
+//   var selected_cold_storage_request_trend_obj = {}
+//   const keys = Object.keys(tag_price_index_values)
+//   if(keys.length > 0){
+//     keys.forEach(timestamp => {
+//       if(parseInt(timestamp) >= parseInt(start_time) && parseInt(timestamp) <= parseInt(end_time)){
+//         selected_cold_storage_request_trend_obj[timestamp] = structuredClone(tag_price_index_values[timestamp])
+//       }
+//     });
+//   }
 
-  for(var i=0; i<selected_cold_storage_request_trends_files; i++){
-    const focused_file = selected_cold_storage_request_trends_files[i]
-    const object = await read_file(focused_file, 'user_obligations_stats_history')
+//   for(var i=0; i<selected_cold_storage_request_trends_files; i++){
+//     const focused_file = selected_cold_storage_request_trends_files[i]
+//     const object = await read_file(focused_file, 'user_obligations_stats_history')
 
-    Object.assign(selected_cold_storage_request_trend_obj, object);
-  }
+//     Object.assign(selected_cold_storage_request_trend_obj, object);
+//   }
 
-  const filtered_accounts_data = Object.fromEntries(
-    Object.entries(selected_cold_storage_request_trend_obj).filter(([key, _]) =>
-      accounts.includes(key)
-    )
-  )
+//   const filtered_accounts_data = Object.fromEntries(
+//     Object.entries(selected_cold_storage_request_trend_obj).filter(([key, _]) =>
+//       accounts.includes(key)
+//     )
+//   )
 
-  accounts.forEach(account => {
-    const account_data = filtered_accounts_data[account]
-    Object.keys(account_data).forEach(time => {
-      if(parseInt(time) < parseInt(start_time) || parseInt(time) > parseInt(end_time)){
-        delete account_data[time]
-      }
-    });
-  });
+//   accounts.forEach(account => {
+//     const account_data = filtered_accounts_data[account]
+//     Object.keys(account_data).forEach(time => {
+//       if(parseInt(time) < parseInt(start_time) || parseInt(time) > parseInt(end_time)){
+//         delete account_data[time]
+//       }
+//     });
+//   });
 
-  return filtered_accounts_data
-}
+//   return filtered_accounts_data
+// }
 
 
 
@@ -8177,6 +8187,525 @@ async function stash_sync_socket_data_in_cold_storage(sync_socket_data, now){
     await rewrite_file('cold_storage_tag_records_file', 'cold_storage_tag_records_folder', tag_records_file)
   }
 }
+
+
+
+
+
+
+
+async function update_user_obligation_data(){
+  const e5s = data['e']
+  for(var j=0; j<e5s.length; j++){
+    const e5 = e5s[j]
+    const from_block = data[e5]['user_obligation_block_number'] || 0;
+
+    const indexer_events = await filter_events(e5, 'E52', 'e4', {p1/* target_id */: 32/* 32(obligation_transaction_record) */, p3/* context */: 35}, {'p':'p7'/* block_number */, 'value':from_block})
+
+    const transfer_events = await filter_events(e5, 'H52', 'e1', {}, {'p':'p6'/* block_number */, 'value':from_block})
+
+    const swap_events = await filter_events(e5, 'H5', 'e1', {}, {'p':'p6'/* block_number */, 'value':from_block})
+
+    const get_default_depth = (number) => {
+      var number_as_string = number.toString().toLocaleString('fullwide', {useGrouping:false})
+      return Math.floor((number_as_string.length-1)/72)
+    }
+
+    const get_exchange_transfer_actions = (amount) => {
+      var transaction_amount = amount.toString().toLocaleString('fullwide', {useGrouping:false})
+      var transaction_amount_depth = get_default_depth(transaction_amount)
+
+      var end = transaction_amount.length - 1
+      var start = (end - 71) < 0 ? 0 : (end-71)
+
+      var data = []
+      for(var j=0; j<=transaction_amount_depth; j++){
+        var depth_amount = bigInt(transaction_amount.substring(start, end+1)).toString().toLocaleString('fullwide', {useGrouping:false})
+        var depth = j
+        if(!bigInt(depth_amount).equals(0)){
+          data.push({'amount':depth_amount, 'depth':depth})
+        }
+
+        end -= 72
+        start -= 72
+      }
+      return data
+    }
+
+    const ensure_all_transfers_exist = (transfers) => {
+      var all_existing = true;
+      transfers.forEach(transfer => {
+        const exchange = transfer['exchange']
+        const amount = transfer['amount']
+        const transfer_actions = get_exchange_transfer_actions(amount)
+
+        transfer_actions.forEach(action => {
+          const existing_events = transfer_events.filter((event) => { 
+            return(
+              event.returnValues.p1 == exchange && 
+              action['amount'].toString() == event.returnValues.p4/* amount */.toString() &&
+              action['depth'].toString() == event.returnValues.p7/* depth */.toString()
+            )
+          });
+          if(existing_events.length == 0){
+            all_existing = false;
+          }
+        });
+      });
+
+      return all_existing;
+    }
+
+    const get_updated_swap_transfer_amount_data = (transfer, filter_account, time) => {
+      const exchange = transfer['exchange']
+      const block_time = Math.min(parseInt(time)/1000)
+
+      const filtered_events = swap_events.filter((event) => {
+        return (
+          parseInt(event.returnValues.p1) == parseInt(exchange) && 
+          parseInt(event.returnValues.p3/* sender_account */) == parseInt(filter_account) &&
+          parseInt(event.returnValues.p9/* timestamp */) >= block_time
+        )
+      })
+
+      if(filtered_events.length == 0){
+        return 0
+      }
+
+      const matching_event =  filtered_events.reduce((closest, current) => {
+        const closestDiff = closest.returnValues.p9/* timestamp */ - block_time;
+        const currentDiff = current.returnValues.p9/* timestamp */ - block_time;
+        return currentDiff < closestDiff ? current : closest;
+      });
+
+      return matching_event.returnValues.p8/* amount */
+    }
+
+    const hashes = []
+    const added_events = []
+    indexer_events.forEach(event => {
+      const hash = get_data_id_from_ecid(event.returnValues.p4)/* string_data */
+      if(!hashes.includes(hash)){
+        hashes.push(hash)
+        added_events.push(event)
+      }
+    });
+    const hash_data = await fetch_hashes_from_file_storage_or_memory(hashes)
+
+    for(var e=0; e<hashes.length; e++){
+      const cid = hashes[e]
+      console.log('cid', cid)
+      if(hash_data[cid] == null) continue;
+      const container_data = JSON.parse(hash_data[cid])
+      if(container_data != null){
+        try{
+          if(container_data['tags'] != null && container_data['tags']['obligation_data']){
+            const obligation_object = container_data['tags']['obligation_data']
+            const obligation_data = obligation_object['data']
+            const data_to_be_signed = obligation_object['data_to_be_signed']
+            const [time_string, data_hash, senders_address] = data_to_be_signed.split(':')
+            const { accounts_signature, app_signature } = obligation_object['signature_object']
+            const time = parseInt(time_string)
+            const the_datas_hash = hash_my_data(JSON.stringify({'o':obligation_data}));
+
+            if(the_datas_hash == data_hash){
+              const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+              const derived_app_address = await web3.eth.accounts.recover(data_to_be_signed, app_signature)
+              const derived_users_address = await web3.eth.accounts.recover(data_to_be_signed, accounts_signature)
+
+              if(derived_app_address == privacy_address){
+                const event_author_id = added_events[e].returnValues.p2/* sender_acc_id */
+                const event_author_address = await get_accounts_address(event_author_id, e5)
+
+                if(event_author_address == derived_users_address && derived_users_address == senders_address){
+                  for(var o=0; o<obligation_data.length; o++){
+                    const obligation_promise_data = obligation_data[o];
+                    const id = obligation_promise_data['id']
+                    const hard_id = obligation_promise_data['hard_id']
+                    const city = obligation_promise_data['city']
+                    const region = obligation_promise_data['region']
+                    const identifier = obligation_promise_data['identifier']
+                    const confirm_transfers = obligation_promise_data['confirm_transfers']
+                    const obligation_fulfiller = obligation_promise_data['obligation_fulfiller']
+                    const obligation_fulfiller_address = obligation_promise_data['obligation_fulfiller_address'];
+                    const promises = obligation_promise_data['promises']
+
+                    let all_verified = true;
+                    if(confirm_transfers == true){
+                      if(hard_id == 'buy-sell-token'){
+                        const new_promises_obj = {}
+                        Object.keys(promises).forEach(contract => {
+                          const transfer = promises[contract]['transfers'][0]
+                          const amount_received = get_updated_swap_transfer_amount_data(transfer, event_author_id, time)
+                          if(amount_received != 0){
+                            const new_final_object_value_transfer_data = []
+                            const swap_token_id_amounts = transfer['swap_tokens_used']['amounts']
+                            swap_token_id_amounts.forEach(amount => {
+                              new_final_object_value_transfer_data.push({'exchange':transfer['exchange'], 'amount':bigInt(amount_received).multiply(amount)})
+                            });
+                            new_promises_obj[contract] = {
+                              'proportions':promises[contract]['proportions'],
+                              'transfers':new_final_object_value_transfer_data
+                            }
+                          }
+                          else{
+                            all_verified = false;
+                          }
+                        })
+                        if(all_verified == true){
+                          Object.keys(promises).forEach(contract => {
+                            delete promises[contract]
+                          });
+                          Object.assign(promises, new_promises_obj)
+                        }
+                      }else{
+                        Object.keys(promises).forEach(contract => {
+                          const transfers = promises[contract]
+                          const transfers_verified = ensure_all_transfers_exist(transfers);
+                          if(transfers_verified == false){
+                            all_verified = false;
+                          }
+                        });
+                      }
+                    }
+                    if(all_verified == true){
+                      //record all the data...
+                      const start_today = (Math.floor(parseInt(time) / (12*60*1000))) * (12*60*1000)
+                      const contracts = Object.keys(promises)
+
+                      for(var c=0; c<contracts.length; c++){
+                        const contract = contracts[c];
+                        const contracts_promises = promises[contract]
+                        if(user_obligation_records[start_today] == null){
+                          user_obligation_records[start_today] = {}
+                        }
+                        if(user_obligation_records[start_today][contract] == null){
+                          user_obligation_records[start_today][contract] = {}
+                        }
+                        if(user_obligation_records[start_today][contract][obligation_fulfiller_address] == null){
+                          user_obligation_records[start_today][contract][obligation_fulfiller_address] = {}
+                        }
+                        user_obligation_records[start_today][contract][obligation_fulfiller_address][identifier] = {
+                          id, hard_id, obligation_fulfiller, e5, contracts_promises, time, city, region
+                        }
+                      }
+                    }
+                    else{
+                      console.log('transfers have not been verified. One of the transfers is missing on the blockchain.')
+                    }
+                  }
+                }
+                else{
+                  console.log('author of event and derived address do not match')
+                }
+              }
+              else{
+                console.log('invalid privacy address')
+              }
+            }
+            else{
+              console.log('hash mismatch, data was tampered with.')
+            }
+          }
+        }
+        catch(e){
+          log_error(e)
+        }
+      }else{
+        console.log('container_data is empty...')
+      }
+    }
+
+    data[e5]['user_obligation_block_number'] = data[e5]['current_block']['E52'+'e4']
+  }
+}
+
+function set_old_account_obligations_data_in_cold_storage(){
+  const keys = Object.keys(user_obligation_records)
+  if(keys.length > 0){
+    const record_obj = {}
+    const now = new Date();
+    now.setMonth(now.getMonth() - 1);
+    now.setHours(0, 0, 0, 0);
+    const cutoff_timestamp = now.getTime();
+    keys.forEach(timestamp => {
+      if(parseInt(timestamp) < cutoff_timestamp){
+        record_obj[timestamp] = structuredClone(user_obligation_records[timestamp])
+        delete user_obligation_records[timestamp]
+      }
+    });
+
+    if(Object.keys(record_obj).length > 0){
+      write_stat_to_cold_storage(record_obj, 'account_obligations_stats_history', 'cold_storage_account_obligations_records', true)
+    }
+  }
+}
+
+async function get_accounts_obligation_history_data(start_time, end_time, filter_addresses, 
+filter_contracts, obligation_fulfiller_account_ids){
+  const selected_cold_storage_request_trends_files = data['cold_storage_account_obligations_records'].filter(function (time) {
+    return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
+  });
+
+  var selected_cold_storage_request_obligation_obj = {}
+  const keys = Object.keys(user_obligation_records)
+  if(keys.length > 0){
+    keys.forEach(timestamp => {
+      if(parseInt(timestamp) >= parseInt(start_time) && parseInt(timestamp) <= parseInt(end_time)){
+        selected_cold_storage_request_obligation_obj[timestamp] = structuredClone(user_obligation_records[timestamp])
+      }
+    });
+  }
+
+  let count = 0
+  for(var i=0; i<selected_cold_storage_request_trends_files.length; i++){
+    const focused_file = selected_cold_storage_request_trends_files[i]
+    const write = async () => {
+      const object = await read_file(focused_file, 'account_obligations_stats_history')
+      Object.assign(selected_cold_storage_request_obligation_obj, object);
+      count++
+    }
+    write();
+  }
+
+  await new Promise(resolve => {
+    const checkReady = () => {
+      if (count == selected_cold_storage_request_trends_files.length) {
+        resolve();
+      } else {
+        setTimeout(checkReady, 100);
+      }
+    };
+    checkReady();
+  });
+
+
+
+  const timestamp_ids = Object.keys(selected_cold_storage_request_obligation_obj)
+  timestamp_ids.forEach(timestamp_id => {
+    const contracts = Object.keys(selected_cold_storage_request_obligation_obj[timestamp_id])
+    
+    contracts.forEach(contract => {
+      const obligation_fulfiller_addresses = Object.keys(selected_cold_storage_request_obligation_obj[timestamp_id][contract]);
+      
+      obligation_fulfiller_addresses.forEach(obligation_fulfiller_address => {
+        const original = selected_cold_storage_request_obligation_obj[timestamp_id][contract][obligation_fulfiller_address]
+        
+        const filtered = obligation_fulfiller_account_ids.length > 0 ? Object.fromEntries(
+          Object.entries(original).filter(([_, value]) =>
+            obligation_fulfiller_account_ids.includes(value['obligation_fulfiller']+value['e5'])
+          )
+        ) : structuredClone(original);
+        
+        selected_cold_storage_request_obligation_obj[timestamp_id][contract][obligation_fulfiller_address] = filtered
+        if(filter_addresses.length > 0 && !filter_addresses.includes(obligation_fulfiller_address)){
+          delete selected_cold_storage_request_obligation_obj[timestamp_id][contract][obligation_fulfiller_address]
+        }
+      });
+      
+      if(filter_contracts.length > 0 && !filter_contracts.includes(contract)){
+        delete selected_cold_storage_request_obligation_obj[timestamp_id][contract]
+      }
+    });
+  });
+
+  return selected_cold_storage_request_obligation_obj
+  
+}
+
+function process_obligation_data_for_contract_into_metrics_info(data){
+  const { all_entries, region_city_metrics_object } = process_obligation_data(data);
+  const contracts_in_data = Object.keys(all_entries);
+
+  //process all entries first and generate graph data
+  const contract_datapoint_data = {}
+  const contract_region_general_info_data = {}
+  for(var c=0; c<contracts_in_data.length; c++){
+    const contract = contracts_in_data[c];
+    const contract_entries = sortByAttributeDescending(all_entries[contract], 'time').reverse();
+
+    contract_datapoint_data[contract] = generate_obligation_datapoints(contract_entries)
+    contract_region_general_info_data[contract] = get_contract_region_information(region_city_metrics_object[contract])
+  }
+
+  return { contract_datapoint_data, contract_region_general_info_data }
+}
+
+function process_obligation_data(data){
+  const all_entries = {}
+  const region_city_metrics_object = {}
+  Object.keys(data).forEach(time => {
+    Object.keys(data[time]).forEach(contract => {
+      Object.keys(data[time][contract]).forEach(obligation_fulfiller_address => {
+        Object.keys(data[time][contract][obligation_fulfiller_address]).forEach(identifier => {
+          const entry = data[time][contract][obligation_fulfiller_address][identifier]
+          if(all_entries[contract] == null){
+            all_entries[contract] = []
+          }
+          all_entries[contract].push(entry)
+          
+          const entrys_city = entry['city']
+          const entrys_region = entry['region']
+          if(region_city_metrics_object[contract] == null){
+            region_city_metrics_object[contract] = {}
+          }
+          if(region_city_metrics_object[contract][entrys_region] == null){
+            region_city_metrics_object[contract][entrys_region] = {}
+          }
+          if(region_city_metrics_object[contract][entrys_region][entrys_city] == null){
+            region_city_metrics_object[contract][entrys_region][entrys_city]  = []
+          }
+          region_city_metrics_object[contract][entrys_region][entrys_city].push(entry)
+        });
+      });
+    });
+  });
+  return { all_entries, region_city_metrics_object }
+}
+
+function generate_obligation_datapoints(contract_entries){
+  const day_period = (1000*60*60*24)
+  const entry_groups = {}
+
+  for(var e=0; e<contract_entries.length; e++){
+    const focused_entry = contract_entries[e];
+    const focused_entry_time = focused_entry['time'];
+    const time_group = Math.floor(focused_entry_time / day_period);
+    if(entry_groups[time_group] == null){
+      entry_groups[time_group] = []
+    }
+    entry_groups[time_group].push(focused_entry)
+  }
+
+  const data = []
+  const entry_groups_keys = Object.keys(entry_groups)
+  for(var i=0; i<entry_groups_keys.length; i++){
+    const focused_entry_group_item = entry_groups_keys[i];
+    const focused_entry_group_item_count = entry_groups[focused_entry_group_item].length;
+    data.push(focused_entry_group_item_count);
+
+    if(i==entry_groups_keys.length-1){
+      const diff = (Date.now() / day_period) - parseInt(entry_groups_keys[i])
+      for(var t=0; t<diff; t+=(day_period/10)){
+        data.push(data[data.length-1]*0.99)      
+      }
+    }else{
+      const diff = entry_groups_keys[i+1] - entry_groups_keys[i]
+      for(var t=0; t<diff; t+=(day_period/10)){
+        data.push(data[data.length-1]*0.99)      
+      }
+    }
+  }
+
+
+  var xVal = 1, yVal = 0, original_y_val = 0;
+  var dps = [];
+  var noOfDps = 100;
+  var largest = 0;
+  var factor = Math.round(data.length/noOfDps) +1;
+  for(var i = 0; i < noOfDps; i++) {
+    if(i < 100 && data.length > 200){
+      var sum = 0
+      var slice = data.slice(factor * xVal, factor * (xVal+1))
+      for(var j = 0; j < slice.length; j++) {
+          sum += slice[j]
+      }
+      var result = isNaN(parseInt(sum / slice.length)) ? 0 : parseInt(sum / slice.length)
+      original_y_val = result
+      // yVal =  parseInt(bigInt(result).multiply(100).divide(largest))
+      yVal = result
+    }
+    else{
+      original_y_val = data[factor * xVal]
+      // yVal = parseInt(bigInt(data[factor * xVal]).multiply(100).divide(largest))
+      yVal = data[factor * xVal]
+    }
+    if(yVal > largest){
+      largest = yVal
+    }
+    var indicator = number_with_commas(original_y_val)+' '+'entries'
+    if(yVal != null){
+      if(i%(Math.round(noOfDps/3)) == 0 && i != 0 && yVal != 0){
+        dps.push({x: xVal,y: yVal, indexLabel:""+indicator});//
+      }else{
+        dps.push({x: xVal, y: yVal});//
+      }
+      xVal++;
+    } 
+  }
+
+  const chart_starting_time = entry_groups_keys.length == 0 ? (Date.now() - 1000*60*60*24) : (entry_groups_keys[0] * day_period)
+
+  const chart_ending_time = entry_groups_keys.length == 0 ? Date.now() : (entry_groups_keys[entry_groups_keys.length-1] * day_period)
+
+  return { dps, largest, starting_time: chart_starting_time, ending_time: chart_ending_time }
+}
+
+function get_contract_region_information(contract_region_entry_data){
+  const regions_found = Object.keys(contract_region_entry_data)
+  const regional_transfer_data = {'token_data':{}, 'id_data':{}}
+  const city_transfer_data = {'token_data':{}, 'id_data':{}}
+  
+  for(var r=0; r<regions_found.length; r++){
+    const focused_region = regions_found[r];
+    const regions_city_data = contract_region_entry_data[focused_region];
+    const cities_in_region = Object.keys(regions_city_data)
+    
+    for(var c=0; c<cities_in_region.length; c++){
+      const focused_city = cities_in_region[c];
+      const citys_entries = contract_region_entry_data[focused_region][focused_city];
+      
+      citys_entries.forEach(entry => {
+        const promise = entry['contracts_promises']
+        const entry_id = entry['id']
+        const transfers = promise['transfers']
+        
+        if(regional_transfer_data['token_data'][focused_region] == null){
+          regional_transfer_data['token_data'][focused_region] = {}
+          regional_transfer_data['id_data'][focused_region] = {}
+        }
+
+        if(city_transfer_data['token_data'][focused_city] == null){
+          city_transfer_data['token_data'][focused_city] = {}
+          city_transfer_data['id_data'][focused_city] = {}
+        }
+
+        if(regional_transfer_data['id_data'][focused_region][entry_id] == null){
+          regional_transfer_data['id_data'][focused_region][entry_id] = 0;
+        }
+        regional_transfer_data['id_data'][focused_region][entry_id]++;
+
+        if(city_transfer_data['id_data'][focused_city][entry_id] == null){
+          city_transfer_data['id_data'][focused_city][entry_id] = 0;
+        }
+        city_transfer_data['id_data'][focused_city][entry_id]++;
+
+        transfers.forEach(transfer => {
+          const exchange = transfer['exchange']
+          const amount = transfer['amount']
+
+          if(regional_transfer_data['token_data'][focused_region][exchange] == null){
+            regional_transfer_data['token_data'][focused_region][exchange] = bigInt(0)
+          }
+          regional_transfer_data['token_data'][focused_region][exchange] = bigInt(regional_transfer_data['token_data'][focused_region][exchange]).plus(amount)
+
+          if(city_transfer_data['token_data'][focused_city][exchange] == null){
+            city_transfer_data['token_data'][focused_city][exchange] = bigInt(0)
+          }
+          city_transfer_data['token_data'][focused_city][exchange] = bigInt(city_transfer_data['token_data'][focused_city][exchange]).plus(amount)
+        });
+      });
+    }
+  }
+
+  return { regional_transfer_data, city_transfer_data }
+}
+
+
+
+
+
+
 
 
 
@@ -10176,12 +10705,13 @@ app.post(`/${endpoint_info['tag_prices']}/:privacy_signature`, async (req, res) 
 /* endpoint for returning users obligation data */
 app.post(`/${endpoint_info['user_obligations']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
-  const { start_time, end_time, accounts } = await process_request_body(req.body)
+  const { start_time, end_time, filter_addresses, filter_contracts, obligation_fulfiller_account_ids, generate_metadata } = await process_request_body(req.body)
   if(!await is_privacy_signature_valid(privacy_signature)){
     res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
     return;
   }
-  else if(start_time == null || isNaN(start_time) || end_time == null || isNaN(end_time) || accounts == null || !Array.isArray(accounts)){
+  else if(start_time == null || isNaN(start_time) || end_time == null || isNaN(end_time) || 
+  !Array.isArray(filter_addresses) || !Array.isArray(filter_contracts) || !Array.isArray(obligation_fulfiller_account_ids)){
     res.send(JSON.stringify({ message: 'Invalid params', success:false }));
     return;
   }
@@ -10190,9 +10720,13 @@ app.post(`/${endpoint_info['user_obligations']}/:privacy_signature`, async (req,
     return;
   }
   try{
-    var obj = {
-      'obligations_data': await get_users_obligation_history_data(start_time, end_time, accounts),
+    const obj = {
+      'obligations_data': await get_accounts_obligation_history_data(start_time, end_time, filter_addresses, filter_contracts, obligation_fulfiller_account_ids),
       success:true
+    }
+
+    if(generate_metadata == true){
+      obj['metadata'] = process_obligation_data_for_contract_into_metrics_info(obj['obligations_data']);
     }
 
     var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -10331,7 +10865,7 @@ async function when_server_killed(){
 // Start server
 const server = createServer(app);
 // const server = https.createServer(options, app)
-const io = new Server(server, { 
+const io = new Server(server, {
   cors: { origin: '*' } ,
   pingInterval: 30_000,
   pingTimeout: 60_000,
@@ -10587,8 +11121,9 @@ setInterval(delete_old_transaction_id_data, 60*60*1000)
 setInterval(update_coin_transaction_fees, 3*60*60*1000)
 setInterval(update_tag_indexer_price_tracking_info, 12*60*1000)
 setInterval(stash_old_tag_price_data_in_cold_storage, 14*24*60*60*1000)
-setInterval(stash_old_user_obligations_data_in_cold_storage, 20*24*60*60*1000)
-
+// setInterval(stash_old_user_obligations_data_in_cold_storage, 20*24*60*60*1000)
+setInterval(update_user_obligation_data, 23*60*1000)
+setInterval(set_old_account_obligations_data_in_cold_storage, 20*24*60*60*1000)
 
 
 set_up_error_logs_filestream()
