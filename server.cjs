@@ -110,6 +110,7 @@ var data = {
   'cold_storage_tag_price_records':[],
   'socket_section_synchronization': 0,
   'is_synching_socket_with_beacon': false,
+  'cold_storage_account_obligations_records':[],
 }
 
 const E5_CONTRACT_ABI = [
@@ -8195,12 +8196,15 @@ async function stash_sync_socket_data_in_cold_storage(sync_socket_data, now){
 
 
 async function update_user_obligation_data(){
+  console.log('running update_user_obligation_data function...')
   const e5s = data['e']
   for(var j=0; j<e5s.length; j++){
     const e5 = e5s[j]
     const from_block = data[e5]['user_obligation_block_number'] || 0;
 
     const indexer_events = await filter_events(e5, 'E52', 'e4', {p1/* target_id */: 32/* 32(obligation_transaction_record) */, p3/* context */: 35}, {'p':'p7'/* block_number */, 'value':from_block})
+
+    console.log('update_user_obligation_data', 'indexer events', indexer_events)
 
     const transfer_events = await filter_events(e5, 'H52', 'e1', {}, {'p':'p6'/* block_number */, 'value':from_block})
 
@@ -8312,12 +8316,14 @@ async function update_user_obligation_data(){
               const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
               const derived_app_address = await web3.eth.accounts.recover(data_to_be_signed, app_signature)
               const derived_users_address = await web3.eth.accounts.recover(data_to_be_signed, accounts_signature)
-
+              
               if(derived_app_address == privacy_address){
                 const event_author_id = added_events[e].returnValues.p2/* sender_acc_id */
                 const event_author_address = await get_accounts_address(event_author_id, e5)
+                console.log('event_author_address:', event_author_address, 'derived_users_address:', derived_users_address, 'senders_address:', senders_address)
 
                 if(event_author_address == derived_users_address && derived_users_address == senders_address){
+                  console.log('sender valid, continuing to obligation_data', obligation_data)
                   for(var o=0; o<obligation_data.length; o++){
                     const obligation_promise_data = obligation_data[o];
                     const id = obligation_promise_data['id']
@@ -8360,8 +8366,10 @@ async function update_user_obligation_data(){
                         }
                       }else{
                         Object.keys(promises).forEach(contract => {
-                          const transfers = promises[contract]
+                          const transfers = promises[contract]['transfers']
+                          console.log('ensuring transfers exist', transfers)
                           const transfers_verified = ensure_all_transfers_exist(transfers);
+                          console.log('ensuring transfers exist, transfers_verified', transfers_verified)
                           if(transfers_verified == false){
                             all_verified = false;
                           }
@@ -8370,11 +8378,13 @@ async function update_user_obligation_data(){
                     }
                     if(all_verified == true){
                       //record all the data...
+                      console.log('recording all the data...')
                       const start_today = (Math.floor(parseInt(time) / (12*60*1000))) * (12*60*1000)
                       const contracts = Object.keys(promises)
 
                       for(var c=0; c<contracts.length; c++){
                         const contract = contracts[c];
+                        console.log('recording for contract: ', contract)
                         const contracts_promises = promises[contract]
                         if(user_obligation_records[start_today] == null){
                           user_obligation_records[start_today] = {}
@@ -8389,6 +8399,7 @@ async function update_user_obligation_data(){
                           id, hard_id, obligation_fulfiller, e5, contracts_promises, time, city, region
                         }
                       }
+                      console.log('user obligation records have been set.', user_obligation_records)
                     }
                     else{
                       console.log('transfers have not been verified. One of the transfers is missing on the blockchain.')
@@ -8449,6 +8460,7 @@ filter_contracts, obligation_fulfiller_account_ids){
 
   var selected_cold_storage_request_obligation_obj = {}
   const keys = Object.keys(user_obligation_records)
+  console.log('get_accounts_obligation_history_data', 'user_obligation_records', user_obligation_records)
   if(keys.length > 0){
     keys.forEach(timestamp => {
       if(parseInt(timestamp) >= parseInt(start_time) && parseInt(timestamp) <= parseInt(end_time)){
@@ -8479,7 +8491,7 @@ filter_contracts, obligation_fulfiller_account_ids){
     checkReady();
   });
 
-
+  console.log('get_accounts_obligation_history_data', 'selected_cold_storage_request_obligation_obj', selected_cold_storage_request_obligation_obj)
 
   const timestamp_ids = Object.keys(selected_cold_storage_request_obligation_obj)
   timestamp_ids.forEach(timestamp_id => {
@@ -8585,9 +8597,9 @@ function generate_obligation_datapoints(contract_entries){
     data.push(focused_entry_group_item_count);
 
     if(i==entry_groups_keys.length-1){
-      const diff = (Date.now() / day_period) - parseInt(entry_groups_keys[i])
-      for(var t=0; t<diff; t+=(day_period/10)){
-        data.push(data[data.length-1]*0.99)      
+      // const diff = Math.floor(Date.now() / day_period) - parseInt(entry_groups_keys[i])
+      for(var t=0; t<20; t+=1){
+        data.push(data[data.length-1]*0.99)  
       }
     }else{
       const diff = entry_groups_keys[i+1] - entry_groups_keys[i]
@@ -8623,7 +8635,7 @@ function generate_obligation_datapoints(contract_entries){
     if(yVal > largest){
       largest = yVal
     }
-    var indicator = number_with_commas(original_y_val)+' '+'entries'
+    var indicator = parseFloat(original_y_val).toFixed(3)+' entries'
     if(yVal != null){
       if(i%(Math.round(noOfDps/3)) == 0 && i != 0 && yVal != 0){
         dps.push({x: xVal,y: yVal, indexLabel:""+indicator});//
@@ -8659,6 +8671,7 @@ function get_contract_region_information(contract_region_entry_data){
         const promise = entry['contracts_promises']
         const entry_id = entry['id']
         const transfers = promise['transfers']
+        const proportions =  promise['proportions'].reduce((acc, curr) => bigInt(acc).add(curr), 0)
         
         if(regional_transfer_data['token_data'][focused_region] == null){
           regional_transfer_data['token_data'][focused_region] = {}
@@ -8682,7 +8695,7 @@ function get_contract_region_information(contract_region_entry_data){
 
         transfers.forEach(transfer => {
           const exchange = transfer['exchange']
-          const amount = transfer['amount']
+          const amount = bigInt(transfer['amount']).multiply(proportions).divide('100e16')
 
           if(regional_transfer_data['token_data'][focused_region][exchange] == null){
             regional_transfer_data['token_data'][focused_region][exchange] = bigInt(0)
@@ -11112,7 +11125,7 @@ setInterval(delete_older_ram_rom_usage_stats, 20*24*60*60*1000)
 setInterval(delete_older_request_stats, 20*24*60*60*1000)
 setTimeout(update_logStream, milliseconds_till_midnight());
 setInterval(write_block_number, 11*1000)
-setInterval(stash_old_trends_in_cold_storage, 14*24*60*60*1000)
+setInterval(stash_old_trends_in_cold_storage, 24*60*60*1000)
 setInterval(trim_block_record_data, 3*24*60*60*1000)
 setInterval(set_up_indexer_mesh_network, 5*60*1000)
 setInterval(stash_old_socket_data_in_cold_storage, 10*60*1000)
