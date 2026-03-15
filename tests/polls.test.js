@@ -48,8 +48,14 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -98,8 +104,14 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -149,8 +161,15 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -201,8 +220,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -253,8 +280,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -304,8 +339,15 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -357,8 +399,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -388,10 +438,16 @@ describe("instant-runoff elections", () => {
         'E25': []
     }
     var participants = []
+    var voter_weights = {
+        'E25':{
+            
+        }
+    }
     votes.forEach((vote, index) => {
         var acc = 1002+index
         poll_votes['E25'].push({ returnValues: {p2: acc, p4: JSON.stringify({'e': vote}), p6:1000} })
         participants.push('E25:'+ acc)
+        voter_weights['E25'][acc] = 1
     });
     var static_poll_data = { 
         participants, 
@@ -409,7 +465,7 @@ describe("instant-runoff elections", () => {
     }
     
 
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_tie = test_results.consensus_tie
     var tie_breaker = test_results.tie_breaker
@@ -447,8 +503,15 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -499,8 +562,16 @@ describe("instant-runoff elections", () => {
         csv_files:[{'data':{final_obj:{'E25':[1002, 1003, 1004]}}}], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -551,8 +622,16 @@ describe("instant-runoff elections", () => {
         csv_files:[],
         json_files:[{'data':{final_obj:{'E25':[1002, 1003, 1004]}}}] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -603,8 +682,16 @@ describe("instant-runoff elections", () => {
         csv_files:[{'data':{final_obj:{'E25':[1002, 1003]}}}],
         json_files:[{'data':{final_obj:{'E25':[1004]}}}] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -659,8 +746,16 @@ describe("instant-runoff elections", () => {
         ],
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -711,8 +806,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -764,8 +867,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -817,8 +928,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -869,8 +988,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -921,8 +1048,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -973,8 +1108,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -1025,8 +1168,16 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -1080,8 +1231,19 @@ describe("instant-runoff elections", () => {
         csv_files:[], 
         json_files:[] 
     }
+
+    var voter_weights = {
+        'E25':{
+            1002:1,
+            1003:1,
+            1004:1,
+        },
+        'E35':{
+            1005:1,
+        }
+    }
     
-    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+    var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
     var current_winners = test_results.current_winners
     var consensus_snapshots = test_results.consensus_snapshots
     var elimination_snapshot = test_results.elimination_snapshot
@@ -1132,8 +1294,14 @@ describe("propotinal-ranked choice elections", () => {
             csv_files:[], 
             json_files:[] 
         }
+
+        var voter_weights = {
+            'E25':{
+                1002:1,
+            }
+        }
         
-        var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+        var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
         var current_winners = test_results.current_winners
         var consensus_snapshots = test_results.consensus_snapshots
         var elimination_snapshot = test_results.elimination_snapshot
@@ -1181,8 +1349,17 @@ describe("propotinal-ranked choice elections", () => {
             csv_files:[], 
             json_files:[] 
         }
+
+        var voter_weights = {
+            'E25':{
+                1002:1,
+                1003:1,
+                1004:1,
+                1005:1,
+            }
+        }
         
-        var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+        var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
         var current_winners = test_results.current_winners
         var consensus_snapshots = test_results.consensus_snapshots
         var elimination_snapshot = test_results.elimination_snapshot
@@ -1232,8 +1409,17 @@ describe("propotinal-ranked choice elections", () => {
             csv_files:[], 
             json_files:[] 
         }
+
+        var voter_weights = {
+            'E25':{
+                1002:1,
+                1003:1,
+                1004:1,
+                1005:1,
+            }
+        }
         
-        var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+        var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
         var current_winners = test_results.current_winners
         var consensus_snapshots = test_results.consensus_snapshots
         var elimination_snapshot = test_results.elimination_snapshot
@@ -1265,10 +1451,15 @@ describe("propotinal-ranked choice elections", () => {
             'E25': []
         }
         var participants = []
+        var voter_weights = {
+            'E25':{
+            }
+        }
         votes.forEach((vote, index) => {
             var acc = 1002+index
             poll_votes['E25'].push({ returnValues: {p2: acc, p4: JSON.stringify({'e': vote}), p6:1000} })
             participants.push('E25:'+ acc)
+            voter_weights['E25'][acc] = 1
         });
         var static_poll_data = { 
             participants, 
@@ -1284,9 +1475,8 @@ describe("propotinal-ranked choice elections", () => {
             csv_files:[], 
             json_files:[] 
         }
-        
     
-        var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects)
+        var test_results = await run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights)
         var current_winners = test_results.current_winners
         var consensus_tie = test_results.consensus_tie
         var tie_breaker = test_results.tie_breaker

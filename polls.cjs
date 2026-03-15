@@ -5,7 +5,7 @@ const votes = []/* all the votes, each voter ordered their preferred candidates,
 var candidates = []/* the candidates in the ballot */
 var target_positions = 1/* the number of positions or seats to fill. If the election is instant-runoff, targeted_positions should be just 1. */
 var selected = []/* the selected candidates who reached the quota */
-var consensus_snapshots = []/* snapshots of the consensus at different stages or runoffs */
+var consensus_snapshots = []/* snapshots of the weighted consensus at different stages or runoffs */
 var elimination_snapshot = []/* snapshot of the candidates that were eliminated during different stages or runoffs. */
 var vote_transfer_snapshots = []/* snapshot of the number of votes that were transferred to each candidate by an eliminated candidate */
 var vote_donation_snapshots = []/* snapshot of the number of votes that were transfered by each of the candidates that acieved the quota to their preceding picks */
@@ -17,15 +17,16 @@ var registered_voters = 0/* the number of registered voters for the poll being h
 var quota = 0/* the quota that is meant to be achieved by each candidate in the election. */
 var logs = []
 var inconclusive_ballot = false;/* if not enough votes have been cast to make a conclusive result, this will be true */
-
+const vote_weights = [];/* all the voter weights for each voter as per their position in the votes array */
+var consensus_absolute_snapshots = [];/* snapshots of the consensus at different stages or runoffs */
 
 
 
 /* returns the candidates who have reached the targeted quota at a particular stage or runoff */
-function get_qualifiers_if_any(primary_totals, quota){
-    const result = Object.entries(primary_totals)
-            .filter(([_, arr]) => arr.length >= quota)
-            .map(([key]) => key);/* foreach entry, filter the value which is an array by its length equaling the quota, then populate a new array with the keys that match the valid arrays */
+function get_qualifiers_if_any(sub_voter_data, quota){
+    const result = Object.entries(sub_voter_data)
+            .filter(([_, amount]) => amount >= quota)
+            .map(([key]) => key);/* foreach entry, filter the value which is a value equaling the quota, then populate a new array with the keys that match the valid arrays */
     return result
 }
 
@@ -72,13 +73,20 @@ function select_tie_breaker(unfortunate_candidates){
 }
 
 /* eliminates the losers in a particular stage by the number of votes they received */
-function eliminate_losers(primary_totals){
-    const minLength = Math.min(...Object.values(primary_totals).map(arr => arr.length));/* obtains the minimum number of votes that one of the candidates received */
-    const result = Object.entries(primary_totals)/* foreach key in the primary_totals object */
-        .filter(([_, arr]) => arr.length === minLength)/* filter each key by its value being the number of votes they received equaling the minimum number obtained above */
-        .map(([key]) => key);/* set all the filtered keys which should be the candidates' names into an array */
- 
- 	var selected_loser_pos = select_tie_breaker(result)/* call the tie breaker function with the result array of losers with the least votes */
+function eliminate_losers(primary_totals, sub_voter_data){
+    // const minLength = Math.min(...Object.values(primary_totals).map(arr => arr.length));/* obtains the minimum number of votes that one of the candidates received */
+
+    // const result = Object.entries(primary_totals)/* foreach key in the primary_totals object */
+    //     .filter(([_, arr]) => arr.length === minLength)/* filter each key by its value being the number of votes they received equaling the minimum number obtained above */
+    //     .map(([key]) => key);/* set all the filtered keys which should be the candidates' names into an array */
+
+    const minLength2 = Math.min(...Object.values(sub_voter_data));/* obtains the minimum number of votes that one of the candidates received */
+
+    const result2 = Object.entries(sub_voter_data)/* foreach key in the primary_totals object */
+        .filter(([_, amount]) => amount === minLength2)/* filter each key by its value being the number of votes they received equaling the minimum number obtained above */
+        .map(([key]) => key);
+
+ 	var selected_loser_pos = select_tie_breaker(result2)/* call the tie breaker function with the result array of losers with the least votes */
  	var candidate = result[selected_loser_pos]/* select the canidate obtained from the tie breaker function */
     const their_voters = primary_totals[candidate]/* focus on all their voters */
     var transfer_snapshot = {}
@@ -121,8 +129,13 @@ function calculate_winner(cycle){
             'green': [0,1,2,3], <----- this array contains the positions of the voters in the vote array that voted for them.
             'red': [7,8,12],
             ...
-        }
+        },
         sub_voter_data = {
+            'green': 4, <----- this is the number of weighted votes they received as their main choice
+            'red': 3,
+            ...
+        },
+        sub_voter_abslute_data = {
             'green': 4, <----- this is simply the number of votes they received as their main choice
             'red': 3,
             ...
@@ -131,11 +144,13 @@ function calculate_winner(cycle){
 	const primary_totals = {}/* object that is set to contain the consensus totals for each candidate */
     const sub_voter_data = {}/* object that is set to contain the total number of votes for each candidate. This is different from the primary_totals object in that, the primary_totals contains candidates names as keys that point to arrays that contain positions for each voter in the votes array; while this just points to a number that is the total number of votes they got. */    
     const vote_donation_object = {}
+    const sub_voter_abslute_data = {}
     
     for(var i=0; i<votes.length; i++){/* for each vote */
         var focused_vote_object = votes[i]/* intitialize a variable containing a specific vote in focus. */
         var primary_vote = focused_vote_object[0]/* select their primary or first vote or preferrential vote */
-        
+        var focused_vote_weight = vote_weights[i];/* initialize a variable containing the focused vote's weight */
+
         while(!candidates.includes(primary_vote)){
             votes[i].splice(0, 1)
             primary_vote = focused_vote_object[0]
@@ -168,25 +183,29 @@ function calculate_winner(cycle){
         if(primary_totals[primary_vote] == null){
             primary_totals[primary_vote] = []
             sub_voter_data[primary_vote] = 0
+            sub_voter_abslute_data[primary_vote] = 0
         }/* if uninitialized, initialize the candidates position with an empty array */
         
         primary_totals[primary_vote].push(i)/* push the position of the voter into the candidates array in the primary_totals object */
-        sub_voter_data[primary_vote]++/* increment the number of votes they got by one */
+        sub_voter_data[primary_vote] += focused_vote_weight;/* increment the number of votes they got by their weight */
+        sub_voter_abslute_data[primary_vote] += 1/* increment the number of votes they got by one unit */
     }
     
     for(var e=0; e<candidates.length; e++){
         if(primary_totals[candidates[e]] == null){
             primary_totals[candidates[e]] = []
             sub_voter_data[candidates[e]] = 0
+            sub_voter_abslute_data[candidates[e]] = 0
         }
         if(vote_donation_object[candidates[e]] == null){
             vote_donation_object[candidates[e]] = 0 
         }
-    }/* initialize the canidates who got no votes as empty arrays in their primary_totals  and sub_voter_data positions */
+    }/* initialize the canidates who got no votes as empty arrays in their primary_totals and sub_voter_data positions */
 
-    consensus_snapshots.push(sub_voter_data)/* record the snapshot of the runoff or stage */
+    consensus_snapshots.push(sub_voter_data)/* record the snapshot of the weighted runoff or stage */
+    consensus_absolute_snapshots.push(sub_voter_abslute_data)/* record the snapshot of the runoff or stage */
     vote_donation_snapshots.push(vote_donation_object)
-    var qualifier_data = get_qualifiers_if_any(primary_totals, quota)/* obtain the candidates that have reached the quota. */
+    var qualifier_data = get_qualifiers_if_any(sub_voter_data, quota)/* obtain the candidates that have reached the quota. */
     logs.push({'qualifier_data':qualifier_data.toString()})
     selected = selected.concat(qualifier_data)/* add the candidates that have reached the quota to the selected candidates array */
 
@@ -207,7 +226,7 @@ function calculate_winner(cycle){
     }
     else{
         /* targeted positions have not been fully filled, so elimination is necessary. */
-        eliminate_losers(primary_totals)/* remove a loser and transfer their votes to the remaining candidates */
+        eliminate_losers(primary_totals, sub_voter_data)/* remove a loser and transfer their votes to the remaining candidates */
         calculate_winner(cycle+1)/* restart the calculate_winner process */
     }
 }
@@ -243,6 +262,7 @@ function initialize_everything(){
     const winner_count = workerData.static_poll_data.winner_count
     const randomizer = workerData.static_poll_data.randomizer
     const change_vote_enabled = workerData.static_poll_data.change_vote_enabled
+    const voter_weights = workerData.voter_weights
     const candiate_ids = []
     const registered_voter_registry = {}
     const participated_voter_registry = {}
@@ -319,7 +339,7 @@ function initialize_everything(){
         const e5_votes = poll_votes[e5]/* the votes in the specific e5 in focus */
         if(e5_votes.length > 0){/* if votes exist */
             e5_votes.forEach(event => {/* for each vote event */
-                const voter_id = event.returnValues.p2/* sender_acc_id */
+                const voter_id = parseInt(event.returnValues.p2)/* sender_acc_id */
                 const vote_string = event.returnValues.p4/* string_data */
                 const vote_time = event.returnValues.p6/* timestamp */
                 const voter_e5_id = voter_id+e5
@@ -340,8 +360,10 @@ function initialize_everything(){
                                     voter_times[voter_e5_id] = vote_time/* record the timestamp of the vote */
                                     if(voter_pos == -1){/* if this is the voters first vote */
                                         votes.push(voter_array)/* record the vote in all votes */
+                                        vote_weights.push(voter_weights[e5][voter_id])
                                     }else{/* replace their first vote with the current vote */
                                         votes[voter_pos] = voter_array
+                                        vote_weights[voter_pos] = voter_weights[e5][voter_id]
                                     }
                                 }else{
                                     logs.push({'some votes appear twice': voter_array})
@@ -392,7 +414,8 @@ const return_data = {
     candidates, 
     target_positions,
     tied_candidates,
-    inconclusive_ballot
+    inconclusive_ballot,
+    consensus_absolute_snapshots,
 }
 parentPort.postMessage(return_data);
 /* Send result back to main thread */

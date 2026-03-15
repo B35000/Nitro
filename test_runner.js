@@ -15,8 +15,8 @@ function runPollVoteCounterWorker(data) {
 }
 
 
-async function run_poll_worker(poll_votes, static_poll_data, file_objects){
-    return await runPollVoteCounterWorker({poll_votes, static_poll_data, file_objects})
+async function run_poll_worker(poll_votes, static_poll_data, file_objects, voter_weights){
+    return await runPollVoteCounterWorker({poll_votes, static_poll_data, file_objects, voter_weights})
 }
 
 

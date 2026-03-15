@@ -3393,7 +3393,8 @@ async function calculate_poll_results(static_poll_data, poll_id, file_objects, p
   }
   
   try{
-    var current_results = await runPollVoteCounterWorker({poll_votes, static_poll_data, file_objects})/* run the poll vote counter worker in a background thread */
+    const voter_weights = await fetch_voter_account_weights(static_poll_data, poll_votes)
+    var current_results = await runPollVoteCounterWorker({poll_votes, static_poll_data, file_objects, voter_weights})/* run the poll vote counter worker in a background thread */
     return { success: true, message: '', error: null, results: current_results }
   }
   catch(e){
@@ -4752,14 +4753,66 @@ async function get_old_trends_history_data(start_time, end_time, keywords, filte
     });
   }
 
+  const filter_function = (selected_object) => {
+    const timestamp_ids = Object.keys(selected_object)
+    timestamp_ids.forEach(timestamp_id => {
+      const types = Object.keys(selected_object[timestamp_id])
+      types.forEach(type => {
+        const languages = Object.keys(selected_object[timestamp_id][type])
+        languages.forEach(language => {
+          const original = selected_object[timestamp_id][type][language]
+          const filtered = keywords.length > 0 ? Object.fromEntries(
+            Object.entries(original).filter(([key, _]) =>
+              keywords.includes(key)
+            )
+          ) : structuredClone(original);
+
+          if(filter_states.length > 0){
+            Object.keys(filtered).forEach(tag => {
+              const filtered_by_states = Object.fromEntries(
+                Object.entries(filtered[tag]).filter(([key, _]) =>
+                  filter_states.includes(key)
+                )
+              )
+              filtered[tag] = filtered_by_states;
+            });
+          }
+          if(filter_object_types.length > 0){
+            Object.keys(filtered).forEach(tag => {
+              Object.keys(filtered[tag]).forEach(state => {
+                  const filtered_by_object_type = Object.fromEntries(
+                    Object.entries(filtered[tag][state]).filter(([key, _]) =>
+                      filter_object_types.includes(key)
+                    )
+                );
+                filtered[tag][state] = filtered_by_object_type;
+              });
+            });
+          }
+          
+          selected_object[timestamp_id][type][language] = filtered
+          if(filter_languages.length > 0 && !filter_languages.includes(language)){
+            delete selected_object[timestamp_id][type][language]
+          }
+        });
+        if(filter_type != '' && type != filter_type){
+          delete selected_object[timestamp_id][type]
+        }
+      });
+    });
+    return selected_object
+  }
+
   console.log('get_old_trends_history_data', 'selected_cold_storage_request_trend_obj', selected_cold_storage_request_trend_obj)
+
+  selected_cold_storage_request_trend_obj = filter_function(selected_cold_storage_request_trend_obj)
 
   let count = 0
   for(var i=0; i<selected_cold_storage_request_trends_files.length; i++){
     const focused_file = selected_cold_storage_request_trends_files[i]
     const write = async () => {
       const object = await read_file(focused_file, 'trends_stats_history')
-      Object.assign(selected_cold_storage_request_trend_obj, object);
+      Object.assign(selected_cold_storage_request_trend_obj, filter_function(object));
       count++
     }
     write()
@@ -4778,56 +4831,58 @@ async function get_old_trends_history_data(start_time, end_time, keywords, filte
 
   console.log('get_old_trends_history_data', 'selected_cold_storage_request_trend_obj', 'after file reads', selected_cold_storage_request_trend_obj)
 
-  const timestamp_ids = Object.keys(selected_cold_storage_request_trend_obj)
-  timestamp_ids.forEach(timestamp_id => {
-    const types = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id])
-    types.forEach(type => {
-      const languages = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id][type])
-      languages.forEach(language => {
-        const original = selected_cold_storage_request_trend_obj[timestamp_id][type][language]
-        const filtered = keywords.length > 0 ? Object.fromEntries(
-          Object.entries(original).filter(([key, _]) =>
-            keywords.includes(key)
-          )
-        ) : structuredClone(original);
-
-        if(filter_states.length > 0){
-          Object.keys(filtered).forEach(tag => {
-            const filtered_by_states = Object.fromEntries(
-              Object.entries(filtered[tag]).filter(([key, _]) =>
-                filter_states.includes(key)
-              )
-            )
-            filtered[tag] = filtered_by_states;
-          });
-        }
-        if(filter_object_types.length > 0){
-          Object.keys(filtered).forEach(tag => {
-            Object.keys(filtered[tag]).forEach(state => {
-                const filtered_by_object_type = Object.fromEntries(
-                  Object.entries(filtered[tag][state]).filter(([key, _]) =>
-                    filter_object_types.includes(key)
-                  )
-              );
-              filtered[tag][state] = filtered_by_object_type;
-            });
-          });
-        }
-        
-        selected_cold_storage_request_trend_obj[timestamp_id][type][language] = filtered
-        if(filter_languages.length > 0 && !filter_languages.includes(language)){
-          delete selected_cold_storage_request_trend_obj[timestamp_id][type][language]
-        }
-      });
-      if(filter_type != '' && type != filter_type){
-        delete selected_cold_storage_request_trend_obj[timestamp_id][type]
-      }
-    });
-  });
-
-  console.log('get_old_trends_history_data', 'selected_cold_storage_request_trend_obj', 'after filter', selected_cold_storage_request_trend_obj)
-
   return selected_cold_storage_request_trend_obj
+
+  // const timestamp_ids = Object.keys(selected_cold_storage_request_trend_obj)
+  // timestamp_ids.forEach(timestamp_id => {
+  //   const types = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id])
+  //   types.forEach(type => {
+  //     const languages = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id][type])
+  //     languages.forEach(language => {
+  //       const original = selected_cold_storage_request_trend_obj[timestamp_id][type][language]
+  //       const filtered = keywords.length > 0 ? Object.fromEntries(
+  //         Object.entries(original).filter(([key, _]) =>
+  //           keywords.includes(key)
+  //         )
+  //       ) : structuredClone(original);
+
+  //       if(filter_states.length > 0){
+  //         Object.keys(filtered).forEach(tag => {
+  //           const filtered_by_states = Object.fromEntries(
+  //             Object.entries(filtered[tag]).filter(([key, _]) =>
+  //               filter_states.includes(key)
+  //             )
+  //           )
+  //           filtered[tag] = filtered_by_states;
+  //         });
+  //       }
+  //       if(filter_object_types.length > 0){
+  //         Object.keys(filtered).forEach(tag => {
+  //           Object.keys(filtered[tag]).forEach(state => {
+  //               const filtered_by_object_type = Object.fromEntries(
+  //                 Object.entries(filtered[tag][state]).filter(([key, _]) =>
+  //                   filter_object_types.includes(key)
+  //                 )
+  //             );
+  //             filtered[tag][state] = filtered_by_object_type;
+  //           });
+  //         });
+  //       }
+        
+  //       selected_cold_storage_request_trend_obj[timestamp_id][type][language] = filtered
+  //       if(filter_languages.length > 0 && !filter_languages.includes(language)){
+  //         delete selected_cold_storage_request_trend_obj[timestamp_id][type][language]
+  //       }
+  //     });
+  //     if(filter_type != '' && type != filter_type){
+  //       delete selected_cold_storage_request_trend_obj[timestamp_id][type]
+  //     }
+  //   });
+  // });
+
+  // console.log('get_old_trends_history_data', 'selected_cold_storage_request_trend_obj', 'after filter', selected_cold_storage_request_trend_obj)
+
+  // return selected_cold_storage_request_trend_obj
 }
 
 function trim_block_record_data(){
@@ -5105,7 +5160,7 @@ global.fetch = async (url, options = {}) => {
 };
 
 function set_endpoint_ids(){
-  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 'user_obligations'];
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 'user_obligations', 'user_vote_weight'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -7923,12 +7978,64 @@ async function get_old_tag_price_history_data(start_time, end_time, keywords, fi
     });
   }
 
+  const filter_function = (selected_object) => {
+    const timestamp_ids = Object.keys(selected_object)
+    timestamp_ids.forEach(timestamp_id => {
+      const types = Object.keys(selected_object[timestamp_id])
+      types.forEach(type => {
+        const languages = Object.keys(selected_object[timestamp_id][type])
+        languages.forEach(language => {
+          const original = selected_object[timestamp_id][type][language]
+          const filtered = keywords.length > 0 ? Object.fromEntries(
+            Object.entries(original).filter(([key, _]) =>
+              keywords.includes(key)
+            )
+          ) : structuredClone(original);
+
+          if(filter_states.length > 0){
+            Object.keys(filtered).forEach(tag => {
+              const filtered_by_states = Object.fromEntries(
+                Object.entries(filtered[tag]).filter(([key, _]) =>
+                  filter_states.includes(key)
+                )
+              )
+              filtered[tag] = filtered_by_states;
+            });
+          }
+          if(filter_e5s.length > 0){
+            Object.keys(filtered).forEach(tag => {
+              Object.keys(filtered[tag]).forEach(state => {
+                  const filtered_by_e5 = Object.fromEntries(
+                    Object.entries(filtered[tag][state]).filter(([key, _]) =>
+                      filter_e5s.includes(key)
+                    )
+                );
+                filtered[tag][state] = filtered_by_e5;
+              });
+            });
+          }
+          
+          selected_object[timestamp_id][type][language] = filtered
+          if(filter_languages.length > 0 && !filter_languages.includes(language)){
+            delete selected_object[timestamp_id][type][language]
+          }
+        });
+        if(filter_type != '' && type != filter_type){
+          delete selected_object[timestamp_id][type]
+        }
+      });
+    });
+    return selected_object
+  }
+
+  selected_cold_storage_request_trend_obj = filter_function(selected_cold_storage_request_trend_obj)
+
   let count = 0
   for(var i=0; i<selected_cold_storage_request_trends_files.length; i++){
     const focused_file = selected_cold_storage_request_trends_files[i]
     const write = async () => {
       const object = await read_file(focused_file, 'tag_price_stats_history')
-      Object.assign(selected_cold_storage_request_trend_obj, object);
+      Object.assign(selected_cold_storage_request_trend_obj, filter_function(object));
       count++
     }
     write();
@@ -7946,54 +8053,56 @@ async function get_old_tag_price_history_data(start_time, end_time, keywords, fi
   });
 
   console.log('get_old_tag_price_history_data', selected_cold_storage_request_trend_obj)
-  const timestamp_ids = Object.keys(selected_cold_storage_request_trend_obj)
-  timestamp_ids.forEach(timestamp_id => {
-    const types = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id])
-    types.forEach(type => {
-      const languages = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id][type])
-      languages.forEach(language => {
-        const original = selected_cold_storage_request_trend_obj[timestamp_id][type][language]
-        const filtered = keywords.length > 0 ? Object.fromEntries(
-          Object.entries(original).filter(([key, _]) =>
-            keywords.includes(key)
-          )
-        ) : structuredClone(original);
-
-        if(filter_states.length > 0){
-          Object.keys(filtered).forEach(tag => {
-            const filtered_by_states = Object.fromEntries(
-              Object.entries(filtered[tag]).filter(([key, _]) =>
-                filter_states.includes(key)
-              )
-            )
-            filtered[tag] = filtered_by_states;
-          });
-        }
-        if(filter_e5s.length > 0){
-          Object.keys(filtered).forEach(tag => {
-            Object.keys(filtered[tag]).forEach(state => {
-                const filtered_by_e5 = Object.fromEntries(
-                  Object.entries(filtered[tag][state]).filter(([key, _]) =>
-                    filter_e5s.includes(key)
-                  )
-              );
-              filtered[tag][state] = filtered_by_e5;
-            });
-          });
-        }
-        
-        selected_cold_storage_request_trend_obj[timestamp_id][type][language] = filtered
-        if(filter_languages.length > 0 && !filter_languages.includes(language)){
-          delete selected_cold_storage_request_trend_obj[timestamp_id][type][language]
-        }
-      });
-      if(filter_type != '' && type != filter_type){
-        delete selected_cold_storage_request_trend_obj[timestamp_id][type]
-      }
-    });
-  });
-
   return selected_cold_storage_request_trend_obj
+
+  // const timestamp_ids = Object.keys(selected_cold_storage_request_trend_obj)
+  // timestamp_ids.forEach(timestamp_id => {
+  //   const types = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id])
+  //   types.forEach(type => {
+  //     const languages = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id][type])
+  //     languages.forEach(language => {
+  //       const original = selected_cold_storage_request_trend_obj[timestamp_id][type][language]
+  //       const filtered = keywords.length > 0 ? Object.fromEntries(
+  //         Object.entries(original).filter(([key, _]) =>
+  //           keywords.includes(key)
+  //         )
+  //       ) : structuredClone(original);
+
+  //       if(filter_states.length > 0){
+  //         Object.keys(filtered).forEach(tag => {
+  //           const filtered_by_states = Object.fromEntries(
+  //             Object.entries(filtered[tag]).filter(([key, _]) =>
+  //               filter_states.includes(key)
+  //             )
+  //           )
+  //           filtered[tag] = filtered_by_states;
+  //         });
+  //       }
+  //       if(filter_e5s.length > 0){
+  //         Object.keys(filtered).forEach(tag => {
+  //           Object.keys(filtered[tag]).forEach(state => {
+  //               const filtered_by_e5 = Object.fromEntries(
+  //                 Object.entries(filtered[tag][state]).filter(([key, _]) =>
+  //                   filter_e5s.includes(key)
+  //                 )
+  //             );
+  //             filtered[tag][state] = filtered_by_e5;
+  //           });
+  //         });
+  //       }
+        
+  //       selected_cold_storage_request_trend_obj[timestamp_id][type][language] = filtered
+  //       if(filter_languages.length > 0 && !filter_languages.includes(language)){
+  //         delete selected_cold_storage_request_trend_obj[timestamp_id][type][language]
+  //       }
+  //     });
+  //     if(filter_type != '' && type != filter_type){
+  //       delete selected_cold_storage_request_trend_obj[timestamp_id][type]
+  //     }
+  //   });
+  // });
+
+  // return selected_cold_storage_request_trend_obj
 }
 
 // async function get_users_obligation_history_data(start_time, end_time, accounts){
@@ -8452,8 +8561,7 @@ function set_old_account_obligations_data_in_cold_storage(){
   }
 }
 
-async function get_accounts_obligation_history_data(start_time, end_time, filter_addresses, 
-filter_contracts, obligation_fulfiller_account_ids){
+async function get_accounts_obligation_history_data(start_time, end_time, filter_addresses, filter_contracts, obligation_fulfiller_account_ids){
   const selected_cold_storage_request_trends_files = data['cold_storage_account_obligations_records'].filter(function (time) {
     return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
   });
@@ -8469,12 +8577,45 @@ filter_contracts, obligation_fulfiller_account_ids){
     });
   }
 
+  const filter_function = (selected_object) => {
+    const timestamp_ids = Object.keys(selected_object)
+    timestamp_ids.forEach(timestamp_id => {
+      const contracts = Object.keys(selected_object[timestamp_id])
+      
+      contracts.forEach(contract => {
+        const obligation_fulfiller_addresses = Object.keys(selected_object[timestamp_id][contract]);
+        
+        obligation_fulfiller_addresses.forEach(obligation_fulfiller_address => {
+          const original = selected_object[timestamp_id][contract][obligation_fulfiller_address]
+          
+          const filtered = obligation_fulfiller_account_ids.length > 0 ? Object.fromEntries(
+            Object.entries(original).filter(([_, value]) =>
+              obligation_fulfiller_account_ids.includes(value['obligation_fulfiller']+value['e5'])
+            )
+          ) : structuredClone(original);
+          
+          selected_object[timestamp_id][contract][obligation_fulfiller_address] = filtered
+          if(filter_addresses.length > 0 && !filter_addresses.includes(obligation_fulfiller_address)){
+            delete selected_object[timestamp_id][contract][obligation_fulfiller_address]
+          }
+        });
+        
+        if(filter_contracts.length > 0 && !filter_contracts.includes(contract)){
+          delete selected_object[timestamp_id][contract]
+        }
+      });
+    });
+    return selected_object
+  }
+
+  selected_cold_storage_request_obligation_obj = filter_function(selected_cold_storage_request_obligation_obj)
+
   let count = 0
   for(var i=0; i<selected_cold_storage_request_trends_files.length; i++){
     const focused_file = selected_cold_storage_request_trends_files[i]
     const write = async () => {
       const object = await read_file(focused_file, 'account_obligations_stats_history')
-      Object.assign(selected_cold_storage_request_obligation_obj, object);
+      Object.assign(selected_cold_storage_request_obligation_obj, filter_function(object));
       count++
     }
     write();
@@ -8493,35 +8634,37 @@ filter_contracts, obligation_fulfiller_account_ids){
 
   console.log('get_accounts_obligation_history_data', 'selected_cold_storage_request_obligation_obj', selected_cold_storage_request_obligation_obj)
 
-  const timestamp_ids = Object.keys(selected_cold_storage_request_obligation_obj)
-  timestamp_ids.forEach(timestamp_id => {
-    const contracts = Object.keys(selected_cold_storage_request_obligation_obj[timestamp_id])
-    
-    contracts.forEach(contract => {
-      const obligation_fulfiller_addresses = Object.keys(selected_cold_storage_request_obligation_obj[timestamp_id][contract]);
-      
-      obligation_fulfiller_addresses.forEach(obligation_fulfiller_address => {
-        const original = selected_cold_storage_request_obligation_obj[timestamp_id][contract][obligation_fulfiller_address]
-        
-        const filtered = obligation_fulfiller_account_ids.length > 0 ? Object.fromEntries(
-          Object.entries(original).filter(([_, value]) =>
-            obligation_fulfiller_account_ids.includes(value['obligation_fulfiller']+value['e5'])
-          )
-        ) : structuredClone(original);
-        
-        selected_cold_storage_request_obligation_obj[timestamp_id][contract][obligation_fulfiller_address] = filtered
-        if(filter_addresses.length > 0 && !filter_addresses.includes(obligation_fulfiller_address)){
-          delete selected_cold_storage_request_obligation_obj[timestamp_id][contract][obligation_fulfiller_address]
-        }
-      });
-      
-      if(filter_contracts.length > 0 && !filter_contracts.includes(contract)){
-        delete selected_cold_storage_request_obligation_obj[timestamp_id][contract]
-      }
-    });
-  });
+  return selected_cold_storage_request_obligation_obj;
 
-  return selected_cold_storage_request_obligation_obj
+  // const timestamp_ids = Object.keys(selected_cold_storage_request_obligation_obj)
+  // timestamp_ids.forEach(timestamp_id => {
+  //   const contracts = Object.keys(selected_cold_storage_request_obligation_obj[timestamp_id])
+    
+  //   contracts.forEach(contract => {
+  //     const obligation_fulfiller_addresses = Object.keys(selected_cold_storage_request_obligation_obj[timestamp_id][contract]);
+      
+  //     obligation_fulfiller_addresses.forEach(obligation_fulfiller_address => {
+  //       const original = selected_cold_storage_request_obligation_obj[timestamp_id][contract][obligation_fulfiller_address]
+        
+  //       const filtered = obligation_fulfiller_account_ids.length > 0 ? Object.fromEntries(
+  //         Object.entries(original).filter(([_, value]) =>
+  //           obligation_fulfiller_account_ids.includes(value['obligation_fulfiller']+value['e5'])
+  //         )
+  //       ) : structuredClone(original);
+        
+  //       selected_cold_storage_request_obligation_obj[timestamp_id][contract][obligation_fulfiller_address] = filtered
+  //       if(filter_addresses.length > 0 && !filter_addresses.includes(obligation_fulfiller_address)){
+  //         delete selected_cold_storage_request_obligation_obj[timestamp_id][contract][obligation_fulfiller_address]
+  //       }
+  //     });
+      
+  //     if(filter_contracts.length > 0 && !filter_contracts.includes(contract)){
+  //       delete selected_cold_storage_request_obligation_obj[timestamp_id][contract]
+  //     }
+  //   });
+  // });
+
+  // return selected_cold_storage_request_obligation_obj
   
 }
 
@@ -8712,6 +8855,282 @@ function get_contract_region_information(contract_region_entry_data){
   }
 
   return { regional_transfer_data, city_transfer_data }
+}
+
+
+
+
+
+
+
+
+async function fetch_voter_account_weights(static_poll_data, poll_votes){
+  /* 
+    static_poll_data: {
+      ...
+      public_contracts: {
+        E5 : contract_id
+      },-------------
+      max_voter_weight: int(eg. 3500),---------------
+      default_voter_weight: int(eg 35),--------------
+      tag_appearance_multiplier: {
+        tag1: int(eg. 10),
+        tag2: int(eg. 15)
+      }------------
+      tag_moved_token_amount_multiplier: {
+        token_e5_id: int(eg. 1),
+      },------------
+      tag_moved_token_amount_anchor_amount: {
+        token_e5_id: int(eg 1000)
+      },------------
+      obligation_count_start_time: int(eg. 1772477290),------------
+      obligation_count_end_time: int(eg. [end-of-previous-year]),---------
+      public_contract_deadlines: {
+        contract_e5_id : str(eg 1:1)
+      },----------------
+      accepted_obligation_types: []-------------
+
+      ----------------------e----------------------
+
+      - total amount of tokens moved will be calculated and verified for the time period between the start time and end time values.
+      - after amounts are validated and verified, each account voter will have a specific object with a mapping of the tokens to amounts theyve moved and a mapping of the tags to the count theyve moved.
+      - anchor amounts will be used, a value the total amount moved will be divided by to obtain the amount weight.
+      -if no public_contracts are specified, all voters will have a weight of 1
+    }
+  */
+
+
+  const voter_weight_data = {}
+  const e5s = Object.keys(poll_votes)
+  
+  for(var i=0; i<e5s.length; i++){
+    const e5 = e5s[i]
+    const vote_events = poll_votes[e5]
+    const public_contracts = static_poll_data.public_contracts || {}
+    
+    if(voter_weight_data[e5] == null){
+      voter_weight_data[e5] = {}
+    }
+
+    const default_voter_weight = static_poll_data.default_voter_weight || 1
+    vote_events.forEach(event_item => {
+      const account_id = parseInt(event_item.returnValues.p2/* sender_acc_id */)
+      voter_weight_data[e5][account_id] = default_voter_weight
+    });
+
+    if(public_contracts[e5] != null){
+      const contract_id = public_contracts[e5];
+      const participated_accounts = Object.keys(voter_weight_data[e5])
+      const start_time = static_poll_data.obligation_count_start_time
+      const end_time = static_poll_data.obligation_count_end_time
+      const filter_contracts = [contract_id+e5]
+      const obligation_fulfilment_payment_deadline_time = static_poll_data.public_contract_deadlines[(contract_id+e5)]
+
+      const end_time_proceeding_year = new Date(end_time).getFullYear() + 1; 
+      const startOfYear = new Date(end_time_proceeding_year, 0, 1).getTime(); // Month is 0-indexed
+      const day = obligation_fulfilment_payment_deadline_time.split(':')[0]
+      const month = obligation_fulfilment_payment_deadline_time.split(':')[1]
+      const endOfYear = new Date(`${end_time_proceeding_year}-${month<10 ? '0'+month : month}-${day<10 ? '0'+day : day}`).getTime();
+
+      const transfer_events = await filter_events(e5, 'H52', 'e1', {p2/* sender */: process_array_for_indexer_query(participated_accounts), p3/* receiver */: contract_id}, {});
+
+      const get_default_depth = (number) => {
+        var number_as_string = number.toString().toLocaleString('fullwide', {useGrouping:false})
+        return Math.floor((number_as_string.length-1)/72)
+      }
+
+      const get_exchange_transfer_actions = (amount) => {
+        var transaction_amount = amount.toString().toLocaleString('fullwide', {useGrouping:false})
+        var transaction_amount_depth = get_default_depth(transaction_amount)
+
+        var end = transaction_amount.length - 1
+        var start = (end - 71) < 0 ? 0 : (end-71)
+
+        var data = []
+        for(var j=0; j<=transaction_amount_depth; j++){
+          var depth_amount = bigInt(transaction_amount.substring(start, end+1)).toString().toLocaleString('fullwide', {useGrouping:false})
+          var depth = j
+          if(!bigInt(depth_amount).equals(0)){
+            data.push({'amount':depth_amount, 'depth':depth})
+          }
+
+          end -= 72
+          start -= 72
+        }
+        return data
+      }
+
+      const ensure_all_transfers_exist = (transfers_object) => {
+        var all_existing = true;
+        const exchanges = Object.keys(transfers_object)
+        exchanges.forEach(exchange => {
+          const amount = transfers_object[exchange]
+          const transfer_actions = get_exchange_transfer_actions(amount)
+
+          transfer_actions.forEach(action => {
+            const existing_events = transfer_events.filter((event) => { 
+              return(
+                event.returnValues.p1 == exchange && 
+                action['amount'].toString() == event.returnValues.p4/* amount */.toString() &&
+                action['depth'].toString() == event.returnValues.p7/* depth */.toString() &&
+                parseInt(event.returnValues.p5/* timestamp */) >= parseInt(startOfYear/1000) &&
+                parseInt(event.returnValues.p5/* timestamp */) <= parseInt(endOfYear/1000)
+              )
+            });
+            if(existing_events.length == 0){
+              all_existing = false;
+            }
+          });
+        });
+
+        return all_existing;
+      }
+
+      const obligation_fulfiller_account_ids = []
+      participated_accounts.forEach(account => {
+        const e5_account = account+e5
+        if(!obligation_fulfiller_account_ids.includes(e5_account)){
+          obligation_fulfiller_account_ids.push(e5_account)
+        }
+      });
+
+      const voter_obligation_history = await get_accounts_obligation_history_data(start_time, end_time, [], filter_contracts, obligation_fulfiller_account_ids)
+      
+      const sorted_voter_obligation_data = sort_obligation_history_for_each_account(voter_obligation_history, static_poll_data.accepted_obligation_types)
+
+      const existing_obligation_accounts = Object.keys(sorted_voter_obligation_data);
+      const valid_voter_accounts = []
+      const amounts_transacted = {}
+      for(var e=0; e<existing_obligation_accounts.length; e++){
+        const focused_e5_account = existing_obligation_accounts[e];
+        const amounts_claimed_by_voter = calculate_amount_claimed(sorted_voter_obligation_data[focused_e5_account]);
+        const has_amount_been_paid_in_year = ensure_all_transfers_exist(amounts_claimed_by_voter);
+
+        if(has_amount_been_paid_in_year == true){
+          if(!valid_voter_accounts.includes(focused_e5_account)){
+            valid_voter_accounts.push(focused_e5_account)
+            amounts_transacted[focused_e5_account] = amounts_claimed_by_voter
+          }
+        }
+      }
+
+      for(var v=0; v<valid_voter_accounts.length; v++){
+        const e5_account = valid_voter_accounts[v];
+        const account = parseInt(e5_account.split('E')[0])
+        const account_amounts = amounts_transacted[e5_account]
+        const account_tags = get_used_tags_data(sorted_voter_obligation_data[e5_account])
+        const tag_appearance_multiplier = static_poll_data.tag_appearance_multiplier
+        const tag_moved_token_amount_multiplier = static_poll_data.tag_moved_token_amount_multiplier
+        const tag_moved_token_amount_anchor_amount = static_poll_data.tag_moved_token_amount_anchor_amount
+
+        const account_total_weight = 0;
+        Object.keys(account_tags).forEach(tag => {
+          const applied_multiplier = tag_appearance_multiplier[tag] || 0
+          account_total_weight = bigInt(account_total_weight).add(bigInt(account_tags[tag]).multiply(applied_multiplier))
+        });
+
+        Object.keys(account_amounts).forEach(exchange => {
+          if(tag_moved_token_amount_multiplier[exchange] != null && tag_moved_token_amount_anchor_amount[exchange] != null){
+            const applied_multiplier = bigInt(account_amounts[exchange]).multiply(tag_moved_token_amount_multiplier[exchange]).divide(tag_moved_token_amount_anchor_amount[exchange])
+            account_total_weight += applied_multiplier;
+          }
+        });
+
+        voter_weight_data[e5][account] += account_total_weight
+      }
+    }
+
+    const max_voter_weight = static_poll_data.max_voter_weight || 1
+    Object.keys(voter_weight_data[e5]).forEach(account => {
+      if(voter_weight_data[e5][account] > max_voter_weight){
+        voter_weight_data[e5][account] = max_voter_weight;
+      }
+    });
+  }
+
+  return voter_weight_data
+}
+
+function sort_obligation_history_for_each_account(data, accepted_obligation_types){
+  const update_object = {}
+  Object.keys(data).forEach(time => {
+    Object.keys(data[time]).forEach(contract => {
+      Object.keys(data[time][contract]).forEach(obligation_fulfiller_address => {
+        Object.keys(data[time][contract][obligation_fulfiller_address]).forEach(identifier => {
+          const entry = data[time][contract][obligation_fulfiller_address][identifier]
+          if(accepted_obligation_types.includes(entry['hard_id']) || accepted_obligation_types.length == 0){
+            if(update_object[entry['obligation_fulfiller']] == null){
+              update_object[entry['obligation_fulfiller']] = {}
+            }
+            update_object[entry['obligation_fulfiller']][identifier] = entry;
+          }
+        });
+      });
+    });
+  });
+  return update_object
+}
+
+function calculate_amount_claimed(user_obligation_data){
+  const totals_obj = {}
+  const entries = Object.keys(user_obligation_data)
+  entries.forEach(entry => {
+    const entry_data = user_obligation_data[entry]
+    const contracts_promise = entry_data['contracts_promises']
+    const transfers = contracts_promise['transfers']
+    const proportions = contracts_promise['proportions']
+    transfers.forEach(transfer => {
+      const exchange = transfer['exchange']
+      const amount = transfer['amount']
+      if(totals_obj[exchange] == null){
+        totals_obj[exchange] = bigInt(0)
+      }
+      let obligation_amount = bigInt(0)
+      let active_amount = bigInt(0).plus(amount)
+      proportions.forEach(proportion => {
+        const obligation = bigInt(active_amount).multiply(proportion).divide('100e16')
+        obligation_amount = bigInt(obligation_amount).plus(obligation)
+        active_amount = bigInt(active_amount).minus(obligation)
+      });
+      totals_obj[exchange] = bigInt(totals_obj[exchange]).plus(obligation_amount)
+    }); 
+  });
+
+  return totals_obj
+}
+
+function get_used_tags_data(user_obligation_data){
+  const entries = Object.keys(user_obligation_data)
+  const used_keyword_count = {}
+  entries.forEach(entry => {
+    const entry_data = user_obligation_data[entry]
+    const contracts_promise = entry_data['contracts_promises']
+    const keywords = contracts_promise['keywords'] || [];
+    keywords.forEach(keyword => {
+      if(used_keyword_count[keyword] == null){
+        used_keyword_count[keyword] = 0
+      }
+      used_keyword_count[keyword] ++;
+    });
+  });
+
+  return used_keyword_count
+}
+
+async function mock_fetch_voter_account_weights(static_poll_data, e5_account_ids){
+  const poll_votes = {}
+
+  e5_account_ids.forEach(account_id => {
+    const account = parseInt(account_id.split('E')[0])
+    const e5 = 'E'+account_id.split('E')[1]
+    if(poll_votes[e5] == null){
+      poll_votes[e5] = []
+    }
+    const event = {e5: e5, returnValues:{p1:0, p2: account, p3:0, p4:'', p5:0, p6:0, p7:0}}
+    poll_votes[e5].push(event)
+  });
+
+  return await fetch_voter_account_weights(static_poll_data, poll_votes)
 }
 
 
@@ -10772,6 +11191,34 @@ app.get(`/${endpoint_info['sync_socket_data']}`, async (req, res) => {
   }catch(e){
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+});
+
+/* endpoint for returning users vote weights */
+app.post(`/${endpoint_info['user_vote_weight']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { static_poll_data, e5_account_ids } = await process_request_body(req.body)
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  else if(static_poll_data == null || e5_account_ids == null || !Array.isArray(e5_account_ids)){
+    res.send(JSON.stringify({ message: 'Invalid params', success:false }));
+    return;
+  }
+  try{
+    const obj = {
+      'weights': await mock_fetch_voter_account_weights(static_poll_data, e5_account_ids),
+      success:true
+    }
+
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/user_vote_weight')
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
   }
 });
 
