@@ -111,6 +111,7 @@ var data = {
   'socket_section_synchronization': 0,
   'is_synching_socket_with_beacon': false,
   'cold_storage_account_obligations_records':[],
+  'cold_storage_entry_file_pointers_records':[],
 }
 
 const E5_CONTRACT_ABI = [
@@ -199,6 +200,7 @@ const e5_event_loading_status = {};
 var tag_price_index_values = {};
 var recipient_account_transaction_records = {}
 const user_obligation_records = {}
+const entry_file_pointers = {}
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -2187,6 +2189,7 @@ async function store_back_up_of_data(){
     'tag_price_index_values':tag_price_index_values,
     'recipient_account_transaction_records':recipient_account_transaction_records,
     'user_obligation_records':user_obligation_records,
+    'entry_file_pointers':entry_file_pointers,
   }
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -2280,6 +2283,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       }
       if(obj['user_obligation_records'] != null){
         Object.assign(user_obligation_records, obj['user_obligation_records'])
+      }
+      if(obj['entry_file_pointers'] != null){
+        Object.assign(entry_file_pointers, obj['entry_file_pointers'])
       }
       
       console.log('successfully loaded back-up data')
@@ -4742,15 +4748,31 @@ function stash_old_trends_in_cold_storage(){
     });
 
     if(Object.keys(record_obj).length > 0){
-      write_stat_to_cold_storage(record_obj, 'trends_stats_history', 'cold_storage_trends_records', true)
+      const recording_tags = []
+      Object.keys(record_obj).forEach(timestamp => {
+        Object.keys(record_obj[timestamp]).forEach(item_type => {
+          Object.keys(record_obj[timestamp][item_type]).forEach(item_lan => {
+            Object.keys(record_obj[timestamp][item_type][item_lan]).forEach(tag => {
+              if(!recording_tags.includes(tag)) recording_tags.push(tag);
+            });
+          });
+        });
+      });
+
+      const file_name = Date.now()
+      add_tags_entries_to_file(recording_tags, file_name, 'cold_storage_trends_records')
+
+      write_stat_to_cold_storage(record_obj, 'trends_stats_history', 'cold_storage_trends_records', true, file_name)
     }
   }
 }
 
 async function get_old_trends_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states, filter_object_types){
-  const selected_cold_storage_request_trends_files = data['cold_storage_trends_records'].filter(function (time) {
+  const all_selected_cold_storage_request_trends_files = data['cold_storage_trends_records'].filter(function (time) {
     return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
   });
+
+  const selected_cold_storage_request_trends_files = await filter_provided_entry_files_for_tags_specified('cold_storage_trends_records', all_selected_cold_storage_request_trends_files, keywords)
 
   console.log('get_old_trends_history_data', 'selected_cold_storage_request_trends_files', selected_cold_storage_request_trends_files)
 
@@ -4843,57 +4865,6 @@ async function get_old_trends_history_data(start_time, end_time, keywords, filte
   console.log('get_old_trends_history_data', 'selected_cold_storage_request_trend_obj', 'after file reads', selected_cold_storage_request_trend_obj)
 
   return selected_cold_storage_request_trend_obj
-
-  // const timestamp_ids = Object.keys(selected_cold_storage_request_trend_obj)
-  // timestamp_ids.forEach(timestamp_id => {
-  //   const types = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id])
-  //   types.forEach(type => {
-  //     const languages = Object.keys(selected_cold_storage_request_trend_obj[timestamp_id][type])
-  //     languages.forEach(language => {
-  //       const original = selected_cold_storage_request_trend_obj[timestamp_id][type][language]
-  //       const filtered = keywords.length > 0 ? Object.fromEntries(
-  //         Object.entries(original).filter(([key, _]) =>
-  //           keywords.includes(key)
-  //         )
-  //       ) : structuredClone(original);
-
-  //       if(filter_states.length > 0){
-  //         Object.keys(filtered).forEach(tag => {
-  //           const filtered_by_states = Object.fromEntries(
-  //             Object.entries(filtered[tag]).filter(([key, _]) =>
-  //               filter_states.includes(key)
-  //             )
-  //           )
-  //           filtered[tag] = filtered_by_states;
-  //         });
-  //       }
-  //       if(filter_object_types.length > 0){
-  //         Object.keys(filtered).forEach(tag => {
-  //           Object.keys(filtered[tag]).forEach(state => {
-  //               const filtered_by_object_type = Object.fromEntries(
-  //                 Object.entries(filtered[tag][state]).filter(([key, _]) =>
-  //                   filter_object_types.includes(key)
-  //                 )
-  //             );
-  //             filtered[tag][state] = filtered_by_object_type;
-  //           });
-  //         });
-  //       }
-        
-  //       selected_cold_storage_request_trend_obj[timestamp_id][type][language] = filtered
-  //       if(filter_languages.length > 0 && !filter_languages.includes(language)){
-  //         delete selected_cold_storage_request_trend_obj[timestamp_id][type][language]
-  //       }
-  //     });
-  //     if(filter_type != '' && type != filter_type){
-  //       delete selected_cold_storage_request_trend_obj[timestamp_id][type]
-  //     }
-  //   });
-  // });
-
-  // console.log('get_old_trends_history_data', 'selected_cold_storage_request_trend_obj', 'after filter', selected_cold_storage_request_trend_obj)
-
-  // return selected_cold_storage_request_trend_obj
 }
 
 function trim_block_record_data(){
@@ -7946,7 +7917,21 @@ function stash_old_tag_price_data_in_cold_storage(){
     });
 
     if(Object.keys(record_obj).length > 0){
-      write_stat_to_cold_storage(record_obj, 'tag_price_stats_history', 'cold_storage_tag_price_records', true)
+      const recording_tags = []
+      Object.keys(record_obj).forEach(timestamp => {
+        Object.keys(record_obj[timestamp]).forEach(item_type => {
+          Object.keys(record_obj[timestamp][item_type]).forEach(item_lan => {
+            Object.keys(record_obj[timestamp][item_type][item_lan]).forEach(tag => {
+              if(!recording_tags.includes(tag)) recording_tags.push(tag);
+            });
+          });
+        });
+      });
+
+      const file_name = Date.now()
+      add_tags_entries_to_file(recording_tags, file_name, 'cold_storage_tag_price_records')
+
+      write_stat_to_cold_storage(record_obj, 'tag_price_stats_history', 'cold_storage_tag_price_records', true, file_name)
     }
   }
 }
@@ -7973,9 +7958,11 @@ function stash_old_tag_price_data_in_cold_storage(){
 // }
 
 async function get_old_tag_price_history_data(start_time, end_time, keywords, filter_type, filter_languages, filter_states, filter_e5s){
-  const selected_cold_storage_request_trends_files = data['cold_storage_tag_price_records'].filter(function (time) {
+  const all_selected_cold_storage_request_trends_files = data['cold_storage_tag_price_records'].filter(function (time) {
     return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
   });
+
+  const selected_cold_storage_request_trends_files = await filter_provided_entry_files_for_tags_specified('cold_storage_tag_price_records', all_selected_cold_storage_request_trends_files, keywords)
 
   console.log('get_old_tag_price_history_data', 'selected_cold_storage_request_trends_files', selected_cold_storage_request_trends_files, tag_price_index_values)
 
@@ -8567,15 +8554,34 @@ function set_old_account_obligations_data_in_cold_storage(){
     });
 
     if(Object.keys(record_obj).length > 0){
-      write_stat_to_cold_storage(record_obj, 'account_obligations_stats_history', 'cold_storage_account_obligations_records', true)
+      const recording_tags = []
+      Object.keys(record_obj).forEach(timestamp => {
+        Object.keys(record_obj[timestamp]).forEach(contract => {
+          if(!recording_tags.includes(contract)) recording_tags.push(contract);
+            Object.keys(record_obj[timestamp][contract]).forEach(fulfiler_address => {
+              if(!recording_tags.includes(fulfiler_address)) recording_tags.push(fulfiler_address);
+              Object.keys(record_obj[timestamp][contract][fulfiler_address]).forEach(identifier => {
+                const obligation_fulfiller = record_obj[timestamp][contract][fulfiler_address][identifier]['obligation_fulfiller']
+                if(!recording_tags.includes(obligation_fulfiller)) recording_tags.push(obligation_fulfiller);
+              });
+            });
+        });
+      });
+
+      const file_name = Date.now()
+      add_tags_entries_to_file(recording_tags, file_name, 'cold_storage_account_obligations_records')
+
+      write_stat_to_cold_storage(record_obj, 'account_obligations_stats_history', 'cold_storage_account_obligations_records', true, file_name)
     }
   }
 }
 
 async function get_accounts_obligation_history_data(start_time, end_time, filter_addresses, filter_contracts, obligation_fulfiller_account_ids){
-  const selected_cold_storage_request_trends_files = data['cold_storage_account_obligations_records'].filter(function (time) {
+  const all_selected_cold_storage_request_trends_files = data['cold_storage_account_obligations_records'].filter(function (time) {
     return (parseInt(time) >= parseInt(start_time) && parseInt(time) <= parseInt(end_time))
   });
+
+  const selected_cold_storage_request_trends_files = await filter_provided_entry_files_for_tags_specified('cold_storage_account_obligations_records', all_selected_cold_storage_request_trends_files, filter_addresses.concat(filter_contracts, obligation_fulfiller_account_ids))
 
   var selected_cold_storage_request_obligation_obj = {}
   const keys = Object.keys(user_obligation_records)
@@ -9142,6 +9148,82 @@ async function mock_fetch_voter_account_weights(static_poll_data, e5_account_ids
   });
 
   return await fetch_voter_account_weights(static_poll_data, poll_votes)
+}
+
+
+
+
+
+
+function add_tags_entries_to_file(tags, file, context){
+  if(entry_file_pointers[context] == null){
+    entry_file_pointers[context] = {}
+  }
+  entry_file_pointers[context][file] = tags;
+}
+
+function set_old_entry_file_pointers_data_in_cold_storage(){
+  const keys = Object.keys(entry_file_pointers)
+  if(keys.length > 0){
+    const clone = structuredClone(entry_file_pointers)
+    keys.forEach(key => {
+      delete entry_file_pointers[key]
+    });
+    if(Object.keys(record_obj).length > 0){
+      write_stat_to_cold_storage(clone, 'entry_file_pointers_history', 'cold_storage_entry_file_pointers_records', true)
+    }
+  }
+}
+
+async function filter_provided_entry_files_for_tags_specified(context, files_to_check, tags){
+  const all_cold_storage_files = data['cold_storage_entry_file_pointers_records']
+
+  const default_files = files_to_check.filter((name) => {
+    return (parseInt(name) <= 1774451566000) 
+    /* the files added before tracking began should be added by default */
+  })
+
+  const selected_cold_storage_entry_file_pointer_files = [].concat(default_files)
+
+  const filter_function = (object) => {
+    const selected_context_data = object[context] || {}
+    const keys = Object.keys(selected_context_data)
+    keys.forEach(file_item => {
+      if(files_to_check.includes(file_item)){
+        const recorded_tags = selected_context_data[file_item] || [];
+        recorded_tags.forEach(tag_item => {
+          if(tags.includes(tag_item) && !selected_cold_storage_entry_file_pointer_files.includes(file_item)){
+            selected_cold_storage_entry_file_pointer_files.push(file_item)
+          }
+        });
+      }
+    });
+  }
+  filter_function(entry_file_pointers)
+
+  let count = 0
+  for(var i=0; i<all_cold_storage_files.length; i++){
+    const focused_file = all_cold_storage_files[i]
+    const write = async () => {
+      const object = await read_file(focused_file, 'account_obligations_stats_history')
+      filter_function(object);
+      count++
+    }
+    write();
+  }
+
+  await new Promise(resolve => {
+    const checkReady = () => {
+      if (count == all_cold_storage_files.length) {
+        resolve();
+      } else {
+        setTimeout(checkReady, 100);
+      }
+    };
+    checkReady();
+  });
+
+  return selected_cold_storage_entry_file_pointer_files;
 }
 
 
@@ -11595,6 +11677,7 @@ setInterval(stash_old_tag_price_data_in_cold_storage, 14*24*60*60*1000)
 // setInterval(stash_old_user_obligations_data_in_cold_storage, 20*24*60*60*1000)
 setInterval(update_user_obligation_data, 23*60*1000)
 setInterval(set_old_account_obligations_data_in_cold_storage, 20*24*60*60*1000)
+setInterval(set_old_entry_file_pointers_data_in_cold_storage, 20*24*60*60*1000)
 
 
 set_up_error_logs_filestream()
