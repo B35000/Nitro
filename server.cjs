@@ -3499,7 +3499,7 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
   }
   const all_modification_events = await filter_events(subscription_e5, 'F5', 'e5', { p1/* target_id */: subscription_id}, null)
 
-  const price_data_snapshots = get_price_data_snapshots(all_modification_events, object)
+  const price_data_snapshots = get_price_data_snapshots(all_modification_events, subscription_object)
   var object_data = []
   var total_payment_data = {}
   const starting_time = Math.floor(Date.now()/1000) - filter_value
@@ -3594,7 +3594,18 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
     const focused_data_point = object_data[pos]
     yVal = 0
     if(focused_data_point != null && focused_data_point['count'] != 0 && largest_number != 0){
-      yVal = parseInt(bigInt(focused_data_point['count']).multiply(100).divide(largest_number))
+      // yVal = parseInt(bigInt(focused_data_point['count']).multiply(100).divide(largest_number))
+      const price_data =  focused_data_point['price_data']['prices']
+      var selected_price_item = price_data[0]
+      for(var p = 0; p < price_data.length; p++) {
+        const price_item = price_data[p]
+        if(price_item['id'] == 3 || price_item['id'] == 5){
+          if(selected_price_item['id'] != 3 && selected_price_item['id'] != 5){
+            selected_price_item = price_item
+          }
+        }
+      }
+      yVal = bigInt(selected_price_item['amount']).multiply(focused_data_point['count'])
     }
     
     if(yVal != null && focused_data_point != null){
@@ -3612,15 +3623,15 @@ async function calculate_income_stream_data_points(subscription_object, steps, f
         const final_price_amount = bigInt(selected_price_item['amount']).multiply(focused_data_point['count'])
         const token_name = token_name_data[selected_price_item['id']]
 
-        dps.push({x: xVal,y: (yVal+10), indexLabel: ""+format_account_balance_figure(final_price_amount)+` ${token_name}`});//
+        dps.push({x: xVal,y: (yVal), indexLabel: ""+format_account_balance_figure(final_price_amount)+` ${token_name}`});//
       }else{
-        dps.push({x: xVal, y: (yVal+10)});//
+        dps.push({x: xVal, y: (yVal)});//
       }
       xVal++;
     }
   }
 
-  const scale = bigInt(largest_number).divide(100) == 0 ? 1 : bigInt(largest_number).divide(100)
+  const scale = bigInt(largest_number).divide(1) == 0 ? 1 : bigInt(largest_number).divide(1)
   return { object_data: {dps, total_payment_data, scale}, success:true }
 }
 
@@ -5606,7 +5617,7 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     all_return_data[e5]['load_traffic_proportion_data'] = load_traffic_proportion_data(all_data[e5], all_concatenated_data, e5)
   }
   const socket_targets = account_exists == false ? ['jobs'] : ['jobs', 'open_signature_request|'
-  +target_address, 'open_signature_response|'+target_address, 'call_invites|'+target_address, 'ether_coin_request|'+target_address, 'pre_purchase_request|'+target_address, 'direct_message|'+target_address]
+  +target_address, 'open_signature_response|'+target_address, 'call_invites|'+target_address, 'ether_coin_request|'+target_address, 'pre_purchase_request|'+target_address, 'direct_message|'+target_address, 'tags|'+target_address, 'mempool_notification|'+target_address]
 
   all_return_data['socket_objects_data'] = await get_socket_data(socket_targets, Date.now() -
   (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*153, Date.now())
