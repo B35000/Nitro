@@ -201,6 +201,7 @@ var tag_price_index_values = {};
 var recipient_account_transaction_records = {}
 const user_obligation_records = {}
 const entry_file_pointers = {}
+const connected_users_sub_sockets = {}
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -6948,6 +6949,14 @@ function handle_user_send_message({ to, message, forward_id, target, object_hash
   const userId_target = connected_users.get(to);
   if (userId_target) {
     userId_target.emit('send_message', { from: message.author, message, remote: true, target, object_hash });
+    if(connected_users_sub_sockets[userId_target.userId] != null){
+      const socket_id_keys = Object.keys(connected_users_sub_sockets[userId_target.userId])
+      socket_id_keys.forEach(socket_id => {
+        if(userId_target.id != socket_id){
+          connected_users_sub_sockets[userId_target.userId][socket_id].emit('send_message', { from: message.author, message, remote: true, target, object_hash });
+        }
+      });
+    }
   } else {
     // forward to other nodes to ensure full propagation if enabled
     Object.entries(node_connection_map).forEach(([url, n]) => {
@@ -7063,6 +7072,14 @@ function handle_user_joined_chatroom_message({roomId, userId, forward_id, forwar
   usersInRoom.forEach(existing_user => {
     if(userId_target){
       userId_target.emit("user_in_chatroom", {userId: existing_user, roomId});
+      if(connected_users_sub_sockets[userId_target.userId] != null){
+        const socket_id_keys = Object.keys(connected_users_sub_sockets[userId_target.userId])
+        socket_id_keys.forEach(socket_id => {
+          if(userId_target.id != socket_id){
+            connected_users_sub_sockets[userId_target.userId][socket_id].emit("user_in_chatroom", {userId: existing_user, roomId});
+          }
+        });
+      }
     }
   });
 
@@ -7625,6 +7642,14 @@ async function send_signature_request_to_target(target_account_id, target_e5, si
 
   if (user_target) {
     user_target.emit('send_message', { from: sender_address, message, target, object_hash });
+    if(connected_users_sub_sockets[user_target.userId] != null){
+      const socket_id_keys = Object.keys(connected_users_sub_sockets[user_target.userId])
+      socket_id_keys.forEach(socket_id => {
+        if(user_target.id != socket_id){
+          connected_users_sub_sockets[user_target.userId][socket_id].emit('send_message', { from: sender_address, message, target, object_hash });
+        }
+      });
+    }
   } else {
     // Forward to other nodes
     const forward_id = makeid(35)
@@ -9485,7 +9510,7 @@ app.get(`/${endpoint_info['traffic_stats']}/:filter_time/:privacy_signature`, as
   const files_obj = { 'data':files, 'log_data':log_files }
   const e5_data = {}
   data['e'].forEach(e5 => {
-    e5_data[e5] = {'reorgs': data[e5]['reorgs']}
+    e5_data[e5] = {'reorgs': data[e5]['reorgs'].reverse().slice(0, 35).reverse()}
   });
 
   try{
@@ -11439,6 +11464,13 @@ io.on('connection', socket => {
       socket.emit('register_status', { success: false, time: Date.now(), reason: 'invalid privacy signature', userId });
     }else{
       socket.userId = userId;
+      const existing_user_target = connected_users.get(userId)
+      if(existing_user_target != null){
+        if(connected_users_sub_sockets[userId] == null){
+          connected_users_sub_sockets[userId] = {}
+        }
+        connected_users_sub_sockets[userId][socket.id] = socket
+      }
       connected_users.set(userId, socket);
       socket.emit('register_status', { success: true, time: Date.now(), reason: 'signature accepted', userId });
     }
@@ -11470,6 +11502,14 @@ io.on('connection', socket => {
     const user_target = connected_users.get(to);
     if (user_target) {
       user_target.emit('send_message', { from: socket.userId, message, target, object_hash });
+      if(connected_users_sub_sockets[socket.userId] != null){
+        const socket_id_keys = Object.keys(connected_users_sub_sockets[socket.userId])
+        socket_id_keys.forEach(socket_id => {
+          if(user_target.id != socket_id){
+            connected_users_sub_sockets[socket.userId][socket_id].emit('send_message', { from: socket.userId, message, target, object_hash });
+          }
+        });
+      }
     } else {
       // Forward to other nodes
       const forward_id = makeid(35)
@@ -11567,10 +11607,26 @@ io.on('connection', socket => {
     if(target){
       if (isInitiator && signalType === 'offer') {
         // This is an offer, send it as offer-received
-        if(target) target.emit("offer_received", { from: socket.userId, signal: data });
+        target.emit("offer_received", { from: socket.userId, signal: data });
+        if(connected_users_sub_sockets[socket.userId] != null){
+          const socket_id_keys = Object.keys(connected_users_sub_sockets[socket.userId])
+          socket_id_keys.forEach(socket_id => {
+            if(target.id != socket_id){
+              connected_users_sub_sockets[socket.userId][socket_id].emit("offer_received", { from: socket.userId, signal: data });
+            }
+          });
+        }
       } else {
         // This is an answer or other signal, relay normally
-        if(target) target.emit("signal", { from: socket.userId, data });
+        target.emit("signal", { from: socket.userId, data });
+        if(connected_users_sub_sockets[socket.userId] != null){
+          const socket_id_keys = Object.keys(connected_users_sub_sockets[socket.userId])
+          socket_id_keys.forEach(socket_id => {
+            if(target.id != socket_id){
+              connected_users_sub_sockets[socket.userId][socket_id].emit("signal", { from: socket.userId, data });
+            }
+          });
+        }
       }
     }else{
       // Forward to other nodes
@@ -11617,7 +11673,13 @@ io.on('connection', socket => {
   /* when socket is disconnected */
   socket.on('disconnect', () => {
     if(socket.userId == null) return;
-    if (socket.userId) connected_users.delete(socket.userId);
+    connected_users.delete(socket.userId);
+    if(connected_users_sub_sockets[socket.userId] != null){
+      const socket_id_keys = Object.keys(connected_users_sub_sockets[socket.userId])
+      const selected_secondary_socket = connected_users_sub_sockets[socket.userId][socket_id_keys[0]]
+      connected_users.set(socket.userId, selected_secondary_socket);
+      delete connected_users_sub_sockets[socket.userId][socket_id_keys[0]]
+    }
     // Remove user from all rooms
     Object.keys(rooms).forEach(roomId => {
       const index = rooms[roomId].indexOf(socket.userId);
