@@ -35,5 +35,6 @@ yarn-error.log*
 .testfile.js
 .testfile2.js
 stuff.cjs
+stuff2.cjs
 calls.cjs
 .gitignore

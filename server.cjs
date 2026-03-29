@@ -35,6 +35,7 @@ const nacl = require("tweetnacl");
 const { Server } = require('socket.io')
 const ClientIO = require('socket.io-client')
 const { createServer } = require('http');
+const webpush = require('web-push');
 
 const app = express();
 app.use(cors());
@@ -53,6 +54,9 @@ var sync_block_number = 0;
 var server_public_key = null;
 const privacy_address = '0xdC97d6dD8FF673f2A9D7569AcBb0A5df22f70276';
 var server_keys = null;
+const EMAIL_ADDRESS_RESOURCE = process.env.EMAIL_ADDRESS
+const VAPID_PUBLIC_KEY_RESOURCE = process.env.VAPID_PUBLIC_KEY
+const VAPID_PRIVATE_KEY_RESOURCE = process.env.VAPID_PRIVATE_KEY
 
 
 /* data object containing all the E5 data. */
@@ -202,6 +206,14 @@ var recipient_account_transaction_records = {}
 const user_obligation_records = {}
 const entry_file_pointers = {}
 const connected_users_sub_sockets = {}
+
+webpush.setVapidDetails( `mailto:${EMAIL_ADDRESS_RESOURCE}`, VAPID_PUBLIC_KEY_RESOURCE, VAPID_PRIVATE_KEY_RESOURCE );
+const registered_notification_subscriptions = {}
+
+
+
+
+
 
 /* AES encrypts passed data with specified key, returns encrypted data. */
 // function decrypt_storage_data(data, key){
@@ -2191,6 +2203,7 @@ async function store_back_up_of_data(){
     'recipient_account_transaction_records':recipient_account_transaction_records,
     'user_obligation_records':user_obligation_records,
     'entry_file_pointers':entry_file_pointers,
+    'registered_notification_subscriptions':registered_notification_subscriptions,
   }
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -2287,6 +2300,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       }
       if(obj['entry_file_pointers'] != null){
         Object.assign(entry_file_pointers, obj['entry_file_pointers'])
+      }
+      if(obj['registered_notification_subscriptions'] != null){
+        Object.assign(registered_notification_subscriptions, obj['registered_notification_subscriptions'])
       }
       
       console.log('successfully loaded back-up data')
@@ -5143,7 +5159,7 @@ global.fetch = async (url, options = {}) => {
 };
 
 function set_endpoint_ids(){
-  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 'user_obligations', 'user_vote_weight'];
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 'user_obligations', 'user_vote_weight', 'save_subscription'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -6957,7 +6973,12 @@ function handle_user_send_message({ to, message, forward_id, target, object_hash
         }
       });
     }
-  } else {
+  }
+  else if(registered_notification_subscriptions[to] != null){
+    const subscription = registered_notification_subscriptions[to];
+    webpush.sendNotification(subscription, JSON.stringify(message));
+  }
+  else {
     // forward to other nodes to ensure full propagation if enabled
     Object.entries(node_connection_map).forEach(([url, n]) => {
       if(url != forward_origin) n.emit('forward_send_message', { to, message, forward_id, target, object_hash, secondary_target, forward_origin })
@@ -9463,6 +9484,7 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     'is_synching_socket_with_beacon':data['is_synching_socket_with_beacon'],
     'e25_rpc_urls':data['E25']['web3'],
     'e25_selected_rpc':data['E25']['url'],
+    'vapid_public_key':VAPID_PUBLIC_KEY_RESOURCE,
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -11340,6 +11362,38 @@ app.post(`/${endpoint_info['user_vote_weight']}/:privacy_signature`, async (req,
   }
 });
 
+/* endpoint for setting user notification subscriptions */
+app.post(`/${endpoint_info['save_subscription']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { subscription, account_address, action } = await process_request_body(req.body)
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  else if(subscription == null || account_address == null || (action != 'set' && action != 'delete')){
+    res.send(JSON.stringify({ message: 'Invalid params', success:false }));
+    return;
+  }
+  try{
+    if(action == 'set'){
+      registered_notification_subscriptions[account_address] = subscription;
+    }else{
+      delete registered_notification_subscriptions[account_address]
+    }
+    const obj = {
+      'message': 'registered user for service worker notifications',
+      success:true
+    }
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/save_subscription')
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
+  }
+});
+
 
 
 
@@ -11510,7 +11564,12 @@ io.on('connection', socket => {
           }
         });
       }
-    } else {
+    }
+    else if(registered_notification_subscriptions[to] != null){
+      const subscription = registered_notification_subscriptions[to];
+      webpush.sendNotification(subscription, JSON.stringify(message));
+    }
+    else {
       // Forward to other nodes
       const forward_id = makeid(35)
       Object.values(node_connection_map).forEach(nodeSocket => {
