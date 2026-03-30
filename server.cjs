@@ -6976,7 +6976,11 @@ function handle_user_send_message({ to, message, forward_id, target, object_hash
   }
   else if(registered_notification_subscriptions[to] != null){
     const subscription = registered_notification_subscriptions[to];
-    webpush.sendNotification(subscription, JSON.stringify(message));
+    try{
+      webpush.sendNotification(subscription, JSON.stringify(message));
+    }catch(e){
+      log_error(e)
+    }
   }
   else {
     // forward to other nodes to ensure full propagation if enabled
@@ -11567,7 +11571,11 @@ io.on('connection', socket => {
     }
     else if(registered_notification_subscriptions[to] != null){
       const subscription = registered_notification_subscriptions[to];
-      webpush.sendNotification(subscription, JSON.stringify(message));
+      try{
+        webpush.sendNotification(subscription, JSON.stringify(message));
+      }catch(e){
+        log_error(e)
+      }
     }
     else {
       // Forward to other nodes
