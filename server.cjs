@@ -66,7 +66,7 @@ var data = {
   'e':['E25',],
   'E25': {
     'addresses':['0xF3895fe95f423A4EBDdD16232274091a320c5284', '0x839C6155383D4a62E31d4d8B5a6c172E6B71979c', '0xD338118A55B5245b9C9F6d5f03BF9d9eA32c5850', '0xec24050b8E3d64c8be3cFE9a40A59060Cb35e57C', '0xFA85d977875092CA69d010d4EFAc5B0E333ce61E', '0x7dcc9570c2e6df2860a518eEE46fA90E13ef6276', '0x0Bb15F960Dbb856f3Eb33DaE6Cc57248a11a4728'],
-    'web3':['https://etc.etcdesktop.com'], 'url':0,
+    'web3':['https://etc.rivet.link','https://etc.etcdesktop.com', 'https://0xrpc.io/etc'], 'url':0,
     'first_block':19151130, 'current_block':{}, 'iteration':400_000, 'reorgs':[]
   },
   // 'file_data_capacity':0,
@@ -180,7 +180,7 @@ var hash_count = 0/* number of ipfs hashes being tracked */
 var load_count = 0/* number of ipfs hashes loaded by the node */
 var app_key = `e`/* app key */
 var pointer_data = {}
-var beacon_chain_link = ``
+var beacon_chain_link = `https://app.twentythreeinreverse.com`
 var staged_ecids = {}
 var failed_ecids = {'in':[], 'nf':[], 'ni':[], 'ar':[]}
 var file_data_steams = {}
@@ -559,10 +559,10 @@ async function load_hash_data(cids, ecid_ids){
     if(included_cids.length > 35){
       const split_array_cid = splitIntoChunks(included_cids, 35)
       for(var i=0; i<split_array_cid.length; i++){
-        await load_data_from_beacon_node(split_array_cid[i])
+        await load_data_from_beacon_node(split_array_cid[i], 0)
       }
     }else{
-      await load_data_from_beacon_node(included_cids)
+      await load_data_from_beacon_node(included_cids, 0)
     }
   }else{
     for(var i=0; i<ecids.length; i++){
@@ -596,13 +596,13 @@ function splitIntoChunks(arr, chunkSize) {
 }
 
 /* loads data from the beacon chain if a link to the node is specified */
-async function load_data_from_beacon_node(cids){
+async function load_data_from_beacon_node(cids, depth){
   const params = new URLSearchParams({
     arg_string:JSON.stringify({hashes: cids}),
   });
   var request = `${beacon_chain_link}/data/e?${params.toString()}`
   try{
-    await new Promise(resolve => setTimeout(resolve, 1100))
+    await new Promise(resolve => setTimeout(resolve, 8000))
     const response = await fetch(request);
     if (!response.ok) {
       console.log('datas',response)
@@ -623,14 +623,51 @@ async function load_data_from_beacon_node(cids){
   }
   catch(e){
     if(depth < 3){
-      return await load_data_from_beacon_node(cid, depth+1)
+      return await load_data_from_beacon_node(cids, depth+1)
     }
   }
 }
 
 
 
-async function load_events_from_nitro(contract_name, event_id, e5, filter){
+async function load_multiple_events_from_nitro(contract_names, event_ids, e5s, attempt=0){
+  const requests = []
+  contract_names.forEach((contract_name, index) => {
+    const event_id = event_ids[index];
+    const e5 = e5s[index]
+    const event_request = {'requested_e5':e5, 'requested_contract':contract_name, 'requested_event_id':event_id, 'filter':{}}
+    requests.push(event_request)
+  });
+
+  console.log('load_multiple_events_from_nitro', `loading: ${requests.length} requests, attempt no ${attempt}`)
+
+  const params = new URLSearchParams({
+    arg_string:JSON.stringify({requests:requests}),
+  });
+
+  var request = `${beacon_chain_link}/events/e?${params.toString()}`
+  try{
+    await new Promise(resolve => setTimeout(resolve, 1100))
+    const response = await fetch(request);
+    if (!response.ok) {
+      console.log('all_data2',response)
+      throw new Error(`Failed to retrieve data. Status: ${response}`);
+    }
+    var object_data = await response.text();
+    var obj = JSON.parse(object_data);
+    return { 'events': obj['data'], 'height': obj['block_heights'], success: true }
+  }
+  catch(e){
+    if(attempt < 4){
+      await new Promise(resolve => setTimeout(resolve, 6100))
+      return await load_multiple_events_from_nitro(contract_names, event_ids, e5s, attempt+1)
+    }
+    return { 'events': [], 'height': 0, success: false }
+  }
+}
+
+
+async function load_events_from_nitro(contract_name, event_id, e5, filter, attempts=0){
   var event_request = {'requested_e5':e5, 'requested_contract':contract_name, 'requested_event_id':event_id, 'filter':filter}
   const params = new URLSearchParams({
     arg_string:JSON.stringify({requests:[event_request]}),
@@ -649,16 +686,29 @@ async function load_events_from_nitro(contract_name, event_id, e5, filter){
   }
   catch(e){
     // console.log(e)
+    if(attempts < 4){
+      await new Promise(resolve => setTimeout(resolve, 4100))
+      return await load_events_from_nitro(contract_name, event_id, e5, filter, attempts+1)
+    }
     return { 'events': [], 'height': 0 }
   }
 }
 
 /* loads all the events emitted for a specified contract and event type, for a tracked period of time. */
-async function load_past_events(contract, event, e5, web3, contract_name, latest){
+async function load_past_events(contract, event, e5, web3, contract_name, latest, pre_load_data={}, pre_load_data_pos){
   if(beacon_chain_link != '' && data[e5]['current_block'][contract_name+event] == null){
-    var event_data_obj = await load_events_from_nitro(contract_name, event, e5, {})
-    var events = event_data_obj['events']
-    var height = event_data_obj['height']
+    var event_data_obj;
+    var events;
+    var height;
+    if(pre_load_data['success'] == true){
+      event_data_obj = { 'events': pre_load_data['events'][pre_load_data_pos], 'height': pre_load_data['height'][pre_load_data_pos] }
+      events = event_data_obj['events']
+      height = event_data_obj['height']
+    }else{
+      event_data_obj = await load_events_from_nitro(contract_name, event, e5, {})
+      events = event_data_obj['events']
+      height = event_data_obj['height']
+    }
 
     event_data[e5][contract_name][event] = event_data[e5][contract_name][event].concat(events)
     data[e5]['current_block'][contract_name+event] = height
@@ -829,79 +879,109 @@ async function set_up_listeners(e5) {
 
     if(beacon_chain_link != '' && data[e5]['current_block']['E5'+'e1'] == null){
       //E5
-      await load_past_events(e5_contract, 'e1', e5, web3, 'E5', latest)
+      const pre_load_data = await load_multiple_events_from_nitro(
+        [
+          'E5', 'E5', 'E5', 'E5','E5','E5', 'E5',
+          'E52', 'E52', 'E52', 'E52', 'E52',
+          'F5', 'F5', 'F5', 'F5',
+          'G5', 'G5',
+          'G52', 'G52', 'G52', 'G52',
+          'H5', 'H5', 'H5',
+          'H52', 'H52', 'H52', 'H52', 'H52',
+        ], 
+        [
+          'e1', 'e2', 'e3', 'e4', 'e5', 'e6', 'e7',
+          'e1', 'e2', 'e3', 'e4', 'e5',
+          'e1', 'e2', 'e5', 'e4',
+          'e1', 'e2',
+          'e1', 'e2', 'e3', 'archive',
+          'e1', 'e2', 'e3',
+          'e1', 'e2', 'e3', 'e5', 'power',
+        ],
+        [
+          e5, e5, e5, e5, e5, e5, e5,
+          e5, e5, e5, e5, e5,
+          e5, e5, e5, e5,
+          e5, e5,
+          e5, e5, e5, e5,
+          e5, e5, e5,
+          e5, e5, e5, e5, e5,
+        ], 
+        0
+      )
+      await load_past_events(e5_contract, 'e1', e5, web3, 'E5', latest, pre_load_data, 0)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e5_contract, 'e2', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e2', e5, web3, 'E5', latest, pre_load_data, 1)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e5_contract, 'e3', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e3', e5, web3, 'E5', latest, pre_load_data, 2)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e5_contract, 'e4', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e4', e5, web3, 'E5', latest, pre_load_data, 3)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e5_contract, 'e5', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e5', e5, web3, 'E5', latest, pre_load_data, 4)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e5_contract, 'e6', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e6', e5, web3, 'E5', latest, pre_load_data, 5)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e5_contract, 'e7', e5, web3, 'E5', latest)
+      await load_past_events(e5_contract, 'e7', e5, web3, 'E5', latest, pre_load_data, 6)
       await new Promise(resolve => setTimeout(resolve, t))
       
 
       //E52
-      await load_past_events(e52_contract, 'e1', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e1', e5, web3, 'E52', latest, pre_load_data, 7)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e52_contract, 'e2', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e2', e5, web3, 'E52', latest, pre_load_data, 8)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e52_contract, 'e3', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e3', e5, web3, 'E52', latest, pre_load_data, 9)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e52_contract, 'e4', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e4', e5, web3, 'E52', latest, pre_load_data, 10)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(e52_contract, 'e5', e5, web3, 'E52', latest)
+      await load_past_events(e52_contract, 'e5', e5, web3, 'E52', latest, pre_load_data, 11)
       await new Promise(resolve => setTimeout(resolve, t))
       
 
       //F5
-      await load_past_events(f5_contract, 'e1', e5, web3, 'F5', latest)
+      await load_past_events(f5_contract, 'e1', e5, web3, 'F5', latest, pre_load_data, 12)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(f5_contract, 'e2', e5, web3, 'F5', latest)
+      await load_past_events(f5_contract, 'e2', e5, web3, 'F5', latest, pre_load_data, 13)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(f5_contract, 'e5', e5, web3, 'F5', latest)
+      await load_past_events(f5_contract, 'e5', e5, web3, 'F5', latest, pre_load_data, 14)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(f5_contract, 'e4', e5, web3, 'F5', latest)
+      await load_past_events(f5_contract, 'e4', e5, web3, 'F5', latest, pre_load_data, 15)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //G5
-      await load_past_events(g5_contract, 'e1', e5, web3, 'G5', latest)
+      await load_past_events(g5_contract, 'e1', e5, web3, 'G5', latest, pre_load_data, 16)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(g5_contract, 'e2', e5, web3, 'G5', latest)
+      await load_past_events(g5_contract, 'e2', e5, web3, 'G5', latest, pre_load_data, 17)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //G52
-      await load_past_events(g52_contract, 'e1', e5, web3, 'G52', latest)
+      await load_past_events(g52_contract, 'e1', e5, web3, 'G52', latest, pre_load_data, 18)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(g52_contract, 'e2', e5, web3, 'G52', latest)
+      await load_past_events(g52_contract, 'e2', e5, web3, 'G52', latest, pre_load_data, 19)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(g52_contract, 'e3', e5, web3, 'G52', latest)
+      await load_past_events(g52_contract, 'e3', e5, web3, 'G52', latest, pre_load_data, 20)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(g52_contract, 'archive', e5, web3, 'G52', latest)
+      await load_past_events(g52_contract, 'archive', e5, web3, 'G52', latest, pre_load_data, 21)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //H5
-      await load_past_events(h5_contract, 'e1', e5, web3, 'H5', latest)
+      await load_past_events(h5_contract, 'e1', e5, web3, 'H5', latest, pre_load_data, 22)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(h5_contract, 'e2', e5, web3, 'H5', latest)
+      await load_past_events(h5_contract, 'e2', e5, web3, 'H5', latest, pre_load_data, 23)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(h5_contract, 'e3', e5, web3, 'H5', latest)
+      await load_past_events(h5_contract, 'e3', e5, web3, 'H5', latest, pre_load_data, 24)
       await new Promise(resolve => setTimeout(resolve, t))
 
       //H52
-      await load_past_events(h52_contract, 'e1', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'e1', e5, web3, 'H52', latest, pre_load_data, 25)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(h52_contract, 'e2', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'e2', e5, web3, 'H52', latest, pre_load_data, 26)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(h52_contract, 'e3', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'e3', e5, web3, 'H52', latest, pre_load_data, 27)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(h52_contract, 'e5', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'e5', e5, web3, 'H52', latest, pre_load_data, 28)
       await new Promise(resolve => setTimeout(resolve, t))
-      await load_past_events(h52_contract, 'power', e5, web3, 'H52', latest)
+      await load_past_events(h52_contract, 'power', e5, web3, 'H52', latest, pre_load_data, 29)
       await new Promise(resolve => setTimeout(resolve, t))
     }else{
       //E5
@@ -1033,7 +1113,9 @@ async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_co
   all_contract_ids_data_object[2] = main_contract_data[0]
   data['data_indexes'][e5]['created_contract_data'] = all_contract_ids_data_object
 
-  data['data_indexes'][e5]['from_block'] = transaction_events[transaction_events.length -1].returnValues.p9/* block_number */
+  if(transaction_events.length > 0){
+    data['data_indexes'][e5]['from_block'] = transaction_events[transaction_events.length -1].returnValues.p9/* block_number */
+  }
 
   if(data['data_indexes'][e5]['boot_time'] == null){
     const boot_events = await filter_events(e5, 'E5', 'e7'/* record_boot_addresses */, {}, {})
@@ -1201,19 +1283,20 @@ async function fetch_and_write_object_data_in_files(e5, e5_contract, f5_contract
     });
   }
   else{
-    const all_exchange_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 31/* 31(token_exchange) */));
+    const object_types_obj = object_types[e5] || {}
+    const all_exchange_ids = [].concat(Object.keys(object_types_obj).filter(key => object_types_obj[key] == 31/* 31(token_exchange) */));
     const created_token_data = await h5_contract.methods.f86(all_exchange_ids).call((error, result) => {});
     const e_token_ids = fetch_e_tokens_from_data(all_exchange_ids, created_token_data)
 
-    const all_contract_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 30/* 30(contract_obj_id) */));
+    const all_contract_ids = [].concat(Object.keys(object_types_obj).filter(key => object_types_obj[key] == 30/* 30(contract_obj_id) */));
     const created_contract_data = await g5_contract.methods.f78(all_contract_ids, false).call((error, result) => {});
 
 
-    const all_subscription_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 33/* 33(subscription_object) */));
+    const all_subscription_ids = [].concat(Object.keys(object_types_obj).filter(key => object_types_obj[key] == 33/* 33(subscription_object) */));
     const created_subscription_data = await f5_contract.methods.f74(all_subscription_ids).call((error, result) => {});
 
 
-    const all_proposal_ids = [].concat(Object.keys(object_types[e5]).filter(key => object_types[e5][key] == 32/* 32(consensus_request) */));
+    const all_proposal_ids = [].concat(Object.keys(object_types_obj).filter(key => object_types_obj[key] == 32/* 32(consensus_request) */));
     const created_proposal_data = await g5_contract.methods.f78(all_proposal_ids, false).call((error, result) => {});
 
 
@@ -1576,9 +1659,8 @@ async function check_and_set_default_rpc(e5){
   const web3_url = data[e5]['web3'][data[e5]['url']]
   const web3 = new Web3(web3_url);
 
-  // var is_conn = await web3.eth.net.isListening()
   var blockNumber = await web3.eth.getBlockNumber()
-  if(!is_conn || blockNumber == null || blockNumber == 0){
+  if(blockNumber == null || blockNumber == 0){
     if(data[e5]['url'] < data[e5]['web3'].length - 1){
       data[e5]['url'] ++
       await check_and_set_default_rpc(e5)
@@ -2274,9 +2356,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       if(obj['staged_ecids'] != null){
         staged_ecids = obj['staged_ecids']
       }
-      if(obj['beacon_chain_link'] != null){
-        beacon_chain_link = obj['beacon_chain_link']
-      }
+      // if(obj['beacon_chain_link'] != null){
+      //   beacon_chain_link = obj['beacon_chain_link']
+      // }
       if(obj['failed_ecids'] != null){
         failed_ecids = obj['failed_ecids']
       }
@@ -4418,7 +4500,7 @@ async function read_file(cold_storage_file_name, directory){
   var cold_storage_obj = {}
   fs.readFile(`${directory}/${cold_storage_file_name}.json`, (error, data) => {
     if (error) {
-      console.error(error);
+      // console.error(error);
     }else{
       cold_storage_obj = JSON.parse(data.toString())
     }
@@ -6856,7 +6938,7 @@ function process_array_for_indexer_query(arr){
 
 
 
-function handle_node_connection_to_new_node(nodeUrl){
+function handle_node_connection_to_new_node(nodeUrl, nodeSocket){
   console.log('Connected to', nodeUrl)
   node_connection_map[nodeUrl] = nodeSocket
 }
@@ -6926,7 +7008,7 @@ function set_up_indexer_mesh_network(){
         pingTimeout: 20_000,
       });
 
-      nodeSocket.on('connect', () => handle_node_connection_to_new_node(nodeUrl));
+      nodeSocket.on('connect', () => handle_node_connection_to_new_node(nodeUrl, nodeSocket));
       nodeSocket.on('disconnect', () => handle_node_disconnection_from_node(nodeUrl));
       nodeSocket.on('forward_send_message', handle_user_send_message);
       nodeSocket.on('forward_joined_room', handle_user_joined_room_message);
@@ -8264,16 +8346,25 @@ async function start_background_socket_sync(){
   while(starting_time < end_time){
     const filter_end_time = starting_time;
     const filter_start_time = starting_time + step;
-    const sync_data = await load_socket_data_from_beacon_node(filter_end_time, filter_start_time)
+    const { sync_data, trends_data } = await load_socket_data_from_beacon_node(filter_end_time, filter_start_time)
     
-    for(var i=filter_end_time; i<filter_start_time; i += (10*60*1000)){
+    for(var i=filter_end_time; i<filter_start_time; i += (24*60*60*1000)){
       const filtered = Object.fromEntries(
         Object.entries(sync_data).filter(([key]) => {
           const k = Number(key);
-          return k >= i && k <= (i+(10*60*1000));
+          return k >= i && k <= (i+(24*60*60*1000));
         })
       );
-      await stash_sync_socket_data_in_cold_storage(filtered, i+(10*60*1000))
+
+      const filtered_trends = Object.fromEntries(
+        Object.entries(trends_data).filter(([key]) => {
+          const k = Number(key);
+          return k >= i && k <= (i+(24*60*60*1000));
+        })
+      );
+      await stash_sync_socket_data_in_cold_storage(filtered, i+(24*60*60*1000))
+      await stash_trend_socket_data_in_cold_storage(filtered_trends, i+(24*60*60*1000))
+      await new Promise(resolve => setTimeout(resolve, 900))
     }
 
     starting_time += step;
@@ -8288,7 +8379,7 @@ async function start_background_socket_sync(){
   data['is_synching_socket_with_beacon'] = false;
 }
 
-async function load_socket_data_from_beacon_node(filter_end_time, filter_start_time){
+async function load_socket_data_from_beacon_node(filter_end_time, filter_start_time, tries=0){
   const params = new URLSearchParams({
     arg_string:JSON.stringify({filter_end_time, filter_start_time}),
   });
@@ -8300,10 +8391,15 @@ async function load_socket_data_from_beacon_node(filter_end_time, filter_start_t
     }
     const return_data = await response.text();
     const obj = JSON.parse(return_data);
-    return obj['data']
+    // console.log('load_socket_data_from_beacon_node', 'trends data', obj['trends_data'])
+    return { sync_data: obj['data'], trends_data: obj['trends_data'] }
   }
   catch(e){
     log_error(e)
+    if(tries < 4){
+      await new Promise(resolve => setTimeout(resolve, 2900))
+      return await load_socket_data_from_beacon_node(filter_end_time, filter_start_time, tries+1)
+    }
   }
 }
 
@@ -8343,6 +8439,33 @@ async function stash_sync_socket_data_in_cold_storage(sync_socket_data, now){
 
     await rewrite_file('cold_storage_records_file', 'cold_storage_records_folder', records_file)
     await rewrite_file('cold_storage_tag_records_file', 'cold_storage_tag_records_folder', tag_records_file)
+  }
+}
+
+async function stash_trend_socket_data_in_cold_storage(tag_socket_data, now){
+  const keys = Object.keys(tag_socket_data)
+  if(keys.length > 0){
+    console.log('stash_trend_socket_data_in_cold_storage', 'writing keys in cold storage', keys.length)
+    if(Object.keys(tag_socket_data).length > 0){
+      const recording_tags = []
+      Object.keys(tag_socket_data).forEach(timestamp => {
+        Object.keys(tag_socket_data[timestamp]).forEach(item_type => {
+          Object.keys(tag_socket_data[timestamp][item_type]).forEach(item_lan => {
+            Object.keys(tag_socket_data[timestamp][item_type][item_lan]).forEach(tag => {
+              if(!recording_tags.includes(tag)) recording_tags.push(tag);
+            });
+          });
+        });
+      });
+
+      add_tags_entries_to_file(recording_tags, now, 'cold_storage_trends_records')
+    }
+
+    if(Object.keys(tag_socket_data).length > 0){
+      const old_object = await read_file(now, 'trends_stats_history')
+      Object.assign(tag_socket_data, old_object)
+      write_stat_to_cold_storage(tag_socket_data, 'trends_stats_history', 'cold_storage_trends_records', true, now)
+    }
   }
 }
 
@@ -11328,7 +11451,8 @@ app.get(`/${endpoint_info['sync_socket_data']}`, async (req, res) => {
       return;
     }
     const sync_socket_data = await get_sync_socket_data(filter_end_time, filter_start_time);
-    const return_data = { 'data': sync_socket_data, }
+    const trends_data = await get_old_trends_history_data(filter_end_time, filter_start_time, [], '', [], [], [])
+    const return_data = { 'data': sync_socket_data, 'trends_data':trends_data }
     const string_obj = JSON.stringify(return_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/sync_socket_data')
     res.send(string_obj);

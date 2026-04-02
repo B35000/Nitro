@@ -30,6 +30,8 @@ yarn-error.log*
 /object_data
 /socket_data_history
 /cold_storage_records_folder
+/cold_storage_tag_records_folder
+/trends_stats_history
 
 .env
 .testfile.js
