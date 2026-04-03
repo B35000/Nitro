@@ -33,7 +33,7 @@ const path = require('path');
 // const CryptoJS = require("crypto-js");
 const nacl = require("tweetnacl");
 const { Server } = require('socket.io')
-const ClientIO = require('socket.io-client')
+const { io } = require("socket.io-client");
 const { createServer } = require('http');
 const webpush = require('web-push');
 
@@ -189,7 +189,7 @@ const RATE_LIMIT_WINDOW = 24*60*60*1000;/* 24hrs */
 const STREAM_DATA_THRESHOLD = 1024*1024*5.3/* 5.3mbs */
 const rateLimitMap = new Map();
 var upload_view_trends_data = {}
-const userKeysMap = new Map();
+var userKeysMap = new Map();
 const endpoint_info = {}
 let trafficHistory = [];
 const originalFetch = global.fetch;
@@ -2257,9 +2257,7 @@ async function rewrite_entire_trend_file_in_storage(file_name, updated_object){
 
 
 
-
-
-
+//-------------------------------------------------e-------------------------------------------
 
 
 /* stores a back up of all the node's data in a file. */
@@ -2286,6 +2284,7 @@ async function store_back_up_of_data(){
     'user_obligation_records':user_obligation_records,
     'entry_file_pointers':entry_file_pointers,
     'registered_notification_subscriptions':registered_notification_subscriptions,
+    'userKeysMap':Object.fromEntries(userKeysMap),
   }
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -2385,6 +2384,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       }
       if(obj['registered_notification_subscriptions'] != null){
         Object.assign(registered_notification_subscriptions, obj['registered_notification_subscriptions'])
+      }
+      if(obj['userKeysMap'] != null){
+        userKeysMap = new Map(Object.entries(obj['userKeysMap']))
       }
       
       console.log('successfully loaded back-up data')
@@ -4362,7 +4364,8 @@ function clear_rate_limit_info(){
 
 async function record_ram_rom_usage(){
   const rom_usage = await get_maximum_available_disk_space();
-  const network_usage_stats = await get_network_usage_info();
+  const network_usage_stats = {}
+  //await get_network_usage_info();
   const total_streamed_data_traffic = get_total_traffic_stream_info_and_delete_old_data();
   const consumed = rom_usage.total - rom_usage.free
   const memoryUsage = process.memoryUsage();
@@ -6997,9 +7000,9 @@ function set_up_indexer_mesh_network(){
 
   for (const nodeUrl of otherNodes) {
     if(node_connection_map[nodeUrl] == null){
-      const nodeSocket = ClientIO(nodeUrl, { 
+      const nodeSocket = io(nodeUrl, { 
         transports: ['websocket'], 
-        reconnection: true, 
+        reconnection: true,
         reconnectionAttempts: 10,
         reconnectionDelay: 1_000,
         reconnectionDelayMax: 5_000,
@@ -7039,29 +7042,30 @@ function get_object_size_in_kbs(obj) {
 
 
 
+function does_forward_origin_exist(forward_origin){
+  const otherNodes = get_all_nitro_links();
+  return otherNodes.includes(forward_origin)
+}
+
+function logg(message){
+  log_error({stack: message})
+}
 
 function handle_user_send_message({ to, message, forward_id, target, object_hash, secondary_target, forward_origin }) {
-  if(does_forward_id_exist(forward_id) || get_object_size_in_kbs(message) > 24 || !is_message_valid_if_pre_purchase(message)){
+  logg('incoming message from '+forward_origin)
+  if(does_forward_id_exist(forward_id) || get_object_size_in_kbs(message) > 24 || !is_message_valid_if_pre_purchase(message) || !does_forward_origin_exist(forward_origin)){
     return;
   }
   const userId_target = connected_users.get(to);
   if (userId_target) {
-    userId_target.emit('send_message', { from: message.author, message, remote: true, target, object_hash });
+    userId_target.emit('send_message', { from: message.author_address, message, remote: true, target, object_hash });
     if(connected_users_sub_sockets[userId_target.userId] != null){
       const socket_id_keys = Object.keys(connected_users_sub_sockets[userId_target.userId])
       socket_id_keys.forEach(socket_id => {
         if(userId_target.id != socket_id){
-          connected_users_sub_sockets[userId_target.userId][socket_id].emit('send_message', { from: message.author, message, remote: true, target, object_hash });
+          connected_users_sub_sockets[userId_target.userId][socket_id].emit('send_message', { from: message.author_address, message, remote: true, target, object_hash });
         }
       });
-    }
-  }
-  else if(registered_notification_subscriptions[to] != null){
-    const subscription = registered_notification_subscriptions[to];
-    try{
-      webpush.sendNotification(subscription, JSON.stringify(message));
-    }catch(e){
-      log_error(e)
     }
   }
   else {
@@ -7069,6 +7073,15 @@ function handle_user_send_message({ to, message, forward_id, target, object_hash
     Object.entries(node_connection_map).forEach(([url, n]) => {
       if(url != forward_origin) n.emit('forward_send_message', { to, message, forward_id, target, object_hash, secondary_target, forward_origin })
     });
+
+    if(registered_notification_subscriptions[to] != null){
+      const subscription = registered_notification_subscriptions[to];
+      try{
+        webpush.sendNotification(subscription, JSON.stringify(message));
+      }catch(e){
+        log_error(e)
+      }
+    }
   }
 
   record_socket_data_for_target(target, message, object_hash);
@@ -7076,7 +7089,7 @@ function handle_user_send_message({ to, message, forward_id, target, object_hash
 }
 
 function handle_user_joined_room_message({roomId, userId, forward_id, forward_origin}){
-  if(does_forward_id_exist(forward_id)) return;
+  if(does_forward_id_exist(forward_id) || !does_forward_origin_exist(forward_origin)) return;
   if (!rooms[roomId]) {
     rooms[roomId] = [];
   }
@@ -7104,7 +7117,7 @@ function handle_user_joined_room_message({roomId, userId, forward_id, forward_or
 }
 
 function handle_signal_message({from, to, data, isInitiator, forward_id, forward_origin}){
-  if(does_forward_id_exist(forward_id)) return;
+  if(does_forward_id_exist(forward_id) || !does_forward_origin_exist(forward_origin)) return;
   const signalType = data.type || 'unknown';
   const target = connected_users.get(to);
   if(target){
@@ -7123,7 +7136,7 @@ function handle_signal_message({from, to, data, isInitiator, forward_id, forward
 }
 
 function handle_room_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
-  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message)) return;
+  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message) || !does_forward_origin_exist(forward_origin)) return;
   const usersInRoom = rooms[roomId];
   if(usersInRoom.length > 0){
     const existing_userId_target = connected_users.get(usersInRoom[0]);
@@ -7138,7 +7151,7 @@ function handle_room_message({userId, roomId, message, forward_id, target, objec
 }
 
 function handle_user_left_message({userId, roomId, forward_id, forward_origin}){
-  if(does_forward_id_exist(forward_id)) return;
+  if(does_forward_id_exist(forward_id) || !does_forward_origin_exist(forward_origin)) return;
   if(rooms[roomId] != null){
     const index = rooms[roomId].indexOf(userId);
     if (index !== -1) {
@@ -7163,7 +7176,7 @@ function handle_user_left_message({userId, roomId, forward_id, forward_origin}){
 }
 
 function handle_user_joined_chatroom_message({roomId, userId, forward_id, forward_origin}){
-  if(does_forward_id_exist(forward_id)) return;
+  if(does_forward_id_exist(forward_id) || !does_forward_origin_exist(forward_origin)) return;
   if (!rooms[roomId]) {
     rooms[roomId] = [];
   }
@@ -7198,7 +7211,7 @@ function handle_user_joined_chatroom_message({roomId, userId, forward_id, forwar
 }
 
 function handle_chatroom_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
-  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message)) return;
+  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message) || !does_forward_origin_exist(forward_origin)) return;
   const usersInRoom = rooms[roomId];
   if(usersInRoom.length > 0){
     const existing_userId_target = connected_users.get(usersInRoom[0]);
@@ -8465,6 +8478,7 @@ async function stash_trend_socket_data_in_cold_storage(tag_socket_data, now){
       const old_object = await read_file(now, 'trends_stats_history')
       Object.assign(tag_socket_data, old_object)
       write_stat_to_cold_storage(tag_socket_data, 'trends_stats_history', 'cold_storage_trends_records', true, now)
+      await new Promise(resolve => setTimeout(resolve, 2900))
     }
   }
 }
@@ -9568,6 +9582,7 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
   // manual_rewrite()
 
   var obj = {
+    "readme":"if youre reading this, dont worry; this information is supposed to be public.",
     'ipfs_hashes':`${number_with_commas(ipfs_hashes)}`,
     'tracked_E5s':data['e'],//
     'storage_accounts':storage_accounts_length,// 
@@ -9612,6 +9627,7 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     'e25_rpc_urls':data['E25']['web3'],
     'e25_selected_rpc':data['E25']['url'],
     'vapid_public_key':VAPID_PUBLIC_KEY_RESOURCE,
+    'mesh_network_size':Object.keys(node_connection_map).length,
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -11625,7 +11641,7 @@ async function when_server_killed(){
 // Start server
 const server = createServer(app);
 // const server = https.createServer(options, app)
-const io = new Server(server, {
+const server_io = new Server(server, {
   cors: { origin: '*' } ,
   pingInterval: 30_000,
   pingTimeout: 60_000,
@@ -11635,7 +11651,7 @@ const io = new Server(server, {
 
 
 
-io.on('connection', socket => {
+server_io.on('connection', socket => {
   /* 
     you might think that using a Redis adapter here is a good idea but ive elected to keep things like this to maintain a decentralized system. I mean, its all well and good until the adapter itself goes offline for some reason (since its just another server), then the entire system goes offline in the process.
   */
@@ -11693,20 +11709,21 @@ io.on('connection', socket => {
         });
       }
     }
-    else if(registered_notification_subscriptions[to] != null){
-      const subscription = registered_notification_subscriptions[to];
-      try{
-        webpush.sendNotification(subscription, JSON.stringify(message));
-      }catch(e){
-        log_error(e)
-      }
-    }
     else {
       // Forward to other nodes
       const forward_id = makeid(35)
       Object.values(node_connection_map).forEach(nodeSocket => {
         nodeSocket.emit('forward_send_message', { to, message, forward_id: forward_id, target, object_hash, secondary_target, forward_origin: ENDPOINT_URL});
       });
+
+      if(registered_notification_subscriptions[to] != null){
+        const subscription = registered_notification_subscriptions[to];
+        try{
+          webpush.sendNotification(subscription, JSON.stringify(message));
+        }catch(e){
+          log_error(e)
+        }
+      }
     }
     console.log('send_message', 'record_socket_data_for_target')
     record_socket_data_for_target(target, message, object_hash);
@@ -11890,6 +11907,15 @@ io.on('connection', socket => {
       }
     });
   });
+
+
+  socket.on('forward_send_message', handle_user_send_message);
+  socket.on('forward_joined_room', handle_user_joined_room_message);
+  socket.on('forward_signal', handle_signal_message);
+  socket.on('forward_room_message', handle_room_message);
+  socket.on('forward_user_left', handle_user_left_message);
+  socket.on('forward_joined_chatroom', handle_user_joined_chatroom_message);
+  socket.on('forward_chatroom_message', handle_chatroom_message);
 
   
 });
