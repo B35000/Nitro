@@ -5530,7 +5530,21 @@ function check_if_error_log_file_exists(file){
   return log_files.includes(file)
 }
 
-async function process_app_launch_data(event_fetches, target_address, indexing_hash, max_post_bulk_load_count, known_hashes, specific_e5s_targeted, launch_state){
+function get_indexing_hash_data(e5, content_channeling){
+  if(content_channeling.startsWith('0x')){
+    return content_channeling
+  }
+  const provider = data[e5]['url'] == null ? data[e5]['web3'] : data[e5]['web3'][data[e5]['url']]
+  const E5_address = data[e5]['addresses'][0]
+  const web3 = new Web3(provider);
+  
+  if(E5_address =='0xF3895fe95f423A4EBDdD16232274091a320c5284'){
+    return web3.utils.keccak256('en').toString()
+  }
+  return web3.utils.keccak256(content_channeling).toString()
+}
+
+async function process_app_launch_data(event_fetches, target_address, content_channeling, max_post_bulk_load_count, known_hashes, specific_e5s_targeted, launch_state){
   const all_supported_e5s = data['e']
   const all_return_data = {}
   const hashes_to_fetch = []
@@ -5595,6 +5609,8 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
     return_data['main_contracts'] = data['data_indexes'][e5]['created_contract_data'][2]
     return_data['primary_account_transaction_data'] = data['data_indexes'][e5]['primary_account_transaction_data']
 
+    const indexing_hash = get_indexing_hash_data(e5, content_channeling)
+
     for(var t=0; t<event_fetches.length; t++){
       const focused_event_fetch = event_fetches[t]
       const fetch_identifier = focused_event_fetch['identifier'].trim()
@@ -5611,6 +5627,9 @@ async function process_app_launch_data(event_fetches, target_address, indexing_h
           if(e5_account_id == null){
             should_run_filter = false
           }
+        }
+        else if(filter[filter_target] == '%%index_hash%%'){
+          filter[filter_target] = indexing_hash
         }
       });
       const from_filter = event_fetch_data_params['from_filter'] || {}
@@ -9576,6 +9595,7 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     var e5_data_clone = structuredClone(data[e5])
     delete e5_data_clone['block_hashes']
     delete e5_data_clone['reorgs']
+    delete e5_data_clone['web3']
     e5_data[e5] = e5_data_clone
   });
   
@@ -9629,8 +9649,8 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     'target_storage_streaming_multiplier':data['target_storage_streaming_multiplier'],
     'socket_section_synchronization':data['socket_section_synchronization'],
     'is_synching_socket_with_beacon':data['is_synching_socket_with_beacon'],
-    'e25_rpc_urls':data['E25']['web3'],
-    'e25_selected_rpc':data['E25']['url'],
+    // 'e25_rpc_urls':data['E25']['web3'],
+    // 'e25_selected_rpc':data['E25']['url'],
     'vapid_public_key':VAPID_PUBLIC_KEY_RESOURCE,
     'mesh_network_size':Object.keys(node_connection_map).length,
     success:true
