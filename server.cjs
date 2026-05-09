@@ -1080,10 +1080,10 @@ async function load_static_data(e5, e5_contract, f5_contract, g5_contract, h5_co
   if(main_contract_data[0][1][39] != 0 && main_contract_data[0][1][40] != 0){
     const primary_acc = main_contract_data[0][1][39];
     if(data[e5]['addresses'][0] == '0xF3895fe95f423A4EBDdD16232274091a320c5284'){
-      primary_account_transaction_data = await e5_contract.methods.f287([primary_acc], false).call((error, result) => {});
+      primary_account_transaction_data = await e5_contract.methods.f287([primary_acc]).call((error, result) => {});
     }
     else{
-      primary_account_transaction_data = (await e5_contract.methods.f287([primary_acc], false).call((error, result) => {}))[0]
+      primary_account_transaction_data = (await e5_contract.methods.f287([primary_acc]).call((error, result) => {}))[0]
     }
   }
 
@@ -5713,8 +5713,8 @@ async function process_app_launch_data(event_fetches, target_address, content_ch
     all_return_data[e5]['load_traffic_proportion_data'] = load_traffic_proportion_data(all_data[e5], all_concatenated_data, e5)
   }
   const socket_targets = account_exists == false ? ['jobs'] : ['jobs', 'open_signature_request|'
-  +target_address, 'open_signature_response|'+target_address, 'call_invites|'+target_address, 'ether_coin_request|'+target_address, 'pre_purchase_request|'+target_address, 'direct_message|'+target_address, 'tags|'+target_address, 'mempool_notification|'+target_address, 
-  'lock_unlock_wallet|'+target_address]
+  +target_address, 'open_signature_response|'+target_address, 'call_invites|'+target_address, 'ether_coin_request|'+target_address, 'pre_purchase_request|'+target_address, 'direct_message|'+target_address, 'tags|'+target_address, 'mempool_notification|'+target_address,
+  'lock_unlock_wallet|'+target_address, 'my_commented_list|'+target_address]
 
   all_return_data['socket_objects_data'] = await get_socket_data(socket_targets, Date.now() -
   (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*153, Date.now())
