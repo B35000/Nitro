@@ -215,6 +215,7 @@ var recipient_account_transaction_records = {}
 const user_obligation_records = {}
 const entry_file_pointers = {}
 const connected_users_sub_sockets = {}
+const cached_file_data = {}
 
 webpush.setVapidDetails( `mailto:${EMAIL_ADDRESS_RESOURCE}`, VAPID_PUBLIC_KEY_RESOURCE, VAPID_PRIVATE_KEY_RESOURCE );
 const registered_notification_subscriptions = {}
@@ -606,8 +607,15 @@ function splitIntoChunks(arr, chunkSize) {
 
 /* loads data from the beacon chain if a link to the node is specified */
 async function load_data_from_beacon_node(cids, depth){
+  const prepared_cids = []
+  cids.forEach(cid_item => {
+    var split_cid_array = cid_item.split('-');
+    var e5_id = split_cid_array[0]
+    var nitro_cid = split_cid_array[1]
+    prepared_cids.push(nitro_cid)
+  });
   const params = new URLSearchParams({
-    arg_string:JSON.stringify({hashes: cids}),
+    arg_string:JSON.stringify({hashes: prepared_cids}),
   });
   var request = `${beacon_chain_link}/data/e?${params.toString()}`
   try{
@@ -615,13 +623,13 @@ async function load_data_from_beacon_node(cids, depth){
     const response = await fetch(request);
     if (!response.ok) {
       console.log('datas',response)
-      throw new Error(`Failed to retrieve data. Status: ${response}`);
+      throw new Error(`Failed to retrieve data. Status:\n ${response.toString()}`);
     }
     var return_data = await response.text();
     var obj = JSON.parse(return_data);
     var object_data = obj['data']
 
-    cids.forEach(cid => {
+    prepared_cids.forEach(cid => {
       var parsed_data = (object_data[cid])
       if(parsed_data != null){
         update_color_metric(parsed_data)
@@ -631,8 +639,15 @@ async function load_data_from_beacon_node(cids, depth){
     });
   }
   catch(e){
+    log_error(e)
     if(depth < 3){
       return await load_data_from_beacon_node(cids, depth+1)
+    }
+    else{
+      cids.forEach(cid => {
+        const includes = failed_ecids['ni'].find(e => e === cid);
+        if(includes == null) failed_ecids['ni'].push(cid)
+      });
     }
   }
 }
@@ -728,12 +743,14 @@ async function load_past_events(contract, event, e5, web3, contract_name, latest
       var iteration = data[e5]['iteration']
       var events = []
       if(latest - starting_block < iteration){
+        await new Promise(resolve => setTimeout(resolve, 1100))
         events = await contract.getPastEvents(event, { fromBlock: starting_block, toBlock: latest }, (error, events) => {});
       }else{
         var pos = starting_block
         while (pos < latest) {
           var to = pos+iteration < latest ? pos+iteration : latest
           var from = pos
+          await new Promise(resolve => setTimeout(resolve, 1100))
           events = events.concat(await contract.getPastEvents(event, { fromBlock: from, toBlock: to }, (error, events) => {}))
           pos = to+1
         }
@@ -773,12 +790,14 @@ async function load_multiple_past_events(contract, event_names, e5, web3, contra
     var iteration = data[e5]['iteration']
     var events = []
     if(latest - starting_block < iteration){
+      await new Promise(resolve => setTimeout(resolve, 1100))
       events = await contract.getPastEvents('allEvents', { fromBlock: starting_block, toBlock: latest }, (error, events) => {});
     }else{
       var pos = starting_block
       while (pos < latest) {
         var to = pos+iteration < latest ? pos+iteration : latest
         var from = pos
+        await new Promise(resolve => setTimeout(resolve, 1100))
         events = events.concat(await contract.getPastEvents('allEvents', { fromBlock: from, toBlock: to }, (error, events) => {}))
         pos = to+1
       }
@@ -1537,6 +1556,7 @@ async function write_new_general_bucket_identifier_file(object, general_bucket_i
     if (isloading == false) break
     await new Promise(resolve => setTimeout(resolve, 700))
   }
+  cache_read_file(object, `object_data/${file_name}.json`)
 }
 
 async function rewrite_new_general_bucket_identifier_file(updated_object, general_bucket_identifier, data_type, e5){
@@ -1552,6 +1572,10 @@ async function fetch_object_file_by_bucket_identifier(general_bucket_identifier,
   var is_loading_file = true
   var cold_storage_obj = {}
   const file_name = e5+data_type+general_bucket_identifier.toString()
+  const cached_cold_storage_obj = get_cache_file_if_any(`object_data/${file_name}.json`)
+  if(cached_cold_storage_obj != null){
+    return cached_cold_storage_obj
+  }
   fs.readFile(`object_data/${file_name}.json`, (error, data) => {
     if (error) {
       log_error(error)
@@ -1564,7 +1588,7 @@ async function fetch_object_file_by_bucket_identifier(general_bucket_identifier,
     if (is_loading_file == false) break
     await new Promise(resolve => setTimeout(resolve, 700))
   }
-
+  cache_read_file(cold_storage_obj, `object_data/${file_name}.json`)
   return cold_storage_obj
 }
 
@@ -1943,6 +1967,10 @@ function delete_scheduled_entry_if_exists(cid){
 async function fetch_entire_data_file_from_storage(file){
   var is_loading_file = true
   var cold_storage_obj = {}
+  const cached_cold_storage_obj = get_cache_file_if_any(`hash_data/${file}.json`)
+  if(cached_cold_storage_obj != null){
+    return cached_cold_storage_obj
+  }
   fs.readFile(`hash_data/${file}.json`, (error, data) => {
     if (error) {
       console.error(error);
@@ -1955,6 +1983,7 @@ async function fetch_entire_data_file_from_storage(file){
     if (is_loading_file == false) break
     await new Promise(resolve => setTimeout(resolve, 700))
   }
+  cache_read_file(cold_storage_obj, `hash_data/${file}.json`)
   return cold_storage_obj
 }
 
@@ -1977,6 +2006,7 @@ async function replace_data_file_after_edit(data_object, file_name){
     if (is_loading_file == false) break
     await new Promise(resolve => setTimeout(resolve, 700))
   }
+  cache_read_file(data_object, `hash_data/${file_name}.json`)
 }
 
 
@@ -2013,12 +2043,17 @@ async function replace_event_file_after_edit(events_object, file_name){
     if (is_loading_file == false) break
     await new Promise(resolve => setTimeout(resolve, 700))
   }
+  cache_read_file(events_object, `event_data/${file_name}.json`)
 }
 
 /* fetches the data stored in a event storage file */
 async function fetch_entire_event_file_from_storage(file){
   var is_loading_file = true
   var cold_storage_obj = {}
+  const cached_cold_storage_obj = get_cache_file_if_any(`event_data/${file}.json`)
+  if(cached_cold_storage_obj != null){
+    return cached_cold_storage_obj
+  }
   fs.readFile(`event_data/${file}.json`, (error, data) => {
     if (error) {
       console.error(error);
@@ -2031,6 +2066,7 @@ async function fetch_entire_event_file_from_storage(file){
     if (is_loading_file == false) break
     await new Promise(resolve => setTimeout(resolve, 700))
   }
+  cache_read_file(cold_storage_obj, `event_data/${file}.json`)
   return cold_storage_obj
 }
 
@@ -2261,6 +2297,7 @@ async function rewrite_entire_trend_file_in_storage(file_name, updated_object){
     if (is_loading_file == false) break
     await new Promise(resolve => setTimeout(resolve, 700))
   }
+  cache_read_file(updated_object, `trends_stats_history/${file_name}.json`)
 }
 
 
@@ -2368,7 +2405,7 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       //   beacon_chain_link = obj['beacon_chain_link']
       // }
       if(obj['failed_ecids'] != null){
-        failed_ecids = obj['failed_ecids']
+        Object.assign(failed_ecids, obj['failed_ecids'])
       }
       if(obj['file_data_steams'] != null){
         Object.assign(file_data_steams, obj['file_data_steams'])
@@ -2655,12 +2692,21 @@ async function fetch_hashes_from_file_storage_or_memory(hashes){
         var cold_storage_obj = file_name_function_memory[file_name]
         hash_data_objects[hashes[i]] = cold_storage_obj[hashes[i]]
       }else{
+        const cached_cold_storage_obj = get_cache_file_if_any(`hash_data/${file_name}.json`)
+        if(cached_cold_storage_obj != null){
+          hash_data_objects[hashes[i]] = cold_storage_obj[hashes[i]]
+          if(get_object_size_in_mbs(file_name_function_memory) < 100){
+            file_name_function_memory[file_name] = cold_storage_obj
+          }
+          continue;
+        }
         is_loading_file = true
         fs.readFile(`hash_data/${file_name}.json`, (error, data) => {
           if (error) {
             console.error(error);
           }else{
             var cold_storage_obj = JSON.parse(data.toString())
+            cache_read_file(cold_storage_obj, `hash_data/${file_name}.json`)
             hash_data_objects[hashes[i]] = cold_storage_obj[hashes[i]]
             if(get_object_size_in_mbs(file_name_function_memory) < 100){
               file_name_function_memory[file_name] = cold_storage_obj
@@ -3351,6 +3397,16 @@ async function fetch_event_data_for_specific_e5(e5, contract, event_name){
 async function fetch_event_file_from_storage(file, e5, contract, event_name){
   var is_loading_file = true
   var cold_storage_obj = {}
+  const cached_cold_storage_obj = get_cache_file_if_any(`event_data/${file}.json`)
+  if(cached_cold_storage_obj != null){
+    if(cold_storage_obj[e5] != null){
+      if(cold_storage_obj[e5][contract] != null){
+        if(cold_storage_obj[e5][contract][event_name] != null){
+          return cold_storage_obj[e5][contract][event_name] 
+        }
+      }
+    }
+  }
   fs.readFile(`event_data/${file}.json`, (error, data) => {
     if (error) {
       console.error(error);
@@ -3363,6 +3419,7 @@ async function fetch_event_file_from_storage(file, e5, contract, event_name){
     if (is_loading_file == false) break
     await new Promise(resolve => setTimeout(resolve, 700))
   }
+  cache_read_file(cold_storage_obj, `event_data/${file}.json`)
   if(cold_storage_obj[e5] != null){
     if(cold_storage_obj[e5][contract] != null){
       if(cold_storage_obj[e5][contract][event_name] != null){
@@ -3882,16 +3939,28 @@ async function get_data_streams_for_files(files){
       }
       else{
         var cold_storage_file_name = data['cold_storage_stream_data_files'][focused_time_key]
+        const cached_cold_storage_obj = get_cache_file_if_any(`stream_data/${cold_storage_file_name}.json`)
+        if(cached_cold_storage_obj != null){
+          Object.keys(cached_cold_storage_obj).forEach(recorded_times => {
+            file_data_objects[focused_file][recorded_times] = cached_cold_storage_obj[recorded_times][focused_file] || bigInt(0)
+          });
+          if(get_object_size_in_mbs(file_name_function_memory) + get_object_size_in_mbs(cached_cold_storage_obj) < 100){
+            if(file_name_function_memory[focused_time_key] != null){
+              file_name_function_memory[focused_time_key] = cached_cold_storage_obj
+            }
+          }
+          continue;
+        }
         is_loading_file = true
         fs.readFile(`stream_data/${cold_storage_file_name}.json`, (error, data) => {
           if (error) {
             // console.error(error);
           }else{
             var cold_storage_obj = JSON.parse(data.toString())
+            cache_read_file(cold_storage_obj, `stream_data/${cold_storage_file_name}.json`)
             Object.keys(cold_storage_obj).forEach(recorded_times => {
               file_data_objects[focused_file][recorded_times] = cold_storage_obj[recorded_times][focused_file] || bigInt(0)
             });
-
             if(get_object_size_in_mbs(file_name_function_memory) + get_object_size_in_mbs(cold_storage_obj) < 100){
               if(file_name_function_memory[focused_time_key] != null){
                 file_name_function_memory[focused_time_key] = cold_storage_obj
@@ -4509,6 +4578,10 @@ async function get_traffic_stats_history(filter_time){
 async function read_file(cold_storage_file_name, directory){
   var is_loading_file = true
   var cold_storage_obj = {}
+  const cached_cold_storage_obj = get_cache_file_if_any(`${directory}/${cold_storage_file_name}.json`)
+  if(cached_cold_storage_obj != null){
+    return cached_cold_storage_obj
+  }
   fs.readFile(`${directory}/${cold_storage_file_name}.json`, (error, data) => {
     if (error) {
       // console.error(error);
@@ -4521,6 +4594,7 @@ async function read_file(cold_storage_file_name, directory){
     if (is_loading_file == false) break
     await new Promise(resolve => setTimeout(resolve, 500))
   }
+  cache_read_file(cold_storage_obj, `${directory}/${cold_storage_file_name}.json`)
   return cold_storage_obj
 }
 
@@ -5195,6 +5269,9 @@ async function process_request_params(data, ip_address){
         }
       }
       update_registered_user_time(registered_user)
+    }
+    else{
+      return data
     }
     return return_obj
   }
@@ -6979,6 +7056,7 @@ function handle_node_disconnection_from_node(nodeUrl){
   delete node_connection_map[nodeUrl];
 }
 
+//-----------------------------------------------RECORD SOCKET DATA------------------------------------------------
 function record_socket_data_for_target(target, message, object_hash){
   const start_today = (Math.floor(Date.now() / (10*60*1000))) * (10*60*1000)
   if(message['record_view'] == true){
@@ -7313,6 +7391,7 @@ async function rewrite_file(records_file, directory, storage_object){
       log_error(error)
     }
   });
+  cache_read_file(storage_object, file_path)
 }
 
 async function get_socket_data(targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, target_channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time){
@@ -8414,7 +8493,7 @@ async function start_background_socket_sync(){
     const level = starting_time - absolute_starting_time;
     data['socket_section_synchronization'] = (level / total) * 100;
 
-    await new Promise(resolve => setTimeout(resolve, 1800))
+    await new Promise(resolve => setTimeout(resolve, 4800))
   }
 
   data['is_synching_socket_with_beacon'] = false;
@@ -8660,7 +8739,7 @@ async function update_user_obligation_data(){
 
                     let all_verified = true;
                     if(confirm_transfers == true){
-                      if(hard_id == 'buy-sell-token'){
+                      if(hard_id == 'buy-sell-token' || hard_id == 'mint-certificate'){
                         const new_promises_obj = {}
                         Object.keys(promises).forEach(contract => {
                           const transfer = promises[contract]['transfers'][0]
@@ -9439,6 +9518,37 @@ async function filter_provided_entry_files_for_tags_specified(context, files_to_
   });
 
   return selected_cold_storage_entry_file_pointer_files;
+}
+
+function cache_read_file(object_data, file_name){
+  cached_file_data[file_name] = {
+    'data':object_data,
+    'time':Date.now(),
+    'name':file_name,
+  }
+  const MAX_SIZE_MB = 325;
+  let currentSize = get_object_size_in_mbs(cached_file_data);
+  
+  if (currentSize > MAX_SIZE_MB) {
+    const entries = Object.entries(cached_file_data);
+    const sortedEntries = entries.sort((a, b) => a[1].time - b[1].time);
+    
+    for (const [key, value] of sortedEntries) {
+      if (currentSize <= MAX_SIZE_MB) break;
+      
+      if (key === file_name) continue;
+      
+      delete cached_file_data[key];
+      currentSize = get_object_size_in_mbs(cached_file_data);
+    }
+  }
+}
+
+function get_cache_file_if_any(file_name){
+  if(cached_file_data[file_name] != null){
+    cached_file_data[file_name]['time'] = Date.now()
+    return cached_file_data[file_name]['data']
+  }
 }
 
 
@@ -11645,7 +11755,8 @@ const when_server_started = () => {
     set_up_file_watch_times()
     set_up_ssh_login_requests()
     load_events_for_all_e5s()
-  }, (5 * 1000));
+    start_background_socket_sync()
+  }, (10 * 1000));
 }
 
 async function when_server_killed(){
@@ -11993,7 +12104,7 @@ set_up_error_logs_filestream()
 schedule_certificate_renewal()
 set_up_indexer_mesh_network()
 update_coin_transaction_fees()
-start_background_socket_sync()
+
 
 
 
