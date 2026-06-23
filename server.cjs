@@ -1692,13 +1692,24 @@ async function check_and_set_default_rpc(e5){
   const web3_url = data[e5]['web3'][data[e5]['url']]
   const web3 = new Web3(web3_url);
 
-  var blockNumber = await web3.eth.getBlockNumber()
+  var blockNumber = 0
+  try{
+    blockNumber = await web3.eth.getBlockNumber()
+  }
+  catch(e){
+    log_error('check_and_set_default_rpc', e)
+  }
   if(blockNumber == null || blockNumber == 0){
     if(data[e5]['url'] < data[e5]['web3'].length - 1){
       data[e5]['url'] ++
       await check_and_set_default_rpc(e5)
     }else{
-      return;
+      if(data[e5]['url'].length > 1){
+        data[e5]['url'] = 0
+        await check_and_set_default_rpc(e5)
+      }else{
+        return;
+      }
     }
   }else{
     return;
@@ -1709,7 +1720,9 @@ async function check_for_reorgs(e5){
   const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
   const current_block_number = parseInt(await web3.eth.getBlockNumber())
   if(current_block_number == 0) return;
+  await new Promise(resolve => setTimeout(resolve, 2000))
   const current_block = await web3.eth.getBlock(current_block_number);
+  await new Promise(resolve => setTimeout(resolve, 2000))
   const current_block_hash = current_block.hash == null ? '' : current_block.hash.toString()
   const current_block_time = parseInt(current_block.timestamp)
   if(data[e5]['block_hashes'] == null){
@@ -1723,6 +1736,7 @@ async function check_for_reorgs(e5){
     const last_block_pos = data[e5]['block_hashes']['e'].length - 1
     const last_block_number = data[e5]['block_hashes']['e'][last_block_pos]
     const last_block = await web3.eth.getBlock(last_block_number);
+    await new Promise(resolve => setTimeout(resolve, 2000))
     const last_block_hash = last_block.hash == null ? '' : last_block.hash.toString()
 
     if(last_block_hash != '' && data[e5]['block_hashes'][last_block_number] != null && data[e5]['block_hashes'][last_block_number]['hash'] != last_block_hash){
@@ -1735,6 +1749,7 @@ async function check_for_reorgs(e5){
       while(last_matching_block == null && block_being_checked >= 0){
         const focused_block_number = data[e5]['block_hashes']['e'][block_being_checked]
         const block_being_chekced_block = await web3.eth.getBlock(focused_block_number);
+        await new Promise(resolve => setTimeout(resolve, 2000))
         const block_being_chekced_block_hash = block_being_chekced_block.hash == null ? '' : block_being_chekced_block.hash.toString()
         
         if(data[e5]['block_hashes'][focused_block_number]['hash'] != block_being_chekced_block_hash){
@@ -1751,10 +1766,11 @@ async function check_for_reorgs(e5){
       if(last_matching_block == null){
         last_matching_block = data[e5]['first_block']
         const first_block = await web3.eth.getBlock(last_matching_block)
+        await new Promise(resolve => setTimeout(resolve, 2000))
         last_matching_block_time = parseInt(first_block.timestamp)
       }
 
-      if(blocks_to_delete > 53_000) return;
+      // if(blocks_to_delete > 53_000) return;
 
       blocks_to_delete.forEach(invalid_block_number => {
         delete data[e5]['block_hashes'][invalid_block_number]
@@ -1777,6 +1793,41 @@ async function check_for_reorgs(e5){
   }
 }
 
+async function perform_manual_resync(last_matching_block, e5){
+  const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
+  const current_block_number = parseInt(await web3.eth.getBlockNumber())
+  await new Promise(resolve => setTimeout(resolve, 2000))
+  const first_block = await web3.eth.getBlock(last_matching_block)
+  await new Promise(resolve => setTimeout(resolve, 2000))
+  const last_matching_block_time = parseInt(first_block.timestamp)
+
+  const last_block_pos = data[e5]['block_hashes']['e'].length - 1
+  const last_block_number = data[e5]['block_hashes']['e'][last_block_pos]
+  const difference = last_block_number - last_matching_block;
+  if(difference < 1) return false;
+  var block_being_checked = last_block_pos - difference;
+  if(block_being_checked < 1) block_being_checked = 0;
+  const blocks_to_delete = []
+
+  for(var i=last_matching_block+1; i<=last_block_number; i++){
+    blocks_to_delete.push(i)
+  }
+
+  blocks_to_delete.forEach(invalid_block_number => {
+    delete data[e5]['block_hashes'][invalid_block_number]
+  });
+  data[e5]['block_hashes']['e'].splice(block_being_checked + 1);
+  if(data[e5]['current_block'] != null){
+    const keys = Object.keys(data[e5]['current_block'])
+    keys.forEach(key => {
+      data[e5]['current_block'][key] = last_matching_block
+    });
+  }
+  await delete_all_events_after_specific_block(last_matching_block, last_matching_block_time, e5, current_block_number)
+
+  return true;
+}
+
 async function delete_all_events_after_specific_block(block_number, last_matching_block_time, e5, current_block_number){
   log_error({stack: `Reorg detected in ${e5}! Rolling back node by ${current_block_number - block_number} blocks to ${block_number} validated on ${new Date(last_matching_block_time*1000)}.`})
 
@@ -1795,7 +1846,7 @@ async function delete_all_events_after_specific_block(block_number, last_matchin
     }
   }
   const updated_object_data = delete_all_invalid_event_entries(event_data, e5, block_number)
-  await start_delete_event_data_hashes(updated_object_data.deleted_events_object, last_matching_block_time)
+  await start_delete_event_data_hashes(updated_object_data.deleted_events_object, last_matching_block_time, e5)
   
   await remove_existing_updates_after_specific_block(e5, block_number)
   event_data = updated_object_data.events_object
@@ -1828,7 +1879,7 @@ function delete_all_invalid_event_entries(object, e5, block_number){
   return { events_object, deleted_events_object };
 }
 
-async function start_delete_event_data_hashes(deleted_events_object, last_matching_block_time){
+async function start_delete_event_data_hashes(deleted_events_object, last_matching_block_time, e5){
   const contracts = Object.keys(deleted_events_object)
   if(contracts.length > 0){
     for(var c=0; c<contracts.length; c++){
@@ -2694,9 +2745,9 @@ async function fetch_hashes_from_file_storage_or_memory(hashes){
       }else{
         const cached_cold_storage_obj = get_cache_file_if_any(`hash_data/${file_name}.json`)
         if(cached_cold_storage_obj != null){
-          hash_data_objects[hashes[i]] = cold_storage_obj[hashes[i]]
+          hash_data_objects[hashes[i]] = cached_cold_storage_obj[hashes[i]]
           if(get_object_size_in_mbs(file_name_function_memory) < 100){
-            file_name_function_memory[file_name] = cold_storage_obj
+            file_name_function_memory[file_name] = structuredClone(cached_cold_storage_obj)
           }
           continue;
         }
@@ -3946,7 +3997,7 @@ async function get_data_streams_for_files(files){
           });
           if(get_object_size_in_mbs(file_name_function_memory) + get_object_size_in_mbs(cached_cold_storage_obj) < 100){
             if(file_name_function_memory[focused_time_key] != null){
-              file_name_function_memory[focused_time_key] = cached_cold_storage_obj
+              file_name_function_memory[focused_time_key] = structuredClone(cached_cold_storage_obj)
             }
           }
           continue;
@@ -5329,7 +5380,7 @@ global.fetch = async (url, options = {}) => {
 };
 
 function set_endpoint_ids(){
-  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 'user_obligations', 'user_vote_weight', 'save_subscription'];
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 'user_obligations', 'user_vote_weight', 'save_subscription', 'resync'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -9525,22 +9576,7 @@ function cache_read_file(object_data, file_name){
     'data':object_data,
     'time':Date.now(),
     'name':file_name,
-  }
-  const MAX_SIZE_MB = 325;
-  let currentSize = get_object_size_in_mbs(cached_file_data);
-  
-  if (currentSize > MAX_SIZE_MB) {
-    const entries = Object.entries(cached_file_data);
-    const sortedEntries = entries.sort((a, b) => a[1].time - b[1].time);
-    
-    for (const [key, value] of sortedEntries) {
-      if (currentSize <= MAX_SIZE_MB) break;
-      
-      if (key === file_name) continue;
-      
-      delete cached_file_data[key];
-      currentSize = get_object_size_in_mbs(cached_file_data);
-    }
+    'size':get_object_size_in_mbs(object_data)
   }
 }
 
@@ -9551,6 +9587,31 @@ function get_cache_file_if_any(file_name){
   }
 }
 
+function delete_cached_file_data_if_too_large(){
+  const MAX_SIZE_MB = 135;
+  let currentSize = get_object_size_in_mbs(cached_file_data);
+
+  const get_size_of_entries = (sortedEntries) => {
+    var size = 0
+    console.log('cache_read_file', 'checking size...')
+    sortedEntries.forEach(entry_item => {
+      size += entry_item['size']
+    });
+    console.log('cache_read_file', 'size of sortedEntries', size)
+    return size
+  }
+  
+  if(currentSize > MAX_SIZE_MB){
+    const entries = Object.entries(cached_file_data);
+    const sortedEntries = entries.sort((a, b) => a[1].time - b[1].time);
+    console.log('cache_read_file', 'checking sorted entries', sortedEntries.length)
+    for (const [key, value] of sortedEntries) {
+      if (currentSize <= MAX_SIZE_MB) break;      
+      delete cached_file_data[key];
+      currentSize = get_size_of_entries(sortedEntries);
+    }
+  }
+}
 
 
 
@@ -11678,6 +11739,34 @@ app.post(`/${endpoint_info['save_subscription']}/:privacy_signature`, async (req
   }
 });
 
+app.post(`/${endpoint_info['resync']}/:privacy_signature`, async (req, res) => {
+  try{
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const { block, e5, backup_key } = await process_request_body(req.body)
+    if(isNaN(block) || !data['e'].includes(e5)){
+      res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+      return;
+    }
+    if(data['key'] !== backup_key){
+      res.send(JSON.stringify({ message: 'Invalid back-up key', success:false }));
+      return;
+    }
+    const success = await perform_manual_resync(block, e5)
+    
+    var obj = success == true ? { message:`Node reset. Resync will begin shortly.`, success } : { message:`Something went wrong. Perhaps your requested block was invalid?`, success }
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+});
+
 
 
 
@@ -12088,7 +12177,7 @@ setInterval(write_block_number, 11*1000)
 setInterval(stash_old_trends_in_cold_storage, 24*60*60*1000)
 setInterval(trim_block_record_data, 3*24*60*60*1000)
 setInterval(set_up_indexer_mesh_network, 5*60*1000)
-setInterval(stash_old_socket_data_in_cold_storage, 10*60*1000)
+setInterval(stash_old_socket_data_in_cold_storage, 2*60*60*1000)
 setInterval(delete_old_forward_data, 60*60*1000)
 setInterval(delete_old_transaction_id_data, 60*60*1000)
 setInterval(update_coin_transaction_fees, 3*60*60*1000)
@@ -12098,6 +12187,7 @@ setInterval(stash_old_tag_price_data_in_cold_storage, 14*24*60*60*1000)
 setInterval(update_user_obligation_data, 23*60*1000)
 setInterval(set_old_account_obligations_data_in_cold_storage, 20*24*60*60*1000)
 setInterval(set_old_entry_file_pointers_data_in_cold_storage, 20*24*60*60*1000)
+setInterval(delete_cached_file_data_if_too_large, 5*60*1000)
 
 
 set_up_error_logs_filestream()
