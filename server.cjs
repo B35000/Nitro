@@ -1,4 +1,4 @@
-// Copyright (c) 2024 Bry Onyoni
+// Copyright (c) 2024 - Pesent Bry Onyoni
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -63,11 +63,17 @@ const VAPID_PRIVATE_KEY_RESOURCE = process.env.VAPID_PRIVATE_KEY
 var data = {
   'key':'',
   'custom_gateway':'',
-  'e':['E25',],
+  'e':['E25', 'E35'],
   'E25': {
     'addresses':['0xF3895fe95f423A4EBDdD16232274091a320c5284', '0x839C6155383D4a62E31d4d8B5a6c172E6B71979c', '0xD338118A55B5245b9C9F6d5f03BF9d9eA32c5850', '0xec24050b8E3d64c8be3cFE9a40A59060Cb35e57C', '0xFA85d977875092CA69d010d4EFAc5B0E333ce61E', '0x7dcc9570c2e6df2860a518eEE46fA90E13ef6276', '0x0Bb15F960Dbb856f3Eb33DaE6Cc57248a11a4728'],
     'web3':['https://etc.rivet.link','https://etc.etcdesktop.com', 'https://0xrpc.io/etc'], 'url':0,
     'first_block':19151130, 'current_block':{}, 'iteration':400_000, 'reorgs':[]
+  },
+  "E35": {
+    "addresses": [ "0xEBDDD02c5106143B0DfB10513DeEc546F90c2152", "0xc7B317d76A4105e3a44B73dd6897c0EC1021f976", "0x359b6F9692f02Bd9aEdDEd6B842E0f333266800A", "0x2838E5aa33577609CB23FA2aA41e2981576c0Cdd", "0xb42257fDFa3B9b79863D8B5F0156BE50304DbE30", "0xe005d662c2a78baD449b80aEB01BfEe62a63452e", "0x4a5b4083c6AF41ce2d41A8A1225f27ea1798235a" ],
+    'web3':['https://etc.rivet.link','https://etc.etcdesktop.com', 'https://0xrpc.io/etc'],
+    "url": 0,
+    "first_block": 24411397, "current_block": {}, "iteration": 400000,
   },
   // 'file_data_capacity':0,
   'max_buyable_capacity':0,
@@ -189,7 +195,7 @@ var hash_count = 0/* number of ipfs hashes being tracked */
 var load_count = 0/* number of ipfs hashes loaded by the node */
 var app_key = `e`/* app key */
 var pointer_data = {}
-var beacon_chain_link = `https://app.twentythreeinreverse.com`
+var beacon_chain_link = `https://tunnel.twentythreeinreverse.com`
 var staged_ecids = {}
 var failed_ecids = {'in':[], 'nf':[], 'ni':[], 'ar':[]}
 var file_data_steams = {}
@@ -436,10 +442,15 @@ async function fetch_data_from_nitro(cid, depth){
   var nitro_cid = split_cid_array[1]
 
   if(hash_data[nitro_cid] != null || cold_storage_hash_pointers[nitro_cid] != null){
+    console.log('cid already exists...')
     return;
   }
   var nitro_url = get_nitro_link_from_e5_id(e5_id)
-  if(nitro_url == null) return
+  if(nitro_url == null) {
+    console.log('nitro url doesnt exist!', e5_id)
+    return
+  }
+  console.log('loading cid', nitro_cid)
   const params = new URLSearchParams({
     arg_string:JSON.stringify({hashes:[nitro_cid]}),
   });
@@ -455,12 +466,14 @@ async function fetch_data_from_nitro(cid, depth){
     var obj = JSON.parse(response_data);
     var object_data = obj['data']
     var cid_data = object_data[nitro_cid]
+    console.log('loaded cid data', cid_data)
     var parsed_data = attempt_parsing(cid_data)
     update_color_metric(parsed_data)
     hash_data[nitro_cid] = parsed_data
     load_count++
   }
   catch(e){
+    log_error(e)
     if(depth < 3){
       return await fetch_data_from_nitro(cid, depth+1)
     }else{
@@ -551,6 +564,7 @@ function get_ecid_obj(ecid){
 
 /* starts the fetching of data stored in multiple ipfs cid links */
 async function load_hash_data(cids, ecid_ids){
+  // console.log('load_hash_data', 'loading cids:', cids)
   var ecids = []
   var included_cids = []
   for(var i=0; i<cids.length; i++){
@@ -609,9 +623,10 @@ function splitIntoChunks(arr, chunkSize) {
 async function load_data_from_beacon_node(cids, depth){
   const prepared_cids = []
   cids.forEach(cid_item => {
-    var split_cid_array = cid_item.split('-');
+    var ecid_obj = get_ecid_obj(cid_item)
+    var split_cid_array = ecid_obj['cid'].split('-');
     var e5_id = split_cid_array[0]
-    var nitro_cid = split_cid_array[1]
+    var nitro_cid = split_cid_array[1] || ecid_obj['cid']
     prepared_cids.push(nitro_cid)
   });
   const params = new URLSearchParams({
@@ -628,7 +643,7 @@ async function load_data_from_beacon_node(cids, depth){
     var return_data = await response.text();
     var obj = JSON.parse(return_data);
     var object_data = obj['data']
-
+    // console.log('load_data_from_beacon_node','loaded object_data', object_data)
     prepared_cids.forEach(cid => {
       var parsed_data = (object_data[cid])
       if(parsed_data != null){
@@ -636,10 +651,14 @@ async function load_data_from_beacon_node(cids, depth){
         hash_data[cid] = parsed_data
         load_count++
       }
+      else{
+        console.log('load_data_from_beacon_node','cid missing', cid)
+      }
     });
   }
   catch(e){
-    log_error(e)
+    log_error('load_data_from_beacon_node', e)
+    console.log(e)
     if(depth < 3){
       return await load_data_from_beacon_node(cids, depth+1)
     }
@@ -733,6 +752,8 @@ async function load_past_events(contract, event, e5, web3, contract_name, latest
       events = event_data_obj['events']
       height = event_data_obj['height']
     }
+
+    // console.log('load_past_events', e5, contract_name, event, events.length)
 
     event_data[e5][contract_name][event] = event_data[e5][contract_name][event].concat(events)
     data[e5]['current_block'][contract_name+event] = height
@@ -937,6 +958,7 @@ async function set_up_listeners(e5) {
         ], 
         0
       )
+      // console.log('pre_load_data', pre_load_data)
       await load_past_events(e5_contract, 'e1', e5, web3, 'E5', latest, pre_load_data, 0)
       await new Promise(resolve => setTimeout(resolve, t))
       await load_past_events(e5_contract, 'e2', e5, web3, 'E5', latest, pre_load_data, 1)
@@ -1576,11 +1598,11 @@ async function fetch_object_file_by_bucket_identifier(general_bucket_identifier,
   if(cached_cold_storage_obj != null){
     return cached_cold_storage_obj
   }
-  fs.readFile(`object_data/${file_name}.json`, (error, data) => {
+  fs.readFile(`object_data/${file_name}.json`, (error, rdata) => {
     if (error) {
       log_error(error)
     }else{
-      cold_storage_obj = JSON.parse(data.toString())
+      cold_storage_obj = JSON.parse(rdata.toString())
     }
     is_loading_file = false
   });
@@ -2022,11 +2044,11 @@ async function fetch_entire_data_file_from_storage(file){
   if(cached_cold_storage_obj != null){
     return cached_cold_storage_obj
   }
-  fs.readFile(`hash_data/${file}.json`, (error, data) => {
+  fs.readFile(`hash_data/${file}.json`, (error, rdata) => {
     if (error) {
       console.error(error);
     }else{
-      cold_storage_obj = JSON.parse(data.toString())
+      cold_storage_obj = JSON.parse(rdata.toString())
     }
     is_loading_file = false
   });
@@ -2105,11 +2127,11 @@ async function fetch_entire_event_file_from_storage(file){
   if(cached_cold_storage_obj != null){
     return cached_cold_storage_obj
   }
-  fs.readFile(`event_data/${file}.json`, (error, data) => {
+  fs.readFile(`event_data/${file}.json`, (error, rdata) => {
     if (error) {
       console.error(error);
     }else{
-      cold_storage_obj = JSON.parse(data.toString())
+      cold_storage_obj = JSON.parse(rdata.toString())
     }
     is_loading_file = false
   });
@@ -2747,16 +2769,16 @@ async function fetch_hashes_from_file_storage_or_memory(hashes){
         if(cached_cold_storage_obj != null){
           hash_data_objects[hashes[i]] = cached_cold_storage_obj[hashes[i]]
           if(get_object_size_in_mbs(file_name_function_memory) < 100){
-            file_name_function_memory[file_name] = structuredClone(cached_cold_storage_obj)
+            file_name_function_memory[file_name] = (cached_cold_storage_obj)
           }
           continue;
         }
         is_loading_file = true
-        fs.readFile(`hash_data/${file_name}.json`, (error, data) => {
+        fs.readFile(`hash_data/${file_name}.json`, (error, rdata) => {
           if (error) {
             console.error(error);
           }else{
-            var cold_storage_obj = JSON.parse(data.toString())
+            var cold_storage_obj = JSON.parse(rdata.toString())
             cache_read_file(cold_storage_obj, `hash_data/${file_name}.json`)
             hash_data_objects[hashes[i]] = cold_storage_obj[hashes[i]]
             if(get_object_size_in_mbs(file_name_function_memory) < 100){
@@ -3458,11 +3480,11 @@ async function fetch_event_file_from_storage(file, e5, contract, event_name){
       }
     }
   }
-  fs.readFile(`event_data/${file}.json`, (error, data) => {
+  fs.readFile(`event_data/${file}.json`, (error, rdata) => {
     if (error) {
       console.error(error);
     }else{
-      cold_storage_obj = JSON.parse(data.toString())
+      cold_storage_obj = JSON.parse(rdata.toString())
     }
     is_loading_file = false
   });
@@ -3997,17 +4019,17 @@ async function get_data_streams_for_files(files){
           });
           if(get_object_size_in_mbs(file_name_function_memory) + get_object_size_in_mbs(cached_cold_storage_obj) < 100){
             if(file_name_function_memory[focused_time_key] != null){
-              file_name_function_memory[focused_time_key] = structuredClone(cached_cold_storage_obj)
+              file_name_function_memory[focused_time_key] = (cached_cold_storage_obj)
             }
           }
           continue;
         }
         is_loading_file = true
-        fs.readFile(`stream_data/${cold_storage_file_name}.json`, (error, data) => {
+        fs.readFile(`stream_data/${cold_storage_file_name}.json`, (error, rdata) => {
           if (error) {
             // console.error(error);
           }else{
-            var cold_storage_obj = JSON.parse(data.toString())
+            var cold_storage_obj = JSON.parse(rdata.toString())
             cache_read_file(cold_storage_obj, `stream_data/${cold_storage_file_name}.json`)
             Object.keys(cold_storage_obj).forEach(recorded_times => {
               file_data_objects[focused_file][recorded_times] = cold_storage_obj[recorded_times][focused_file] || bigInt(0)
@@ -4633,11 +4655,18 @@ async function read_file(cold_storage_file_name, directory){
   if(cached_cold_storage_obj != null){
     return cached_cold_storage_obj
   }
-  fs.readFile(`${directory}/${cold_storage_file_name}.json`, (error, data) => {
+  fs.readFile(`${directory}/${cold_storage_file_name}.json`, (error, rdata) => {
     if (error) {
       // console.error(error);
     }else{
-      cold_storage_obj = JSON.parse(data.toString())
+      try{
+        cold_storage_obj = JSON.parse(rdata.toString())
+      }catch(e){
+        log_error(e)
+        log_error({stack: 'read file error: data: '+rdata.toString()})
+        log_error({stack: 'read file error: edit file: '+`${directory}/${cold_storage_file_name}.json`})
+      }//cold_storage_records_folder/cold_storage_records_file.json
+      
     }
     is_loading_file = false
   });
@@ -9832,7 +9861,7 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
   record_request('/marco')
-  res.send(string_obj);
+  res.send(obj);
 });//ok
 
 /* register a user endpoint with specified encryption keys */
@@ -10699,10 +10728,10 @@ app.post(`/${endpoint_info['store_data']}/:privacy_signature`, async (req, res) 
     res.send(JSON.stringify({ message: 'You need to speicify some files to store', success:false }));
     return;
   }
-  else if(data['max_buyable_capacity'] == 0){
-    res.send(JSON.stringify({ message: 'Storage on this node is disabeld', success:false }));
-    return;
-  }
+  // else if(data['max_buyable_capacity'] == 0){
+  //   res.send(JSON.stringify({ message: 'Storage on this node is disabeld', success:false }));
+  //   return;
+  // }
   else if(!is_basic_data_upload_size_valid(file_datas)){
     res.send(JSON.stringify({ message: 'One of the data objects has an invalid size', success:false }));
     return;
@@ -11358,7 +11387,7 @@ app.post(`/${endpoint_info['pre_launch_fetch']}/:privacy_signature`, async (req,
     res.send(await encrypt_call_result(string_obj, registered_users_key));
   }catch(e){
     log_error(e)
-    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), stack: e.stack, success:false }));
     return;
   }
 });//ok----
@@ -11845,6 +11874,7 @@ const when_server_started = () => {
     set_up_ssh_login_requests()
     load_events_for_all_e5s()
     start_background_socket_sync()
+    data['key'] = key
   }, (10 * 1000));
 }
 
@@ -11853,7 +11883,7 @@ async function when_server_killed(){
   setTimeout(() => {
     console.log("Cleanup complete. Exiting.");
     process.exit(0);
-  }, 1000);
+  }, 5000);
 }
 
 
