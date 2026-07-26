@@ -3385,7 +3385,7 @@ function get_list_of_server_files_and_auto_backup(){
   files.forEach(filename => {
     var string_date = filename.replaceAll('.txt', '')
     var date_in_mills = Date.parse(string_date)
-    if(Date.now() - date_in_mills > (1000*60*60*24*7) || (backupp != '' && backupp != filename)){
+    if(Date.now() - date_in_mills > (1000*60*60*24*7) /* || (backupp != '' && backupp != filename) */){
       //file is old and should be deleted
       delete_backup_file(filename)
     }else{
@@ -3395,7 +3395,7 @@ function get_list_of_server_files_and_auto_backup(){
   });
 
   var largest = Math.max.apply(Math, int_dates);
-  var most_recent_backup = int_string_date_obj[largest]
+  var most_recent_backup = backupp != '' ? backupp : int_string_date_obj[largest]
   restore_backed_up_data_from_storage(most_recent_backup, '', '', false)
 }
 
@@ -4112,7 +4112,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
 
       transaction_event_object[subscription_e5] = await filter_events(subscription_e5, 'E5', 'e4', {}, null)
 
-      const price_data_snapshots = get_price_data_snapshots(all_modification_events, object)
+      const price_data_snapshots = get_price_data_snapshots(all_modification_events, subscription_object)
       var object_data = []
       var total_payment_data = {}
 
@@ -4155,8 +4155,8 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
             time_steps.push({'start_time':start, 'end_time':end})
         }
         // console.log('income_stream_data_points', 'time_steps', time_steps.length)
-        for(var i=0; i<time_steps.length; i++){
-            const focused_step = time_steps[i]
+        for(var m=0; m<time_steps.length; m++){
+            const focused_step = time_steps[m]
             const valid_user_keys = Object.entries(payment_history).filter(([key, value]) => {
                     var result = value.filter(function (payment_object) {
                         return (
@@ -4175,7 +4175,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
             }
         }
       }catch(e){
-        return { object_data: {}, success:false, reason: e.toString() }
+        return { object_data: {}, success:false, reason: e.stack }
       }
 
       for(var w=0; w<object_data.length; w++){
@@ -4203,8 +4203,8 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
   var total_data_bytes_streamed = bigInt(0)
   const valid_user_stream_data = {}
 
-  for(var j=0; j<file_view_data.length; j++){
-    const stream_user_item = file_view_data[j]
+  for(var t=0; t<file_view_data.length; t++){
+    const stream_user_item = file_view_data[t]
     const stream_data_object = stream_user_item['view_data'].files_stream_count
     const stream_keys = Object.keys(stream_data_object)
     var bytes_stream_count = bigInt(0)
@@ -4223,21 +4223,24 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
 
   const final_payment_info = {}
   const user_stream_data_keys = Object.keys(valid_user_stream_data)
+  console.log('user_stream_data_keys', user_stream_data_keys)
   for(var k=0; k<user_stream_data_keys.length; k++){
     const user_e5_id = user_stream_data_keys[k]
     if(final_payment_info[user_e5_id] == null){
       final_payment_info[user_e5_id] = {}
     }
     const subscription_keys = Object.keys(total_payment_data_for_subscriptions)
-    for(var l=0; l<subscription_keys.length; l++){
-      const subscription_id = subscription_keys[l]
+    // console.log('subscription_object', 'subscription_keys', subscription_keys)
+    for(var s=0; s<subscription_keys.length; s++){
+      const subscription_id = subscription_keys[s]
       const subscription_payment_data = total_payment_data_for_subscriptions[subscription_id]
       const subscription_object = subscription_objects[subscription_id]
+      // console.log('subscription_object', subscription_object, subscription_id)
       const subscription_e5 = subscription_object['e5']
        
       const focused_exchanges = Object.keys(subscription_payment_data)
-      for(var m=0; m<focused_exchanges.length; m++){
-        const exchange_id = focused_exchanges[m]
+      for(var r=0; r<focused_exchanges.length; r++){
+        const exchange_id = focused_exchanges[r]
         const total_collected_amounts = subscription_payment_data[exchange_id]
         if(
           bigInt(total_collected_amounts).equals(bigInt(0)) || 
@@ -4256,8 +4259,8 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
   const user_account_data = {}
   const user_account_addresses = []
   const searched_account_e5_ids = []
-  for(var l=0; l<user_stream_data_keys.length; l++){
-    const user_e5_id = user_stream_data_keys[l]
+  for(var p=0; p<user_stream_data_keys.length; p++){
+    const user_e5_id = user_stream_data_keys[p]
     
     if(user_account_data[user_e5_id] == null){
       const user_e5 = user_e5_id.split(':')[0]
@@ -4278,10 +4281,10 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
     }
   }
 
-  for(var m=0; m<subscription_e5s.length; m++){
-    const e5 = subscription_e5s[m]
+  for(var q=0; q<subscription_e5s.length; q++){
+    const e5 = subscription_e5s[q]
     const web3 = data[e5]['url'] != null ? new Web3(data[e5]['web3'][data[e5]['url']]): new Web3(data[e5]['web3']);
-    const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[user_e5]['addresses'][0]);
+    const e5_contract = new web3.eth.Contract(E5_CONTRACT_ABI, data[e5]['addresses'][0]);
     const account_ids = await e5_contract.methods.f167([],user_account_addresses, 2).call((error, result) => {});
     account_ids.forEach((account, index) => {
       const user_e5_id = searched_account_e5_ids[index]
@@ -11012,7 +11015,7 @@ app.post(`/${endpoint_info['creator_group_payouts']}/:privacy_signature`, async 
       res.send(await encrypt_call_result(string_obj, registered_users_key));
     }
   }catch(e){
-    res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
+    res.send(JSON.stringify({ message: 'Something went wrong', error: e.stack, success:false }));
     return;
   }
 });
