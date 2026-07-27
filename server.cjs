@@ -9283,6 +9283,7 @@ async function fetch_voter_account_weights(static_poll_data, poll_votes){
         contract_e5_id : str(eg 1:1)
       },----------------
       accepted_obligation_types: []-------------
+      custom_account_weights: { 'E35:1002':5 }
 
       ----------------------e----------------------
 
@@ -9439,6 +9440,15 @@ async function fetch_voter_account_weights(static_poll_data, poll_votes){
       if(voter_weight_data[e5][account] > max_voter_weight){
         voter_weight_data[e5][account] = max_voter_weight;
       }
+    });
+  }
+
+  if(static_poll_data.custom_account_weights != null){
+    Object.keys(static_poll_data.custom_account_weights).forEach(e5_account => {
+      const account_e5 = e5_account.split(':')[0]
+      const account = e5_account.split(':')[1]
+      const custom_weight = static_poll_data.custom_account_weights[e5_account]
+      if(voter_weight_data[account_e5] != null && voter_weight_data[account_e5][account] != null) voter_weight_data[account_e5][account] = custom_weight;
     });
   }
 
