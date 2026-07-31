@@ -3313,6 +3313,12 @@ async function store_objects_in_node(file_datas){
     var object_string = file_datas[i]
     var file_name = await generate_hash(object_string)
     hash_data[file_name] = JSON.parse(object_string)
+    try{
+      update_color_metric(JSON.parse(object_string))
+      load_count++
+    }catch(e){
+      log_error(e)
+    }
     file_names.push(file_name)
   }
 
