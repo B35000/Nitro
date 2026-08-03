@@ -4215,7 +4215,7 @@ async function calculate_income_stream_for_multiple_subscriptions(subscription_o
     const stream_keys = Object.keys(stream_data_object)
     var bytes_stream_count = bigInt(0)
     stream_keys.forEach(key => {
-      if(valid_time_list.includes(key)){
+      if(parseInt(key) >= (starting_time * 1000) && parseInt(key) <= end_time){
         total_data_bytes_streamed = bigInt(total_data_bytes_streamed).plus(stream_data_object[key])
         bytes_stream_count = bigInt(bytes_stream_count).plus(stream_data_object[key]) 
       }
