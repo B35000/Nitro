@@ -5418,7 +5418,14 @@ global.fetch = async (url, options = {}) => {
 };
 
 function set_endpoint_ids(){
-  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5', 'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 'account_storage_data', 'store_data', 'streams', 'count_votes', 'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 'user_obligations', 'user_vote_weight', 'save_subscription', 'resync'];
+  const endpoints = ['tags', 'title', 'restore', 'register', 'traffic_stats', 'trends', 'new_e5',
+     'update_provider', 'update_content_gateway', 'delete_e5', 'backup', 'update_iteration', 'boot', 
+     'boot_storage', 'reconfigure_storage', 'store_files', 'reserve_upload', 'upload', 
+     'account_storage_data', 'store_data', 'streams', 'count_votes', 
+     'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 
+     'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 
+     'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 
+     'user_obligations', 'user_vote_weight', 'save_subscription', 'resync', 'events_post'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -7773,6 +7780,7 @@ async function update_coin_transaction_fees(){
   const dogecoin_fees = await get_dogecoin_fees()
   const dash_fees = await get_dash_fees()
   const exchange_rates = await get_exchange_rates()
+  const coin_chart_info = await get_coin_ether_chart_info()
   
   data['fees_object'] = {
     'bitcoin':bitcoin_fees,
@@ -7783,6 +7791,7 @@ async function update_coin_transaction_fees(){
   if(exchange_rates != null){
     data['exchange_rates'] = exchange_rates
   }
+  data['coin_chart_info'] = coin_chart_info
 }
 
 get_bitcoin_fees = async () => {
@@ -7876,6 +7885,37 @@ get_exchange_rates = async () => {
     if(parsed_obj['result'] == 'success'){
       return parsed_obj['conversion_rates']
     }
+  }
+  catch(e){
+    log_error(e)
+  }
+}
+
+get_coin_ether_chart_info = async () => {
+  const currencies = require('./coins.cjs')
+  const chart_data = {}
+  for(var i=0; i<currencies.length; i++){
+    const currency_obj = currencies[i]
+    const chart_info = await get_chart_info(currency_obj['id'])
+    if(chart_info == null) continue;
+    chart_data[currency_obj['symbol'].toUpperCase()] = chart_info
+    await new Promise(r => setTimeout(r, 1200));
+  }
+  return chart_data
+}
+
+get_chart_info = async (id) => {
+  const key = process.env.COINGECKO_API_KEY;
+  if(key == null || key == '') return;
+  const request = `https://api.coingecko.com/api/v3/coins/${id}/market_chart?vs_currency=usd&days=365`
+  const body = { headers: { "x-cg-demo-api-key": key } }
+  try{
+    const response = await fetch(request, body);
+    if (!response.ok) {
+      throw new Error(`${id}: ${response.status}`);
+    }
+    const return_data = await response.json();;
+    return return_data['prices']
   }
   catch(e){
     log_error(e)
@@ -11502,7 +11542,8 @@ app.get(`/${endpoint_info['coin_and_externals_data']}`, async (req, res) => {
   try{
     const return_data = {
       'fees_object': data['fees_object'], 
-      'exchange_rates': data['exchange_rates']
+      'exchange_rates': data['exchange_rates'],
+      'coin_chart_info': data['coin_chart_info']
     }
     const string_obj = JSON.stringify(return_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/coin_and_externals_data')
@@ -11815,6 +11856,51 @@ app.post(`/${endpoint_info['resync']}/:privacy_signature`, async (req, res) => {
   }
 });
 
+app.post(`/${endpoint_info['events_post']}/:privacy_signature`, async (req, res) => {
+  try{
+    const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+    if(!await is_privacy_signature_valid(privacy_signature)){
+      res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+      return;
+    }
+    const limit = data['event_data_request_limit'];
+    const arg_obj = await process_request_body(req.body)
+    const requests = arg_obj.requests
+    const load_limit = (arg_obj.load_limit == null || isNaN(arg_obj.load_limit)) ? 1_000_000_000 : parseInt(arg_obj.load_limit)
+    var p = arg_obj.p
+    var known = arg_obj.known
+    
+    var filtered_events_array = []
+    var block_heights = []
+    if(requests.length > limit){
+      res.send((JSON.stringify({ message: 'request count exceeded limit', success:false })));
+      return;
+    }
+    for(var i=0; i<requests.length; i++){
+      var requested_e5 = requests[i]['requested_e5']
+      var requested_contract = requests[i]['requested_contract']
+      var requested_event_id = requests[i]['requested_event_id']
+      var filter = requests[i]['filter']
+      var from_filter = requests[i]['from_filter']
+
+      var filtered_events = await filter_events(requested_e5, requested_contract, requested_event_id, filter, from_filter)
+      filtered_events_array.push(filtered_events.slice(0, load_limit))
+      var block_id = data[requested_e5]['current_block'][requested_contract+requested_event_id]
+      block_heights.push(block_id)
+    }
+
+    var item_data = p != null ? (p == 'comment' ? await load_comment_data(filtered_events_array, known) : await load_object_data(filtered_events_array, known)) : {}
+    
+    var obj = {'data':filtered_events_array, 'hash_data':item_data, 'block_heights':block_heights, success:true}
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/events_post')
+    return res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+});
 
 
 
@@ -12229,7 +12315,7 @@ setInterval(set_up_indexer_mesh_network, 5*60*1000)
 setInterval(stash_old_socket_data_in_cold_storage, 2*60*60*1000)
 setInterval(delete_old_forward_data, 60*60*1000)
 setInterval(delete_old_transaction_id_data, 60*60*1000)
-setInterval(update_coin_transaction_fees, 3*60*60*1000)
+setInterval(update_coin_transaction_fees, 12*60*60*1000)
 setInterval(update_tag_indexer_price_tracking_info, 12*60*1000)
 setInterval(stash_old_tag_price_data_in_cold_storage, 14*24*60*60*1000)
 // setInterval(stash_old_user_obligations_data_in_cold_storage, 20*24*60*60*1000)
