@@ -7923,6 +7923,126 @@ get_chart_info = async (id) => {
 }
 
 
+function update_chart_info_for_evm_traffic(){
+  const e5s = require('./e5s.cjs')
+  const e5_ids = Object.keys(e5s)
+  for(var i=0; i<e5_ids.length; i++){
+    const focused_e5 = e5_ids[i];
+    load_and_set_e5_ether_block_usage_info(focused_e5, e5s[focused_e5])
+  }
+}
+
+async function load_and_set_e5_ether_block_usage_info(e5, object){
+  const { url, block } = await check_for_available_rpc(object['web3'])
+
+  const web3 = new Web3(url);
+  const symbol = object['token']
+  const current_height = data['ether_usage_chart_info']?.[symbol]?.['height']
+  
+  const last_blocks = [];
+  const count = current_height != null && block - current_height < 10 ? block - current_height : 10
+
+  if(count < 5 || block == 0){/* if no starting block has been specified, or not enough blocks have been mined to justify an update, return */
+    return;
+  }
+
+  var start = parseInt(block)-count;
+  if(block < count){/* if less than n blocks have been mined, start at 0 */
+    start = 0;
+  }
+
+  var total = 0 /* total gas used in the last n blocks */
+  var total_proportion = 0 /* total gas used as a proportion of the gas limit */
+  var total_time = 0 /* total time, used to calculate average time */
+  var total_denom = 0 /* denominator for dividing the totals. */
+  var gas_limit = 0 /* the gas limit for each of the blocks mined. */
+
+  await new Promise(r => setTimeout(r, 1000));
+  for (let i = start; i <= block; i++) {
+    const block_data = await web3.eth.getBlock(i)
+    if(block_data != null){
+      const block_gas_used = parseInt(block_data.gasUsed)
+      gas_limit = parseInt(block_data.gasLimit)
+      const time = parseInt(block_data?.timestamp)
+
+      total += block_gas_used
+      total_proportion += ((block_gas_used * 100) / gas_limit)
+      total_denom ++;
+      total_time += time
+
+      if(i < block) await new Promise(r => setTimeout(r, 1000));
+    }
+  }
+
+  const value = (total / total_denom)
+  const proportion_value = (total_proportion / total_denom)
+  const time = (total_time / total_denom)
+
+  if(data['ether_usage_chart_info'] == null){
+    data['ether_usage_chart_info'] = {}
+  }
+  if(data['ether_usage_chart_info'][symbol] == null){
+    data['ether_usage_chart_info'][symbol] = {
+      'height': 0, 
+      'data': [], 
+      'final_data':[], 
+      'final_data_checkpoint': Math.floor(Date.now()/(6*60*1000))
+    }
+  }
+
+  data['ether_usage_chart_info'][symbol]['data'].push([time, value, proportion_value])
+  data['ether_usage_chart_info'][symbol]['height'] = block
+
+  if(data['ether_usage_chart_info'][symbol]['final_data_checkpoint'] != Math.floor(Date.now()/(6*60*1000))){
+    data['ether_usage_chart_info'][symbol]['final_data_checkpoint'] = Math.floor(Date.now()/(6*60*1000))
+    const temp_obj = {}
+    data['ether_usage_chart_info'][symbol]['data'].forEach(point => {
+      const key = Math.floor(point[0]/(6*60))
+      if(temp_obj[key] == null){
+        temp_obj[key] = {'t':0, 'v':0, 'p':0, 'c':0}
+      }
+      temp_obj[key]['t'] += point[0]
+      temp_obj[key]['v'] += point[1]
+      temp_obj[key]['p'] += point[2]
+      temp_obj[key]['c'] ++;
+    });
+
+    if(data['ether_usage_chart_info'][symbol]['final_data'] == null){
+      data['ether_usage_chart_info'][symbol]['final_data'] = []
+    }
+    
+    Object.keys(temp_obj).forEach(entry => {
+      const final_time = temp_obj[entry]['t'] / temp_obj[entry]['c']
+      const final_value = temp_obj[entry]['v'] / temp_obj[entry]['c']
+      const final_proportion = temp_obj[entry]['p'] / temp_obj[entry]['c']
+      data['ether_usage_chart_info'][symbol]['final_data'].push([final_time, final_value, final_proportion])
+    });
+
+    data['ether_usage_chart_info'][symbol]['data'] = []
+  }
+  
+  data['ether_usage_chart_info'][symbol]['final_data'] = data['ether_usage_chart_info'][symbol]['final_data'].slice().filter((point) => {
+    return point[0] > (Date.now()/1000)-(60*60*24*3.5)
+  })
+}
+
+async function check_for_available_rpc(rpcs){
+  for(var i=0; i<rpcs.length; i++){
+    const web3_url = rpcs[i];
+    const web3 = new Web3(web3_url);
+    try{
+      const blockNumber = await web3.eth.getBlockNumber()
+      if(blockNumber != null && parseInt(blockNumber) > 0){
+        return { url: web3_url, block: parseInt(blockNumber) }
+      }
+    }catch(e){
+      log_error(e)
+    }
+  }
+  return { url: rpc[0], block: 0 }
+}
+
+
 
 
 
@@ -11543,7 +11663,8 @@ app.get(`/${endpoint_info['coin_and_externals_data']}`, async (req, res) => {
     const return_data = {
       'fees_object': data['fees_object'], 
       'exchange_rates': data['exchange_rates'],
-      'coin_chart_info': data['coin_chart_info']
+      'coin_chart_info': data['coin_chart_info'],
+      'ether_usage_chart_info': data['ether_usage_chart_info'],
     }
     const string_obj = JSON.stringify(return_data, (_, v) => typeof v === 'bigint' ? v.toString() : v)
     record_request('/coin_and_externals_data')
@@ -12323,6 +12444,7 @@ setInterval(update_user_obligation_data, 23*60*1000)
 setInterval(set_old_account_obligations_data_in_cold_storage, 20*24*60*60*1000)
 setInterval(set_old_entry_file_pointers_data_in_cold_storage, 20*24*60*60*1000)
 setInterval(delete_cached_file_data_if_too_large, 5*60*1000)
+setInterval(update_chart_info_for_evm_traffic, 35*1000)
 
 
 set_up_error_logs_filestream()
