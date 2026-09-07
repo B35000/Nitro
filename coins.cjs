@@ -110,7 +110,7 @@ const currencies = [
     "name": "Conflux"
   },
   {
-    "id": "core-2",
+    "id": "coredaoorg",
     "symbol": "core",
     "name": "Core"
   },
@@ -190,9 +190,9 @@ const currencies = [
     "name": "Flare"
   },
   {
-    "id": "frax",
+    "id": "frax-share",
     "symbol": "frax",
-    "name": "Legacy Frax Dollar"
+    "name": "Fraxtal"
   },
   {
     "id": "fuse-network-token",
@@ -508,7 +508,27 @@ const currencies = [
     "id": "zksync-staked-eth",
     "symbol": "zketh",
     "name": "ZKsync Staked ETH"
-  }
+  },
+  {
+    "id": "elrond-erd-2",
+    "symbol": "egld",
+    "name": "multiversx"
+  },
+  {
+    "id": "somnia",
+    "symbol": "somi",
+    "name": "Somnia"
+  },
+  {
+    "id": "monad",
+    "symbol": "mon",
+    "name": "Monad"
+  },
+  {
+    "id": "immutable-x",
+    "symbol": "imx",
+    "name": "Immutable"
+  },
 ]
 
 module.exports = currencies;

@@ -410,7 +410,11 @@ const e5s = {
     'E1385':{
         web3:['https://sentry.evm-rpc.injective.network', 'https://injectiveevm-rpc.polkachu.com'],
         token:'INJE',
-    }
+    },
+    'E1405':{
+        web3:['https://somnia-rpc.publicnode.com', 'https://api.infra.mainnet.somnia.network'],
+        token:'SOMI',
+    },
 }
 
 module.exports = e5s;

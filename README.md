@@ -61,4 +61,6 @@ The node can be directly configured and managed via [E5](https://b35000.github.i
 
 ### License
 
-Nitro E5 Content Accelerator Network is released under the terms of the MIT license.
+E5 Content Accelerator Network is released under the terms of the General Public License (GPL). See the LICENSE file for details.
+
+Copyright © 2024 - Present, Bry Onyoni.

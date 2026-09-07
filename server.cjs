@@ -3381,7 +3381,7 @@ function get_all_sorted_objects_mappings(object){
 
 
 /* automatically restore the node to the most recent backup */
-const backupp = ''/* 'Tue May 12 2026 15:07:23 GMT+0000 (Coordinated Universal Time).txt' */
+const backupp = ''/* 'Sat Aug 29 2026 22:26:22 GMT+0000 (Coordinated Universal Time).txt' */
 function get_list_of_server_files_and_auto_backup(){
   var dir = './backup_data/'
   var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
@@ -7775,6 +7775,7 @@ function record_object_tags_if_any(target, message){
 
 
 async function update_coin_transaction_fees(){
+  await new Promise(r => setTimeout(r, 10_000));
   const bitcoin_fees = await get_bitcoin_fees()
   const litecoin_fees = await get_litecoin_fees()
   const dogecoin_fees = await get_dogecoin_fees()
@@ -7923,7 +7924,8 @@ get_chart_info = async (id) => {
 }
 
 
-function update_chart_info_for_evm_traffic(){
+async function update_chart_info_for_evm_traffic(){
+  await new Promise(r => setTimeout(r, 10_000));
   const e5s = require('./e5s.cjs')
   const e5_ids = Object.keys(e5s)
   for(var i=0; i<e5_ids.length; i++){
@@ -8036,7 +8038,7 @@ async function check_for_available_rpc(rpcs){
         return { url: web3_url, block: parseInt(blockNumber) }
       }
     }catch(e){
-      log_error(e)
+      // log_error(e)
     }
   }
   return { url: rpc[0], block: 0 }
@@ -12105,7 +12107,9 @@ const when_server_started = () => {
 }
 
 async function when_server_killed(){
-  await store_back_up_of_data()
+  if(data['e'].includes('E35')){
+    await store_back_up_of_data()
+  }
   setTimeout(() => {
     console.log("Cleanup complete. Exiting.");
     process.exit(0);
