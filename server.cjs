@@ -1,4 +1,4 @@
-// Copyright (c) 2024 - Pesent Bry Onyoni
+// Copyright (c) 2024 - Present, Bry Onyoni
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
 // in the Software without restriction, including without limitation the rights
@@ -63,17 +63,11 @@ const VAPID_PRIVATE_KEY_RESOURCE = process.env.VAPID_PRIVATE_KEY
 var data = {
   'key':'',
   'custom_gateway':'',
-  'e':['E25', 'E35'],
+  'e':['E25'],
   'E25': {
     'addresses':['0xF3895fe95f423A4EBDdD16232274091a320c5284', '0x839C6155383D4a62E31d4d8B5a6c172E6B71979c', '0xD338118A55B5245b9C9F6d5f03BF9d9eA32c5850', '0xec24050b8E3d64c8be3cFE9a40A59060Cb35e57C', '0xFA85d977875092CA69d010d4EFAc5B0E333ce61E', '0x7dcc9570c2e6df2860a518eEE46fA90E13ef6276', '0x0Bb15F960Dbb856f3Eb33DaE6Cc57248a11a4728'],
     'web3':['https://etc.rivet.link','https://etc.etcdesktop.com', 'https://0xrpc.io/etc'], 'url':0,
     'first_block':19151130, 'current_block':{}, 'iteration':400_000, 'reorgs':[]
-  },
-  "E35": {
-    "addresses": [ "0xEBDDD02c5106143B0DfB10513DeEc546F90c2152", "0xc7B317d76A4105e3a44B73dd6897c0EC1021f976", "0x359b6F9692f02Bd9aEdDEd6B842E0f333266800A", "0x2838E5aa33577609CB23FA2aA41e2981576c0Cdd", "0xb42257fDFa3B9b79863D8B5F0156BE50304DbE30", "0xe005d662c2a78baD449b80aEB01BfEe62a63452e", "0x4a5b4083c6AF41ce2d41A8A1225f27ea1798235a" ],
-    'web3':['https://etc.rivet.link','https://etc.etcdesktop.com', 'https://0xrpc.io/etc'],
-    "url": 0,
-    "first_block": 24411397, "current_block": {}, "iteration": 400000,
   },
   // 'file_data_capacity':0,
   'max_buyable_capacity':0,
@@ -2381,6 +2375,7 @@ async function rewrite_entire_trend_file_in_storage(file_name, updated_object){
 
 /* stores a back up of all the node's data in a file. */
 async function store_back_up_of_data(){
+  if(!data['e'].includes('E35')) return;
   var obj = {
     'data':data,
     'event_data':event_data, 
@@ -3381,7 +3376,7 @@ function get_all_sorted_objects_mappings(object){
 
 
 /* automatically restore the node to the most recent backup */
-const backupp = ''/* 'Sat Aug 29 2026 22:26:22 GMT+0000 (Coordinated Universal Time).txt' */
+const backupp = ''/* 'Fri Sep 11 2026 17:06:08 GMT+0000 (Coordinated Universal Time).txt' */
 function get_list_of_server_files_and_auto_backup(){
   var dir = './backup_data/'
   var files = fs.existsSync(dir) ? fs.readdirSync(dir) : []
@@ -6083,6 +6078,10 @@ async function get_objects_metadata(created_object_events_mapping, item_type, ma
 
   if(item_type == 18/* 18(post object) */){
     all_return_data['socket_post_objects_data'] = await get_socket_data(['posts'], Date.now() -
+    (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*53, Date.now())
+  }
+  else if(item_type == 25/* 25(storefront_bag_object) */){
+    all_return_data['socket_post_objects_data'] = await get_socket_data(['bags'], Date.now() -
     (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*53, Date.now())
   }
 
@@ -12107,13 +12106,8 @@ const when_server_started = () => {
 }
 
 async function when_server_killed(){
-  if(data['e'].includes('E35')){
-    await store_back_up_of_data()
-  }
-  setTimeout(() => {
-    console.log("Cleanup complete. Exiting.");
-    process.exit(0);
-  }, 5000);
+  await store_back_up_of_data()
+  process.exit(0);
 }
 
 
