@@ -216,6 +216,7 @@ const user_obligation_records = {}
 const entry_file_pointers = {}
 const connected_users_sub_sockets = {}
 const cached_file_data = {}
+const cached_translations = {}
 
 webpush.setVapidDetails( `mailto:${EMAIL_ADDRESS_RESOURCE}`, VAPID_PUBLIC_KEY_RESOURCE, VAPID_PRIVATE_KEY_RESOURCE );
 const registered_notification_subscriptions = {}
@@ -5420,7 +5421,8 @@ function set_endpoint_ids(){
      'subscription_income_stream_datapoints', 'creator_group_payouts', 'delete_file', 'stream_logs', 
      'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 
      'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 
-     'user_obligations', 'user_vote_weight', 'save_subscription', 'resync', 'events_post'];
+     'user_obligations', 'user_vote_weight', 'save_subscription', 'resync', 'events_post',
+     'bulk_translate'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -8040,7 +8042,7 @@ async function check_for_available_rpc(rpcs){
       // log_error(e)
     }
   }
-  return { url: rpc[0], block: 0 }
+  return { url: rpcs[0], block: 0 }
 }
 
 
@@ -9825,6 +9827,64 @@ function delete_cached_file_data_if_too_large(){
 
 
 
+
+
+async function translateBatch(items, direction) {
+  const res = await fetch("http://127.0.0.1:8000/translate_batch", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ items, direction }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data.translations; // array, same order as input
+}
+
+async function begin_translation_work(payload, direction){
+  const working_payload = []
+  const working_result = []
+  const index_mapping = {}
+  const hashes = []
+  payload.forEach((element, index) => {
+    const hash = hash_my_data(JSON.stringify(element))
+    if(cached_translations[hash] != null){
+      working_result.push(cached_translations[hash]['data'])
+      cached_translations[hash]['time'] = Date.now()
+    }else{
+      index_mapping[working_payload.length] = index
+      working_payload.push(element)
+      working_result.push('e')
+    }
+    hashes.push(hash)
+  });
+  const results = await translateBatch(working_payload, direction);
+  results.forEach((element, index) => {
+    const original_index = index_mapping[index]
+    working_result[original_index] = element
+    const original_element = payload[original_index];
+    const hash = hashes[original_index]
+    cached_translations[hash] = {
+      'data':element,
+      'time': Date.now()
+    }
+  });
+  return working_result;
+}
+
+function clear_old_translated_objects(){
+  const MAX_SIZE_MB = 135;
+  let currentSize = get_object_size_in_mbs(cached_translations);
+  
+  if(currentSize > MAX_SIZE_MB){
+    const entries = Object.entries(cached_translations);
+    const sortedEntries = entries.sort((a, b) => a[1].time - b[1].time);
+    for (const [key, value] of sortedEntries) {
+      if (currentSize <= MAX_SIZE_MB) break;    
+      delete cached_file_data[key];
+      currentSize = get_object_size_in_mbs(cached_translations);
+    }
+  }
+}
 
 
 
@@ -12024,6 +12084,34 @@ app.post(`/${endpoint_info['events_post']}/:privacy_signature`, async (req, res)
   }
 });
 
+app.post(`/${endpoint_info['bulk_translate']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { payload, direction } = await process_request_body(req.body)
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  else if(payload == null || !Array.isArray(payload) || (direction != 'from_en' && direction != 'to_en')){
+    res.send(JSON.stringify({ message: 'Invalid params', success:false }));
+    return;
+  }
+  try{
+    const results = await begin_translation_work(payload, direction)
+    const obj = {
+      message: 'translation performed successfully',
+      data: results,
+      success:true
+    }
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/bulk_translate')
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: e.message, stack: e.stack , success:false}));
+  }
+});
+
 
 
 
@@ -12443,6 +12531,7 @@ setInterval(set_old_account_obligations_data_in_cold_storage, 20*24*60*60*1000)
 setInterval(set_old_entry_file_pointers_data_in_cold_storage, 20*24*60*60*1000)
 setInterval(delete_cached_file_data_if_too_large, 5*60*1000)
 setInterval(update_chart_info_for_evm_traffic, 35*1000)
+setInterval(clear_old_translated_objects, 5*60*1000)
 
 
 set_up_error_logs_filestream()

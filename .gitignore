@@ -32,6 +32,8 @@ yarn-error.log*
 /cold_storage_records_folder
 /cold_storage_tag_records_folder
 /trends_stats_history
+/translate/venv
+/translate/__pycache__
 
 .env
 .testfile.js
