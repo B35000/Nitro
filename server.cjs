@@ -9761,7 +9761,7 @@ async function filter_provided_entry_files_for_tags_specified(context, files_to_
   for(var i=0; i<all_cold_storage_files.length; i++){
     const focused_file = all_cold_storage_files[i]
     const write = async () => {
-      const object = await read_file(focused_file, 'account_obligations_stats_history')
+      const object = await read_file(focused_file, 'entry_file_pointers_history')
       filter_function(object);
       count++
     }
@@ -9841,6 +9841,7 @@ async function translateBatch(items, direction) {
 }
 
 async function begin_translation_work(payload, direction){
+  if(payload.length == 0) return []
   const working_payload = []
   const working_result = []
   const index_mapping = {}
@@ -9870,6 +9871,40 @@ async function begin_translation_work(payload, direction){
   });
   return working_result;
 }
+
+// async function begin_translation_work2(payload){
+//   if(payload.length == 0) return []
+//   const working_payload = []
+//   const working_payload = []
+//   const working_result = []
+//   const index_mapping = {}
+//   const hashes = []
+//   payload.forEach((element, index) => {
+//     const hash = hash_my_data(JSON.stringify(element))
+//     if(cached_translations[hash] != null){
+//       working_result.push(cached_translations[hash]['data'])
+//       cached_translations[hash]['time'] = Date.now()
+//     }else{
+//       index_mapping[working_payload.length] = index
+//       working_payload.push(element)
+//       working_result.push('e')
+//     }
+//     hashes.push(hash)
+//   });
+//   const mini_translate = require('./mini_translate.cjs')
+//   const results = await mini_translate.translateBatchInBrowser(working_payload);
+//   results.forEach((element, index) => {
+//     const original_index = index_mapping[index]
+//     working_result[original_index] = element
+//     const original_element = payload[original_index];
+//     const hash = hashes[original_index]
+//     cached_translations[hash] = {
+//       'data':element,
+//       'time': Date.now()
+//     }
+//   });
+//   return working_result;
+// }
 
 function clear_old_translated_objects(){
   const MAX_SIZE_MB = 135;
@@ -12097,6 +12132,7 @@ app.post(`/${endpoint_info['bulk_translate']}/:privacy_signature`, async (req, r
   }
   try{
     const results = await begin_translation_work(payload, direction)
+    // const results2 = await begin_translation_work2(payload2)
     const obj = {
       message: 'translation performed successfully',
       data: results,
