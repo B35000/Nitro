@@ -9725,7 +9725,7 @@ function set_old_entry_file_pointers_data_in_cold_storage(){
     keys.forEach(key => {
       delete entry_file_pointers[key]
     });
-    if(Object.keys(record_obj).length > 0){
+    if(Object.keys(clone).length > 0){
       write_stat_to_cold_storage(clone, 'entry_file_pointers_history', 'cold_storage_entry_file_pointers_records', true)
     }
   }
