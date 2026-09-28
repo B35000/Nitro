@@ -7959,10 +7959,14 @@ async function load_and_set_e5_ether_block_usage_info(e5, object){
   var total_time = 0 /* total time, used to calculate average time */
   var total_denom = 0 /* denominator for dividing the totals. */
   var gas_limit = 0 /* the gas limit for each of the blocks mined. */
+  var total_gas_price = 0
 
   await new Promise(r => setTimeout(r, 1000));
   for (let i = start; i <= block; i++) {
     const block_data = await web3.eth.getBlock(i)
+    await new Promise(r => setTimeout(r, 1000));
+    const gasPrice = await web3.eth.getGasPrice();
+    
     if(block_data != null){
       const block_gas_used = parseInt(block_data.gasUsed)
       gas_limit = parseInt(block_data.gasLimit)
@@ -7972,6 +7976,9 @@ async function load_and_set_e5_ether_block_usage_info(e5, object){
       total_proportion += ((block_gas_used * 100) / gas_limit)
       total_denom ++;
       total_time += time
+      if(gasPrice != null){
+        total_gas_price += parseInt(gasPrice)
+      }
 
       if(i < block) await new Promise(r => setTimeout(r, 1000));
     }
@@ -7980,6 +7987,7 @@ async function load_and_set_e5_ether_block_usage_info(e5, object){
   const value = (total / total_denom)
   const proportion_value = (total_proportion / total_denom)
   const time = (total_time / total_denom)
+  const gas_price = (total_gas_price / total_denom)
 
   if(data['ether_usage_chart_info'] == null){
     data['ether_usage_chart_info'] = {}
@@ -7993,7 +8001,7 @@ async function load_and_set_e5_ether_block_usage_info(e5, object){
     }
   }
 
-  data['ether_usage_chart_info'][symbol]['data'].push([time, value, proportion_value])
+  data['ether_usage_chart_info'][symbol]['data'].push([time, value, proportion_value, gas_price])
   data['ether_usage_chart_info'][symbol]['height'] = block
 
   if(data['ether_usage_chart_info'][symbol]['final_data_checkpoint'] != Math.floor(Date.now()/(6*60*1000))){
@@ -8002,11 +8010,12 @@ async function load_and_set_e5_ether_block_usage_info(e5, object){
     data['ether_usage_chart_info'][symbol]['data'].forEach(point => {
       const key = Math.floor(point[0]/(6*60))
       if(temp_obj[key] == null){
-        temp_obj[key] = {'t':0, 'v':0, 'p':0, 'c':0}
+        temp_obj[key] = {'t':0, 'v':0, 'p':0, 'c':0, 'g':0}
       }
       temp_obj[key]['t'] += point[0]
       temp_obj[key]['v'] += point[1]
       temp_obj[key]['p'] += point[2]
+      temp_obj[key]['g'] += point[3]
       temp_obj[key]['c'] ++;
     });
 
@@ -8018,7 +8027,8 @@ async function load_and_set_e5_ether_block_usage_info(e5, object){
       const final_time = temp_obj[entry]['t'] / temp_obj[entry]['c']
       const final_value = temp_obj[entry]['v'] / temp_obj[entry]['c']
       const final_proportion = temp_obj[entry]['p'] / temp_obj[entry]['c']
-      data['ether_usage_chart_info'][symbol]['final_data'].push([final_time, final_value, final_proportion])
+      const final_gas_price = temp_obj[entry]['g'] / temp_obj[entry]['c']
+      data['ether_usage_chart_info'][symbol]['final_data'].push([final_time, final_value, final_proportion, final_gas_price])
     });
 
     data['ether_usage_chart_info'][symbol]['data'] = []

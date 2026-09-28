@@ -529,6 +529,12 @@ const currencies = [
     "symbol": "imx",
     "name": "Immutable"
   },
+  {
+    "id": "sophon",
+    "symbol": "soph",
+    "name": "Sophon"
+  },
+  
 ]
 
 module.exports = currencies;
