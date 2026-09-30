@@ -7782,7 +7782,7 @@ async function update_coin_transaction_fees(){
   const dogecoin_fees = await get_dogecoin_fees()
   const dash_fees = await get_dash_fees()
   const exchange_rates = await get_exchange_rates()
-  const coin_chart_info = await get_coin_ether_chart_info()
+  // const coin_chart_info = await get_coin_ether_chart_info()
   
   data['fees_object'] = {
     'bitcoin':bitcoin_fees,
@@ -7793,6 +7793,13 @@ async function update_coin_transaction_fees(){
   if(exchange_rates != null){
     data['exchange_rates'] = exchange_rates
   }
+  // data['coin_chart_info'] = coin_chart_info
+}
+
+async function update_coin_ether_chart_info(){
+  await new Promise(r => setTimeout(r, 10_000));
+  const coin_chart_info = await get_coin_ether_chart_info()
+  if(Object.keys(coin_chart_info).length == 0) return;
   data['coin_chart_info'] = coin_chart_info
 }
 
@@ -12578,6 +12585,7 @@ setInterval(set_old_entry_file_pointers_data_in_cold_storage, 20*24*60*60*1000)
 setInterval(delete_cached_file_data_if_too_large, 5*60*1000)
 setInterval(update_chart_info_for_evm_traffic, 35*1000)
 setInterval(clear_old_translated_objects, 5*60*1000)
+setInterval(update_coin_ether_chart_info, 24*60*60*1000)
 
 
 set_up_error_logs_filestream()
