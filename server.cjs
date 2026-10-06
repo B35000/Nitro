@@ -7160,6 +7160,9 @@ function record_socket_data_for_target(target, message, object_hash){
     record_trend(message['record_type'], message['record_id'], 'en', '0x', 1, {})
     // return;
   }
+  if(message['no_record'] == true){
+    return;
+  }
   if(socket_data[start_today] == null){
     socket_data[start_today] = {}
   }
