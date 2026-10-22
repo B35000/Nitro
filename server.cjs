@@ -5886,9 +5886,22 @@ async function process_app_launch_data(event_fetches, target_address, content_ch
     }
     all_return_data[e5]['load_traffic_proportion_data'] = load_traffic_proportion_data(all_data[e5], all_concatenated_data, e5)
   }
-  const socket_targets = account_exists == false ? ['jobs'] : ['jobs', 'open_signature_request|'
-  +target_address, 'open_signature_response|'+target_address, 'call_invites|'+target_address, 'ether_coin_request|'+target_address, 'pre_purchase_request|'+target_address, 'direct_message|'+target_address, 'tags|'+target_address, 'mempool_notification|'+target_address,
-  'lock_unlock_wallet|'+target_address, 'my_commented_list|'+target_address]
+  const socket_targets = account_exists == false ? ['jobs'] : 
+  [
+    'jobs', 
+    'open_signature_request|'+target_address, 
+    'open_signature_response|'+target_address, 
+    'call_invites|'+target_address, 
+    'ether_coin_request|'+target_address, 
+    'pre_purchase_request|'+target_address, 
+    'direct_message|'+target_address, 
+    'tags|'+target_address, 
+    'mempool_notification|'+target_address,
+    'lock_unlock_wallet|'+target_address, 
+    'my_commented_list|'+target_address,
+    'job_application|'+target_address,
+    'bag_application|'+target_address,
+  ]
 
   all_return_data['socket_objects_data'] = await get_socket_data(socket_targets, Date.now() -
   (52*7*24*60*60*1000), [], [], [], [], '', '', '', '', 1024*153, Date.now())
@@ -7494,7 +7507,7 @@ async function rewrite_file(records_file, directory, storage_object){
   cache_read_file(storage_object, file_path)
 }
 
-async function get_socket_data(targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, target_channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time){
+async function get_socket_data(targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, target_channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time, filter_type=''){
   const return_data = {}
   const time_keys = Object.keys(socket_data)
   const filter_object_function = (target_object) => {
@@ -7521,6 +7534,12 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
       console.log('filtering by state...')
       filter_object_return_obj = Object.fromEntries(
         Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['state'] == target_state)
+      );
+    }
+    if(filter_type != ''){
+      console.log('filtering by type...')
+      filter_object_return_obj = Object.fromEntries(
+        Object.entries(filter_object_return_obj).filter(([key, value]) =>  value['type'] == filter_type)
       );
     }
     if(filter_authors.length > 0){
@@ -7561,9 +7580,16 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
   time_keys.forEach(socket_data_time_key => {
     if(parseInt(socket_data_time_key) >= filter_end_time && parseInt(socket_data_time_key) <= parseInt(filter_start_time)){
       return_data[socket_data_time_key] = {}
-      targets.forEach(target => {
+      const active_targets = Object.keys(object[socket_data_time_key]).filter((t_item) => {
+        return targets.includes(t_item) || targets.length == 0
+      })
+      active_targets.forEach(target => {
         if(socket_data[socket_data_time_key][target] != null){
           return_data[socket_data_time_key][target] = filter_object_function(socket_data[socket_data_time_key][target])
+
+          if(Object.keys(return_data[socket_data_time_key][target]).length == 0){
+            delete return_data[socket_data_time_key][target]
+          }
         }
       });
       if(Object.keys(return_data[socket_data_time_key]).length == 0){
@@ -7581,7 +7607,7 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
     return (
       parseInt(time) >= parseInt(filter_end_time) && 
       parseInt(time) <= parseInt(filter_start_time) && 
-      ((records_file[time] != null && filter_fun(records_file[time], targets)) || time < 1762433953000)
+      ((records_file[time] != null && filter_fun(records_file[time], targets)) || time < 1762433953000 || targets.length == 0)
     )
   }).reverse();
 
@@ -7614,9 +7640,16 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
       time_keys.forEach(socket_data_time_key => {
         if(parseInt(socket_data_time_key) > filter_end_time){
           return_data[socket_data_time_key] = {}
-          targets.forEach(target => {
+          const active_targets = Object.keys(object[socket_data_time_key]).filter((t_item) => {
+            return targets.includes(t_item) || targets.length == 0
+          })
+          active_targets.forEach(target => {
             if(object[socket_data_time_key][target] != null){
               return_data[socket_data_time_key][target] = filter_object_function(object[socket_data_time_key][target])
+
+              if(Object.keys(return_data[socket_data_time_key][target]).length == 0){
+                delete return_data[socket_data_time_key][target]
+              }
             }
           });
           if(Object.keys(return_data[socket_data_time_key]).length == 0){
@@ -11722,14 +11755,14 @@ app.get(`/${endpoint_info['socket_data_fetch']}/:privacy_signature`, async (req,
   }
 
   const arg_string = await decrypt_secure_data(req.query.arg_string, registered_users_key)
-  const { targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time } = JSON.parse(arg_string)
+  const { targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time, filter_type } = JSON.parse(arg_string)
 
   if(targets == null || !Array.isArray(targets) || isNaN(filter_end_time) || !Array.isArray(filter_tags) || !Array.isArray(filter_authors) || !Array.isArray(filter_recipients) || !Array.isArray(all_tags_present) || channeling == null || target_e5 == null || target_lan == null || target_state == null || isNaN(size_limit_in_kbs) || isNaN(filter_start_time) || filter_end_time > filter_start_time){
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
     return;
   }
   else{
-    const target_data = await get_socket_data(targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time);
+    const target_data = await get_socket_data(targets, filter_end_time, filter_tags, filter_authors, filter_recipients, all_tags_present, channeling, target_e5, target_lan, target_state, size_limit_in_kbs, filter_start_time, filter_type);
     record_request('/socket_data_fetch')
     res.send(
       await encrypt_call_result(
