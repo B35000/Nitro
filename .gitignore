@@ -34,11 +34,15 @@ yarn-error.log*
 /trends_stats_history
 /translate/venv
 /translate/__pycache__
+/site
+/sites
+/current
 
 .env
 .testfile.js
 .testfile2.js
 stuff.cjs
 stuff2.cjs
+stuff3.cjs
 calls.cjs
 .gitignore

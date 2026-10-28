@@ -28,7 +28,7 @@ const os = require("os");
 const checkDiskSpace = require("check-disk-space").default;
 const mime = require("mime-types");
 const { Worker } = require('worker_threads');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const path = require('path');
 // const CryptoJS = require("crypto-js");
 const nacl = require("tweetnacl");
@@ -36,6 +36,8 @@ const { Server } = require('socket.io')
 const { io } = require("socket.io-client");
 const { createServer } = require('http');
 const webpush = require('web-push');
+const { promisify } = require('util');
+const run = promisify(execFile);
 
 const app = express();
 app.use(cors());
@@ -57,6 +59,12 @@ var server_keys = null;
 const EMAIL_ADDRESS_RESOURCE = process.env.EMAIL_ADDRESS
 const VAPID_PUBLIC_KEY_RESOURCE = process.env.VAPID_PUBLIC_KEY
 const VAPID_PRIVATE_KEY_RESOURCE = process.env.VAPID_PRIVATE_KEY
+
+
+const IPNS_NAME = 'k51qzi5uqu5dgd6iv8smkk1dut6hkwu7xnawli5r7o8n0c3z1ucv2ux9bljmsm';
+const BASE = path.join(__dirname, 'sites');          // holds one folder per CID
+const CURRENT = path.join(__dirname, 'current');     // symlink -> sites/<cid>
+const CHECK_EVERY = 5 * 60 * 1000; 
 
 
 /* data object containing all the E5 data. */
@@ -7580,9 +7588,11 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
   time_keys.forEach(socket_data_time_key => {
     if(parseInt(socket_data_time_key) >= filter_end_time && parseInt(socket_data_time_key) <= parseInt(filter_start_time)){
       return_data[socket_data_time_key] = {}
-      const active_targets = Object.keys(object[socket_data_time_key]).filter((t_item) => {
-        return targets.includes(t_item) || targets.length == 0
-      })
+      // const active_targets = Object.keys(socket_data[socket_data_time_key]).filter((t_item) => {
+      //   return targets.includes(t_item) || targets.length == 0
+      // })
+      // const active_targets = targets.length == 0 ? Object.keys(socket_data[socket_data_time_key]) : targets;
+      const active_targets = targets;
       active_targets.forEach(target => {
         if(socket_data[socket_data_time_key][target] != null){
           return_data[socket_data_time_key][target] = filter_object_function(socket_data[socket_data_time_key][target])
@@ -7607,7 +7617,7 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
     return (
       parseInt(time) >= parseInt(filter_end_time) && 
       parseInt(time) <= parseInt(filter_start_time) && 
-      ((records_file[time] != null && filter_fun(records_file[time], targets)) || time < 1762433953000 || targets.length == 0)
+      ((records_file[time] != null && filter_fun(records_file[time], targets)) || time < 1762433953000)
     )
   }).reverse();
 
@@ -7640,9 +7650,11 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
       time_keys.forEach(socket_data_time_key => {
         if(parseInt(socket_data_time_key) > filter_end_time){
           return_data[socket_data_time_key] = {}
-          const active_targets = Object.keys(object[socket_data_time_key]).filter((t_item) => {
-            return targets.includes(t_item) || targets.length == 0
-          })
+          // const active_targets = Object.keys(object[socket_data_time_key]).filter((t_item) => {
+          //   return targets.includes(t_item) || targets.length == 0
+          // })
+          // const active_targets = targets.length == 0 ? Object.keys(object[socket_data_time_key]) : targets;
+          const active_targets = targets;
           active_targets.forEach(target => {
             if(object[socket_data_time_key][target] != null){
               return_data[socket_data_time_key][target] = filter_object_function(object[socket_data_time_key][target])
@@ -9982,6 +9994,49 @@ function clear_old_translated_objects(){
 
 
 
+async function refresh_loading_twentythreeinreverse() {
+  try {
+    // 1. Resolve IPNS -> CID (--nocache avoids stale local results)
+    const { stdout } = await run('ipfs', ['name', 'resolve', '--nocache', `/ipns/${IPNS_NAME}`], { timeout: 60000 });
+    const cid = stdout.trim().replace('/ipfs/', '');
+
+    if (cid === data['currentCid']) return; // nothing new
+
+    // 2. Download the new build into its own folder
+    const dest = path.join(BASE, cid);
+    if (!fs.existsSync(dest)) {
+      fs.mkdirSync(BASE, { recursive: true });
+      await run('ipfs', ['get', cid, '-o', dest], { timeout: 5 * 60 * 1000 });
+    }
+
+    // 3. Atomically repoint the "current" symlink
+    const tmpLink = CURRENT + '.tmp';
+    try { fs.unlinkSync(tmpLink); } catch {}
+    fs.symlinkSync(dest, tmpLink);
+    fs.renameSync(tmpLink, CURRENT);
+
+    console.log(`Now serving ${cid} (was ${data['currentCid']})`);
+    data['currentCid'] = cid;
+
+    // 4. Optional: delete old versions, keep the last couple
+    const dirs = fs.readdirSync(BASE)
+      .map(d => ({ d, t: fs.statSync(path.join(BASE, d)).mtimeMs }))
+      .sort((a, b) => b.t - a.t)
+      .slice(2);
+    for (const { d } of dirs) fs.rmSync(path.join(BASE, d), { recursive: true, force: true });
+  } catch (err) {
+    console.error('Refresh failed, still serving previous version:', err.message);
+  }
+}
+
+
+
+
+
+
+
+
+
 
 
 
@@ -12215,6 +12270,15 @@ app.get('/:privacy_signature', async (req, res) => {
   }
 });
 
+app.get('/', (req, res) => {
+  if(data['currentCid'] == null) return res.json({'message': 'e unavailable here.'})
+  res.set('Cache-Control', 'no-cache');
+  res.sendFile(path.join(CURRENT, 'index.html'));
+});
+
+// Everything else (index.html etc.) must always revalidate so updates show up
+app.use(express.static(CURRENT, { maxAge: 0, setHeaders: res => res.set('Cache-Control', 'no-cache') }));
+
 app.use((req, res, next) => {
   let bytesSent = 0;
   let bytesReceived = 0;
@@ -12278,6 +12342,7 @@ const when_server_started = () => {
     set_up_ssh_login_requests()
     load_events_for_all_e5s()
     start_background_socket_sync()
+    refresh_loading_twentythreeinreverse(); 
     data['key'] = key
   }, (10 * 1000));
 }
@@ -12622,6 +12687,7 @@ setInterval(delete_cached_file_data_if_too_large, 5*60*1000)
 setInterval(update_chart_info_for_evm_traffic, 35*1000)
 setInterval(clear_old_translated_objects, 5*60*1000)
 setInterval(update_coin_ether_chart_info, 24*60*60*1000)
+setInterval(refresh_loading_twentythreeinreverse, 7*60*1000);
 
 
 set_up_error_logs_filestream()
