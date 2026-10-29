@@ -63,7 +63,7 @@ const VAPID_PRIVATE_KEY_RESOURCE = process.env.VAPID_PRIVATE_KEY
 const ORIGIN = 'https://page.twentythreeinreverse.com';
 const CACHE_ROOT = path.join(__dirname, 'site-cache');
 const POINTER_FILE = path.join(CACHE_ROOT, 'current.json');
-const POLL_MS = 6 * 60 * 1000;
+const POLL_MS = 12 * 60 * 60 * 1000;
 
 
 
