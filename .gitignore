@@ -37,6 +37,7 @@ yarn-error.log*
 /site
 /sites
 /current
+/site-cache
 
 .env
 .testfile.js
@@ -44,5 +45,6 @@ yarn-error.log*
 stuff.cjs
 stuff2.cjs
 stuff3.cjs
+stuff4.cjs
 calls.cjs
 .gitignore

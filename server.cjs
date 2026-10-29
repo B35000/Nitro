@@ -28,7 +28,7 @@ const os = require("os");
 const checkDiskSpace = require("check-disk-space").default;
 const mime = require("mime-types");
 const { Worker } = require('worker_threads');
-const { exec, execFile } = require('child_process');
+const { exec } = require('child_process');
 const path = require('path');
 // const CryptoJS = require("crypto-js");
 const nacl = require("tweetnacl");
@@ -36,8 +36,8 @@ const { Server } = require('socket.io')
 const { io } = require("socket.io-client");
 const { createServer } = require('http');
 const webpush = require('web-push');
-const { promisify } = require('util');
-const run = promisify(execFile);
+const fs_promises = require('fs/promises');
+
 
 const app = express();
 app.use(cors());
@@ -60,11 +60,14 @@ const EMAIL_ADDRESS_RESOURCE = process.env.EMAIL_ADDRESS
 const VAPID_PUBLIC_KEY_RESOURCE = process.env.VAPID_PUBLIC_KEY
 const VAPID_PRIVATE_KEY_RESOURCE = process.env.VAPID_PRIVATE_KEY
 
+const ORIGIN = 'https://page.twentythreeinreverse.com';
+const CACHE_ROOT = path.join(__dirname, 'site-cache');
+const POINTER_FILE = path.join(CACHE_ROOT, 'current.json');
+const POLL_MS = 6 * 60 * 1000;
 
-const IPNS_NAME = 'k51qzi5uqu5dgd6iv8smkk1dut6hkwu7xnawli5r7o8n0c3z1ucv2ux9bljmsm';
-const BASE = path.join(__dirname, 'sites');          // holds one folder per CID
-const CURRENT = path.join(__dirname, 'current');     // symlink -> sites/<cid>
-const CHECK_EVERY = 5 * 60 * 1000; 
+
+
+
 
 
 /* data object containing all the E5 data. */
@@ -229,6 +232,10 @@ const cached_translations = {}
 webpush.setVapidDetails( `mailto:${EMAIL_ADDRESS_RESOURCE}`, VAPID_PUBLIC_KEY_RESOURCE, VAPID_PRIVATE_KEY_RESOURCE );
 const registered_notification_subscriptions = {}
 
+let current = { dir: null, version: null };
+let staticHandler = (req, res, next) => next();
+let syncing = false;
+const inflight = new Map();
 
 
 
@@ -2408,6 +2415,7 @@ async function store_back_up_of_data(){
     'entry_file_pointers':entry_file_pointers,
     'registered_notification_subscriptions':registered_notification_subscriptions,
     'userKeysMap':Object.fromEntries(userKeysMap),
+    'current':current,
   }
   const write_data = (JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v));
   var success = true
@@ -2510,6 +2518,9 @@ async function restore_backed_up_data_from_storage(file_name, key, backup_key, s
       }
       if(obj['userKeysMap'] != null){
         userKeysMap = new Map(Object.entries(obj['userKeysMap']))
+      }
+      if(obj['current'] != null){
+        current = obj['current']
       }
       
       console.log('successfully loaded back-up data')
@@ -9993,41 +10004,151 @@ function clear_old_translated_objects(){
 
 
 
+const noCache = (res, filePath) => {
+  if (filePath.endsWith('index.html') || filePath.endsWith('asset-manifest.json')) {
+    res.setHeader('Cache-Control', 'no-store');
+  } 
+  else if (filePath.includes(`${path.sep}static${path.sep}`)) {
+    // CRA filenames are content-hashed, safe to cache hard
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  }
+};
 
-async function refresh_loading_twentythreeinreverse() {
+function useDir(dir) {
+  staticHandler = express.static(dir, { index: 'index.html', setHeaders: noCache });
+}
+
+async function fetchOrigin(p, { optional = false } = {}) {
+  const url = `${ORIGIN}${p}${p.includes('?') ? '&' : '?'}_=${Date.now()}`;
+  const res = await fetch(url, {
+    cache: 'no-store',
+    signal: AbortSignal.timeout(360_000),
+  });
+
+  const isHtmlFile = /\.html?$/i.test(p);
+  const looksLikeSpaFallback =
+    !isHtmlFile && (res.headers.get('content-type') || '').includes('text/html');
+
+  if (!res.ok || looksLikeSpaFallback) {
+    if (optional) return null;
+    throw new Error(`${res.status} fetching ${p}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+function extractVersion(html) {
+  const m = html.match(/<meta[^>]+name=["']version["'][^>]*content=["']([^"']*)["']/i)
+         || html.match(/<meta[^>]+content=["']([^"']*)["'][^>]*name=["']version["']/i);
+  // fall back to a content hash if the meta tag is ever missing
+  return m ? m[1] : crypto.createHash('sha1').update(html).digest('hex');
+}
+
+async function writeFileDeep(root, relPath, buf) {
+  const full = path.join(root, relPath);
+  if (!full.startsWith(root)) return; // path traversal guard
+  await fs_promises.mkdir(path.dirname(full), { recursive: true });
+  await fs_promises.writeFile(full, buf);
+}
+
+async function syncSite() {
+  if (syncing) return;
+  syncing = true;
   try {
-    // 1. Resolve IPNS -> CID (--nocache avoids stale local results)
-    const { stdout } = await run('ipfs', ['name', 'resolve', '--nocache', `/ipns/${IPNS_NAME}`], { timeout: 60000 });
-    const cid = stdout.trim().replace('/ipfs/', '');
+    const indexBuf = await fetchOrigin('/index.html');
+    const html = indexBuf.toString('utf8');
+    const version = extractVersion(html);
 
-    if (cid === data['currentCid']) return; // nothing new
+    if (version === current.version) return; // nothing new
 
-    // 2. Download the new build into its own folder
-    const dest = path.join(BASE, cid);
-    if (!fs.existsSync(dest)) {
-      fs.mkdirSync(BASE, { recursive: true });
-      await run('ipfs', ['get', cid, '-o', dest], { timeout: 5 * 60 * 1000 });
+    console.log(`New version detected: ${current.version} -> ${version}`);
+
+    
+    let toDownload;
+    const full = await fetchOrigin('/file-manifest.json', { optional: true });
+    if (full) {
+      toDownload = JSON.parse(full.toString('utf8')).files;
+    } else {
+      const manifest = JSON.parse((await fetchOrigin('/asset-manifest.json')).toString('utf8'));
+      toDownload = Object.values(manifest.files || {})
+        .filter((f) => f && !f.endsWith('.map'))
+        .map((f) => (f.startsWith('/') ? f : `/${f}`));
+    }
+    toDownload = toDownload.filter((f) => f !== '/index.html');
+
+    const safeName = String(version).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const tmpDir = path.join(CACHE_ROOT, `tmp-${safeName}-${Date.now()}`);
+    const finalDir = path.join(CACHE_ROOT, `v-${safeName}`);
+    await fs_promises.mkdir(tmpDir, { recursive: true });
+    await writeFileDeep(tmpDir, 'index.html', indexBuf);
+
+    console.log(`Downloading ${toDownload.length} files...`);
+
+    console.log(`Downloading ${toDownload.length} files...`);
+    const skipped = [];
+
+    async function downloadOne(p) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const buf = await fetchOrigin(p);
+          await writeFileDeep(tmpDir, p, buf);
+          return;
+        } catch (err) {
+          if (err.message.startsWith('404')) {
+            skipped.push(p);              // genuinely missing: skip it
+            return;
+          }
+          if (attempt === 3) throw err;   // network/timeout: fail the sync
+          await new Promise((r) => setTimeout(r, 1000 * attempt));
+        }
+      }
     }
 
-    // 3. Atomically repoint the "current" symlink
-    const tmpLink = CURRENT + '.tmp';
-    try { fs.unlinkSync(tmpLink); } catch {}
-    fs.symlinkSync(dest, tmpLink);
-    fs.renameSync(tmpLink, CURRENT);
+    const BATCH = 6;
+    for (let i = 0; i < toDownload.length; i += BATCH) {
+      await Promise.all(toDownload.slice(i, i + BATCH).map(downloadOne));
+      console.log(`  ${Math.min(i + BATCH, toDownload.length)}/${toDownload.length}`);
+    }
 
-    console.log(`Now serving ${cid} (was ${data['currentCid']})`);
-    data['currentCid'] = cid;
+    if (skipped.length) console.warn(`Skipped ${skipped.length} missing file(s):`, skipped);
 
-    // 4. Optional: delete old versions, keep the last couple
-    const dirs = fs.readdirSync(BASE)
-      .map(d => ({ d, t: fs.statSync(path.join(BASE, d)).mtimeMs }))
-      .sort((a, b) => b.t - a.t)
-      .slice(2);
-    for (const { d } of dirs) fs.rmSync(path.join(BASE, d), { recursive: true, force: true });
+    // atomic-ish swap: only now does the new build go live
+    await fs_promises.rm(finalDir, { recursive: true, force: true });
+    await fs_promises.rename(tmpDir, finalDir);
+
+    const oldDir = current.dir;
+    current = { dir: finalDir, version };
+    useDir(finalDir);
+    await fs_promises.writeFile(POINTER_FILE, JSON.stringify(current));
+
+    if (oldDir && oldDir !== finalDir) {
+      setTimeout(() => fs_promises.rm(oldDir, { recursive: true, force: true }).catch(() => {}), 60_000);
+    }
+    console.log(`Now serving version ${version}`);
   } catch (err) {
-    console.error('Refresh failed, still serving previous version:', err.message);
+    console.error('Sync failed (still serving previous version):', err.message);
+  } finally {
+    syncing = false;
   }
 }
+
+async function boot() {
+  await fs_promises.mkdir(CACHE_ROOT, { recursive: true });
+
+  // resume from disk after a restart so the site is served instantly
+  try {
+    const saved = JSON.parse(await fs_promises.readFile(POINTER_FILE, 'utf8'));
+    await fs_promises.access(saved.dir);
+    current = saved;
+    useDir(saved.dir);
+    console.log(`Resumed cached version ${saved.version}`);
+  } catch {}
+
+  await syncSite();
+  setInterval(syncSite, POLL_MS);
+}
+
+
+
 
 
 
@@ -12259,26 +12380,6 @@ app.post(`/${endpoint_info['bulk_translate']}/:privacy_signature`, async (req, r
 
 
 
-
-app.get('/:privacy_signature', async (req, res) => {
-  const { privacy_signature } = req.params
-  if(!await is_privacy_signature_valid(privacy_signature)){
-    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true }))
-  }
-  else{
-    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true, directory: endpoint_info }))
-  }
-});
-
-app.get('/', (req, res) => {
-  if(data['currentCid'] == null) return res.json({'message': 'e unavailable here.'})
-  res.set('Cache-Control', 'no-cache');
-  res.sendFile(path.join(CURRENT, 'index.html'));
-});
-
-// Everything else (index.html etc.) must always revalidate so updates show up
-app.use(express.static(CURRENT, { maxAge: 0, setHeaders: res => res.set('Cache-Control', 'no-cache') }));
-
 app.use((req, res, next) => {
   let bytesSent = 0;
   let bytesReceived = 0;
@@ -12309,6 +12410,53 @@ app.use((req, res, next) => {
 
   next();
 });
+
+app.use((req, res, next) => staticHandler(req, res, next));
+
+app.use(async (req, res, next) => {
+  if (req.method !== 'GET' || !current.dir) return next();
+  if (!path.extname(req.path)) return next(); // routes like /about go to the SPA fallback
+
+  const rel = path.posix.normalize(req.path);
+  const dir = current.dir;
+  const target = path.join(dir, rel);
+  if (!target.startsWith(dir)) return next();
+
+  try {
+    if (!inflight.has(target)) {
+      inflight.set(
+        target,
+        fetchOrigin(rel, { optional: true })
+          .then(async (buf) => { if (buf) await writeFileDeep(dir, rel, buf); return !!buf; })
+          .finally(() => inflight.delete(target))
+      );
+    }
+    if (await inflight.get(target)) return res.sendFile(target);
+  } catch (err) {
+    console.error('Fallback fetch failed:', rel, err.message);
+  }
+  res.sendStatus(404);
+});
+
+app.get('/', (req, res) => {
+  if (!current.dir) return res.status(503).send('Site not loaded yet');
+  res.setHeader('Cache-Control', 'no-store');
+  res.sendFile(path.join(current.dir, 'index.html'));
+});
+
+
+
+
+app.get('/:privacy_signature', async (req, res) => {
+  const { privacy_signature } = req.params
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true }))
+  }
+  else{
+    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true, directory: endpoint_info }))
+  }
+});
+
 
 
 
@@ -12342,7 +12490,7 @@ const when_server_started = () => {
     set_up_ssh_login_requests()
     load_events_for_all_e5s()
     start_background_socket_sync()
-    refresh_loading_twentythreeinreverse(); 
+    boot();
     data['key'] = key
   }, (10 * 1000));
 }
@@ -12650,7 +12798,7 @@ server_io.on('connection', socket => {
 
 
 // server.listen(HTTPS_PORT, when_server_started);
-server.listen(4000, when_server_started);
+server.listen(3000, when_server_started);
 
 
 setInterval(attempt_loading_failed_ecids, 53*60*1000)
@@ -12687,7 +12835,6 @@ setInterval(delete_cached_file_data_if_too_large, 5*60*1000)
 setInterval(update_chart_info_for_evm_traffic, 35*1000)
 setInterval(clear_old_translated_objects, 5*60*1000)
 setInterval(update_coin_ether_chart_info, 24*60*60*1000)
-setInterval(refresh_loading_twentythreeinreverse, 7*60*1000);
 
 
 set_up_error_logs_filestream()
