@@ -77,7 +77,7 @@ var data = {
   'e':['E25'],
   'E25': {
     'addresses':['0xF3895fe95f423A4EBDdD16232274091a320c5284', '0x839C6155383D4a62E31d4d8B5a6c172E6B71979c', '0xD338118A55B5245b9C9F6d5f03BF9d9eA32c5850', '0xec24050b8E3d64c8be3cFE9a40A59060Cb35e57C', '0xFA85d977875092CA69d010d4EFAc5B0E333ce61E', '0x7dcc9570c2e6df2860a518eEE46fA90E13ef6276', '0x0Bb15F960Dbb856f3Eb33DaE6Cc57248a11a4728'],
-    'web3':['https://etc.rivet.link','https://etc.etcdesktop.com', 'https://0xrpc.io/etc'], 'url':0,
+    'web3':['https://0xrpc.io/etc', 'https://etc.etcdesktop.com', 'https://rpc.etcmc.xyz', 'https://geth-at.etc-network.info', 'https://rpc.swiftnodes.io/rpc/etc'], 'url':0,
     'first_block':19151130, 'current_block':{}, 'iteration':400_000, 'reorgs':[]
   },
   // 'file_data_capacity':0,
@@ -5441,7 +5441,7 @@ function set_endpoint_ids(){
      'update_certificates', 'update_nodes', 'run_transaction', 'run_contract_call', 'pre_launch_fetch', 
      'pre_fetch_object_data', 'delete_files', 'socket_data_fetch', 'accounts_in_room', 'tag_prices', 
      'user_obligations', 'user_vote_weight', 'save_subscription', 'resync', 'events_post',
-     'bulk_translate'];
+     'bulk_translate', 'contract_obligation_info'];
 
   for(var end=0; end<endpoints.length; end++){
     const endpoint = endpoints[end]
@@ -7185,9 +7185,19 @@ function handle_node_disconnection_from_node(nodeUrl){
   delete node_connection_map[nodeUrl];
 }
 
-//-----------------------------------------------RECORD SOCKET DATA------------------------------------------------
-function record_socket_data_for_target(target, message, object_hash){
+//---------------------------------------RECORD SOCKET DATA-----------------------------------------
+async function record_socket_data_for_target(target, message, object_hash){
   const start_today = (Math.floor(Date.now() / (10*60*1000))) * (10*60*1000)
+  if(message['verify_signature'] != null){
+    const signature_confirmation = await confirm_signature(message.verify_signature, message.data, message.author_address)
+    if(signature_confirmation == false) return;
+  }
+
+  const is_signature_valid = await is_message_app_signature_valid(message);
+  if(!is_signature_valid) return;
+
+  if(!is_message_time_valid(message)) return;
+
   if(message['record_view'] == true){
     record_trend(message['record_type'], message['record_id'], 'en', '0x', 1, {})
     // return;
@@ -7195,6 +7205,8 @@ function record_socket_data_for_target(target, message, object_hash){
   if(message['no_record'] == true){
     return;
   }
+
+
   if(socket_data[start_today] == null){
     socket_data[start_today] = {}
   }
@@ -7289,11 +7301,17 @@ function logg(message){
   log_error({stack: message})
 }
 
-function handle_user_send_message({ to, message, forward_id, target, object_hash, secondary_target, forward_origin }) {
+async function handle_user_send_message({ to, message, forward_id, target, object_hash, secondary_target, forward_origin }) {
   logg('incoming message from '+forward_origin)
-  if(does_forward_id_exist(forward_id) || get_object_size_in_kbs(message) > 24 || !is_message_valid_if_pre_purchase(message) || !does_forward_origin_exist(forward_origin)){
+  if(does_forward_id_exist(forward_id) || get_object_size_in_kbs(message) > 24 || 
+  !is_message_valid_if_pre_purchase(message) || 
+  !does_forward_origin_exist(forward_origin) || !is_message_time_valid(message)){
     return;
   }
+
+  const is_signature_valid = await is_message_app_signature_valid(message)
+  if(!is_signature_valid) return
+
   const userId_target = connected_users.get(to);
   if (userId_target) {
     userId_target.emit('send_message', { from: message.author_address, message, remote: true, target, object_hash });
@@ -7373,8 +7391,13 @@ function handle_signal_message({from, to, data, isInitiator, forward_id, forward
   });
 }
 
-function handle_room_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
-  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message) || !does_forward_origin_exist(forward_origin)) return;
+async function handle_room_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
+  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message) || 
+  !does_forward_origin_exist(forward_origin) || get_object_size_in_kbs(message) > 24 || !is_message_time_valid(message)) return;
+
+  const is_signature_valid = await is_message_app_signature_valid(message)
+  if(!is_signature_valid) return;
+
   const usersInRoom = rooms[roomId];
   if(usersInRoom.length > 0){
     const existing_userId_target = connected_users.get(usersInRoom[0]);
@@ -7448,8 +7471,13 @@ function handle_user_joined_chatroom_message({roomId, userId, forward_id, forwar
   });
 }
 
-function handle_chatroom_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
-  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message) || !does_forward_origin_exist(forward_origin)) return;
+async function handle_chatroom_message({userId, roomId, message, forward_id, target, object_hash, forward_origin}){
+  if(does_forward_id_exist(forward_id) || !is_message_valid_if_pre_purchase(message) || 
+  !does_forward_origin_exist(forward_origin) || get_object_size_in_kbs(message) > 24 || !is_message_time_valid(message)) return;
+  
+  const is_signature_valid = await is_message_app_signature_valid(message)
+  if(!is_signature_valid) return
+
   const usersInRoom = rooms[roomId];
   if(usersInRoom.length > 0){
     const existing_userId_target = connected_users.get(usersInRoom[0]);
@@ -7461,6 +7489,15 @@ function handle_chatroom_message({userId, roomId, message, forward_id, target, o
   Object.entries(node_connection_map).forEach(([url, n]) => {
     if(url != forward_origin) n.emit('forward_chatroom_message', { userId, roomId, message, forward_id, target, object_hash, forward_origin })
   });
+}
+
+async function is_message_app_signature_valid(message){
+  if(message['type'] != 'open_signature_request'){
+    if(message['app_signature'] == null) return false;
+    return await confirm_signature(message.app_signature, message.data, privacy_address)
+  }else{
+    return true
+  }
 }
 
 
@@ -10154,6 +10191,238 @@ async function boot() {
 
 
 
+async function load_contract_obligation_general_info(contract_e5_id, deadline_date_time){
+  const e5 = 'E' + contract_e5_id.split('E')[1]
+  const contract_id = parseInt(contract_e5_id.split('E')[0])
+  const target_data = await get_socket_data([contract_e5_id], 1771762377000, [], [], [], [], '', '', '', '', 1024*153, Date.now(), 'contract_subscription_log');
+
+  const registered_accounts = [];
+  const process_obligation_message = (message, object_hash) => {
+    if(hash_message_for_id(message) != object_hash) return;
+    const ipfs = JSON.parse(message.data)
+    const account = ipfs['sender_account'] + ipfs['sender_account_e5'];
+    const is_subscribing = ipfs['is_subscribing']
+    if(is_subscribing){
+      if(!registered_accounts.includes(account)) registered_accounts.push(account);
+    }else{
+      const index = registered_accounts.indexOf(account)
+      if(index != -1){
+        registered_accounts.splice(index, 1);
+      }
+    }
+  }
+
+  if(target_data != null){
+    const entries = Object.keys(target_data)
+    for(var j=0; j<entries.length; j++){
+      const time_entry = entries[j]
+      const target_entries = Object.keys(target_data[time_entry])
+      for(var k=0; k<target_entries.length; k++){
+        const target_entry = target_entries[k]
+        const object_hashes = Object.keys(target_data[time_entry][target_entry])
+        for(var i=0; i<object_hashes.length; i++){
+          const object_hash = object_hashes[i]
+          const object_data = target_data[time_entry][target_entry][object_hash]
+          if(object_data['type'] == 'contract_subscription_log'){
+            process_obligation_message(object_data, object_hash)
+          }
+        }
+      }
+    }
+  }
+
+  const now = new Date();
+  const startOfPrevYearUTC = Date.UTC(now.getUTCFullYear() - 1, 0, 1, 0, 0, 0, 0);
+  const previous_year_in_seconds = Math.floor(startOfPrevYearUTC / 1000);
+
+  const start_of_this_year = Date.UTC(now.getUTCFullYear(), 0, 1, 0, 0, 0, 0);
+  const this_year_in_seconds = Math.floor(start_of_this_year / 1000);
+
+  const all_transfer_events = await filter_events(e5, 'H52', 'e1', {p3/* receiver */: contract_id}, {'p':'p5', 'value':this_year_in_seconds});
+
+  const obligation_data = await get_accounts_obligation_history_data(previous_year_in_seconds, this_year_in_seconds, [], [contract_e5_id], registered_accounts)
+
+  const update_object = {}
+  const process_user_obligation_data = (data) => {
+    Object.keys(data).forEach(time => {
+      Object.keys(data[time]).forEach(contract => {
+        Object.keys(data[time][contract]).forEach(obligation_fulfiller_address => {
+          Object.keys(data[time][contract][obligation_fulfiller_address]).forEach(identifier => {
+            const entry = data[time][contract][obligation_fulfiller_address][identifier]
+            const fulfiler = entry['obligation_fulfiller']+e5;
+            const contracts_promise = entry['contracts_promises']
+            const transfers = contracts_promise['transfers']
+            const proportions = contracts_promise['proportions']
+            if(update_object[fulfiler] != null){
+              update_object[fulfiler] = {}
+            }
+            transfers.forEach((transfer, index) => {
+              const exchange = transfer['exchange']
+              const amount = transfer['amount']
+              if(update_object[fulfiler][exchange] == null){
+                update_object[fulfiler][exchange] = bigInt(0)
+              }
+              let obligation_amount = bigInt(0)
+              let active_amount = bigInt(0).plus(amount)
+              proportions.forEach(proportion => {
+                const extra_obligation_proportion = contracts_promise['progressive_proportions'] == null ? 0 : contracts_promise['progressive_proportions'][index][proportion]
+                const final_proportion = bigInt(proportion).plus(extra_obligation_proportion)
+                const obligation = bigInt(active_amount).multiply(final_proportion).divide('100e16')
+                obligation_amount = bigInt(obligation_amount).plus(obligation)
+                active_amount = bigInt(active_amount).minus(obligation)
+              });
+              update_object[fulfiler][exchange] = bigInt(update_object[fulfiler][exchange]).plus(obligation_amount)
+            })
+          });
+        });
+      });
+    });
+  }
+  process_user_obligation_data(obligation_data)
+
+  const get_default_depth = (number) => {
+    var number_as_string = number.toString().toLocaleString('fullwide', {useGrouping:false})
+    return Math.floor((number_as_string.length-1)/72)
+  }
+
+  const get_exchange_transfer_actions = (amount) => {
+    var transaction_amount = amount.toString().toLocaleString('fullwide', {useGrouping:false})
+    var transaction_amount_depth = get_default_depth(transaction_amount)
+
+    var end = transaction_amount.length - 1
+    var start = (end - 71) < 0 ? 0 : (end-71)
+
+    var data = []
+    for(var j=0; j<=transaction_amount_depth; j++){
+      var depth_amount = bigInt(transaction_amount.substring(start, end+1)).toString().toLocaleString('fullwide', {useGrouping:false})
+      var depth = j
+      if(!bigInt(depth_amount).equals(0)){
+        data.push({'amount':depth_amount, 'depth':depth})
+      }
+
+      end -= 72
+      start -= 72
+    }
+    return data
+  }
+
+  const ensure_all_transfers_exist = (transfers, transfer_events) => {
+    var all_existing = true;
+    transfers.forEach(transfer => {
+      const exchange = transfer['exchange']
+      const amount = transfer['amount']
+      const transfer_actions = get_exchange_transfer_actions(amount)
+
+      transfer_actions.forEach(action => {
+        const existing_events = transfer_events.filter((event) => { 
+          return(
+            event.returnValues.p1 == exchange && 
+            action['amount'].toString() == event.returnValues.p4/* amount */.toString() &&
+            action['depth'].toString() == event.returnValues.p7/* depth */.toString()
+          )
+        });
+        if(existing_events.length == 0){
+          all_existing = false;
+        }
+      });
+    });
+
+    return all_existing;
+  }
+
+  const unfulfilled_accounts = []
+  const fulfiled_accounts = []
+  const total_amounts = {}
+  const total_unfulfiled_amounts = {}
+  const unfulfiled_accounts_owed_amounts = {}
+
+  for(var i=0; i<registered_accounts.length; i++){
+    const focused_account = registered_accounts[i];
+    const account_id = parseInt(focused_account.split('E')[0])
+
+    const transfer_events = all_transfer_events.filter((event) => {
+      return (
+        event.returnValues.p2/* sender */ == account_id &&
+        event.returnValues.p3/* receiver */ == contract_id && 
+        event.returnValues.p5/* timestamp */ >= this_year_in_seconds &&
+        event.returnValues.p5/* timestamp */ <= deadline_date_time
+      )
+    })
+
+    const focused_account_data = update_object[focused_account] || {}
+    const exchanges_logged = Object.keys(focused_account_data)
+    const transfers = []
+    exchanges_logged.forEach(exchange => {
+      transfers.push({'exchange':exchange, 'amount':focused_account_data[exchange]})
+    });
+
+    const do_all_transfers_exist = ensure_all_transfers_exist(transfers, transfer_events)
+    if(do_all_transfers_exist == false){
+      unfulfilled_accounts.push(account_id)
+      unfulfiled_accounts_owed_amounts[account_id] = transfers
+      transfers.forEach(transfer => {
+        if(total_unfulfiled_amounts[transfer['exchange']] == null){
+          total_unfulfiled_amounts[transfer['exchange']] = bigInt(0);
+        }
+        total_unfulfiled_amounts[transfer['exchange']] = bigInt(total_unfulfiled_amounts[transfer['exchange']]).plus(transfer['amount']);
+      });
+    }else{
+      fulfiled_accounts.push(account_id)
+      transfers.forEach(transfer => {
+        if(total_amounts[transfer['exchange']] == null){
+          total_amounts[transfer['exchange']] = bigInt(0);
+        }
+        total_amounts[transfer['exchange']] = bigInt(total_amounts[transfer['exchange']]).plus(transfer['amount']);
+      });
+    }
+  }
+
+  return {
+    fulfiled_accounts: fulfiled_accounts,
+    unfulfilled_accounts: unfulfilled_accounts,
+    total_amounts: total_amounts,
+    total_unfulfiled_amounts: total_unfulfiled_amounts,
+    unfulfiled_pending_data: unfulfiled_accounts_owed_amounts,
+    from: previous_year_in_seconds,
+    to: this_year_in_seconds,
+    time: Date.now()
+  }
+}
+
+function hash_message_for_id(message){
+  const message_string = (JSON.stringify(message, (_, v) => typeof v === 'bigint' ? v.toString() : v));
+  return hash_my_data(message_string)
+}
+
+async function confirm_signature(signature, data, address){
+  const web3 = data['E25']['url'] != null ? new Web3(data['E25']['web3'][data['E25']['url']]): new Web3(data['E25']['web3']);
+  try{
+    var original_address = await web3.eth.accounts.recover(data.toString(), signature)
+    if(original_address.toString() != address.toString()){
+      return false
+    }
+    return true
+  }catch(e){
+    console.log(e)
+    return false
+  }
+}
+
+function is_message_time_valid(message){
+  if(message.time == null || isNaN(message.time)) return false;
+  if(message.time > (Date.now()/1000) - (60 * 10)){
+    return true
+  }
+  else return false;
+}
+
+
+
+
+
+
+
+
 
 
 
@@ -12377,6 +12646,35 @@ app.post(`/${endpoint_info['bulk_translate']}/:privacy_signature`, async (req, r
   }
 });
 
+app.post(`/${endpoint_info['contract_obligation_info']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
+  const { contract_e5_id, deadline_date_time } = await process_request_body(req.body)
+
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Invalid signature', success:false }));
+    return;
+  }
+  else if(contract_e5_id == null || deadline_date_time == null){
+    res.send(JSON.stringify({ message: 'Invalid params', success:false }));
+    return;
+  }
+
+  try{
+    const obj = {
+      'contract_obligation_info': await load_contract_obligation_general_info(contract_e5_id, deadline_date_time),
+      success:true
+    }
+
+    var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
+    record_request('/contract_obligation_info')
+    res.send(await encrypt_call_result(string_obj, registered_users_key));
+  }
+  catch(e){
+    log_error(e)
+    res.send(JSON.stringify({ message: 'Invalid arg string', error: e.toString() , success:false}));
+  }
+});
+
 
 
 
@@ -12549,7 +12847,7 @@ server_io.on('connection', socket => {
   });
 
   /* send message to another account in indexer or across network */
-  socket.on('send_message', ({ to, message, target, object_hash, secondary_target }) => {
+  socket.on('send_message', async ({ to, message, target, object_hash, secondary_target }) => {
     /*
       message structure:
       {
@@ -12570,6 +12868,9 @@ server_io.on('connection', socket => {
       console.log('send_message', 'transaction not valid.', tx_size, is_emit_valid)
       return;
     }
+    const is_signature_valid = await is_message_app_signature_valid(message)
+    if(!is_signature_valid || !is_message_time_valid(message)) return;
+
     socket.emit('send_message', { from: socket.userId, message, target, object_hash });
     const user_target = connected_users.get(to);
     if (user_target) {
@@ -12635,8 +12936,12 @@ server_io.on('connection', socket => {
   });
 
   /* when chatroom message is broadcasted */
-  socket.on('chatroom_message', ({ roomId, message, target, object_hash }) => {
-    if(socket.userId == null || !is_users_transaction_valid(socket.userId)|| !is_message_valid_if_pre_purchase(message)) return;
+  socket.on('chatroom_message', async ({ roomId, message, target, object_hash }) => {
+    if(socket.userId == null || !is_users_transaction_valid(socket.userId) || !is_message_valid_if_pre_purchase(message) || get_object_size_in_kbs(message) > 24) return;
+
+    const is_signature_valid = await is_message_app_signature_valid(message)
+    if(!is_signature_valid || !is_message_time_valid(message)) return;
+
     socket.to(roomId).emit("chatroom_message", {userId: socket.userId, message, roomId, target, object_hash});
     record_socket_data_for_target(target, message, object_hash);
     record_object_tags_if_any(target, message)
@@ -12721,7 +13026,11 @@ server_io.on('connection', socket => {
 
   /* when room message is sent */
   socket.on('room_message', async ({ roomId, message, target, object_hash }) => {
-    if(socket.userId == null || !is_message_valid_if_pre_purchase(message)) return;
+    if(socket.userId == null || !is_message_valid_if_pre_purchase(message) || get_object_size_in_kbs(message) > 24) return;
+
+    const is_signature_valid = await is_message_app_signature_valid(message)
+    if(!is_signature_valid || !is_message_time_valid(message)) return;
+
     socket.to(roomId).emit("room_message", {userId: socket.userId, message, roomId, target});
     record_socket_data_for_target(target, message, object_hash);
 
