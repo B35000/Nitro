@@ -10410,7 +10410,7 @@ async function confirm_signature(signature, data, address){
 
 function is_message_time_valid(message){
   if(message.time == null || isNaN(message.time)) return false;
-  if(message.time > (Date.now()/1000) - (60 * 10)){
+  if(message.time > (Date.now()/1000) - (60 * 10) && message.time < Date.now()){
     return true
   }
   else return false;
