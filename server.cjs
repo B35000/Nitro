@@ -12420,7 +12420,7 @@ app.post(`/${endpoint_info['tag_prices']}/:privacy_signature`, async (req, res) 
     log_error(e)
     res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
   }
-});
+});//ok-----
 
 /* endpoint for returning users obligation data */
 app.post(`/${endpoint_info['user_obligations']}/:privacy_signature`, async (req, res) => {
@@ -12457,7 +12457,7 @@ app.post(`/${endpoint_info['user_obligations']}/:privacy_signature`, async (req,
     log_error(e)
     res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
   }
-});
+});//ok-----
 
 /* endpoint for returning socket data during synchronization process */
 app.get(`/${endpoint_info['sync_socket_data']}`, async (req, res) => {
@@ -12481,7 +12481,7 @@ app.get(`/${endpoint_info['sync_socket_data']}`, async (req, res) => {
     console.log(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});
+});//ok-----
 
 /* endpoint for returning users vote weights */
 app.post(`/${endpoint_info['user_vote_weight']}/:privacy_signature`, async (req, res) => {
@@ -12543,6 +12543,7 @@ app.post(`/${endpoint_info['save_subscription']}/:privacy_signature`, async (req
   }
 });
 
+/* endpoint for manually restoring indexer to specific block height and resynching */
 app.post(`/${endpoint_info['resync']}/:privacy_signature`, async (req, res) => {
   try{
     const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
@@ -12571,6 +12572,7 @@ app.post(`/${endpoint_info['resync']}/:privacy_signature`, async (req, res) => {
   }
 });
 
+/* endpoint for returning event data, similar to 'events' endpoint */
 app.post(`/${endpoint_info['events_post']}/:privacy_signature`, async (req, res) => {
   try{
     const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
@@ -12615,8 +12617,9 @@ app.post(`/${endpoint_info['events_post']}/:privacy_signature`, async (req, res)
     log_error(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
-});
+});//ok-----
 
+/* translate data in bulk using background python translation service */
 app.post(`/${endpoint_info['bulk_translate']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   const { payload, direction } = await process_request_body(req.body)
@@ -12644,8 +12647,9 @@ app.post(`/${endpoint_info['bulk_translate']}/:privacy_signature`, async (req, r
     log_error(e)
     res.send(JSON.stringify({ message: e.message, stack: e.stack , success:false}));
   }
-});
+});//ok-----
 
+/* fetch contract obligation information and total transacted amounts */
 app.post(`/${endpoint_info['contract_obligation_info']}/:privacy_signature`, async (req, res) => {
   const { privacy_signature, registered_user, registered_users_key } = await process_request_params(req.params, req.ip);
   const { contract_e5_id, deadline_date_time } = await process_request_body(req.body)
@@ -12673,7 +12677,7 @@ app.post(`/${endpoint_info['contract_obligation_info']}/:privacy_signature`, asy
     log_error(e)
     res.send(JSON.stringify({ message: 'Invalid arg string', error: e.toString() , success:false}));
   }
-});
+});//ok-----
 
 
 
@@ -12709,7 +12713,8 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use((req, res, next) => staticHandler(req, res, next));
+app.use((req, res, next) => staticHandler(req, res, next)
+);
 
 app.use(async (req, res, next) => {
   if (req.method !== 'GET' || !current.dir) return next();
@@ -12736,15 +12741,16 @@ app.use(async (req, res, next) => {
   res.sendStatus(404);
 });
 
+
+
+/* endpoint for loading e */
 app.get('/', (req, res) => {
   if (!current.dir) return res.status(503).send('Site not loaded yet');
   res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path.join(current.dir, 'index.html'));
 });
 
-
-
-
+/* endpoint for loading roots and basic server info */
 app.get('/:privacy_signature', async (req, res) => {
   const { privacy_signature } = req.params
   if(!await is_privacy_signature_valid(privacy_signature)){
