@@ -5459,6 +5459,7 @@ function set_endpoint_ids(){
   endpoint_info['send_signature_request'] = 'send_signature_request'
   endpoint_info['send_prepurchase_transaction'] = 'send_prepurchase_transaction'
   endpoint_info['sync_socket_data'] = 'sync_socket_data'
+  endpoint_info['root_data'] = 'root_data'
 }
 
 set_endpoint_ids()
@@ -5744,6 +5745,7 @@ async function process_app_launch_data(event_fetches, target_address, content_ch
   const all_data = {}
   var all_concatenated_data = []
   var account_exists = false;
+  const all_minted_certificates = []
   for(var i=0; i<all_supported_e5s.length; i++){
     const return_data = {}
     const e5 = all_supported_e5s[i]
@@ -5816,7 +5818,7 @@ async function process_app_launch_data(event_fetches, target_address, content_ch
       var should_run_filter = true;
       Object.keys(filter).forEach(filter_target => {
         if(filter[filter_target] == '%%account%%'){
-          filter[filter_target] = e5_account_id || 0
+          filter[filter_target] = e5_account_id
           if(e5_account_id == null){
             should_run_filter = false
           }
@@ -5896,6 +5898,34 @@ async function process_app_launch_data(event_fetches, target_address, content_ch
     
     //set the return data under the selected e5
     all_return_data[e5] = return_data
+
+
+    if(e5_account_id != 0){
+      //load the certificates have balances in
+      const all_certificate_transfer_events = await filter_events(e5, 'H52', 'e1'/* Transfer */, {p3/* receiver */: e5_account_id}, {});
+      const all_certificate_update_balance_events = await filter_events(e5, 'H52', 'e2'/* UpdatedBalance */, {p2/* receiver */: e5_account_id}, {});
+
+      all_certificate_transfer_events.forEach(event_item => {
+        const exchange = event_item.returnValues.p1/* exchange */
+        const depth = event_item.returnValues.p7/* depth */
+        if(exchange > 1000){
+          const id = e5+exchange+depth
+          if(!all_minted_certificates.includes(id)){
+            all_minted_certificates.push(id)
+          }
+        }
+      });
+      all_certificate_update_balance_events.forEach(event_item => {
+        const exchange = event_item.returnValues.p1/* exchange */
+        const depth = event_item.returnValues.p6/* depth */
+        if(exchange > 1000){
+          const id = e5+exchange+depth
+          if(!all_minted_certificates.includes(id)){
+            all_minted_certificates.push(id)
+          }
+        }
+      });
+    }
   }
 
   for(var i=0; i<all_supported_e5s.length; i++){
@@ -5931,6 +5961,9 @@ async function process_app_launch_data(event_fetches, target_address, content_ch
   all_return_data['socket_view_objects_data'] = await get_socket_data(view_targets,
   1771762377000, [], [target_address], [], [], '', '', '', '', 1024*153, Date.now())
 
+  if(all_minted_certificates.length > 0) {
+    all_return_data['certificate_assessment_data'] = await get_socket_data(['certificate_assessment'], 1771762377000, all_minted_certificates, [], [], [], '', '', '', '', 1024*153, Date.now())
+  }
 
   const hash_data = await fetch_hashes_from_file_storage_or_memory(hashes_to_fetch)
 
@@ -7216,6 +7249,8 @@ async function record_socket_data_for_target(target, message, object_hash){
   if(socket_data[start_today][target][object_hash] == null){
     socket_data[start_today][target][object_hash] = message
   }
+
+  console.log(`recorded message ${message.type}`)
   // else{
   //   if(socket_data[start_today][target][object_hash]['mutable'] == true){
   //     if(await is_mutable_signature_valid(socket_data[start_today][target][object_hash], message, target) == true){
@@ -7613,8 +7648,8 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
     if(filter_tags.length > 0){
       console.log('filtering by filter tags...')
       const filter_fun = (target_array, filter_tags) => {
-        const setA = new Set(target_array);
-        return filter_tags.some(el => setA.has(el));
+        // const setA = new Set(target_array);
+        return filter_tags.some(el => target_array.includes(el));
       }
       filter_object_return_obj = Object.fromEntries(
         Object.entries(filter_object_return_obj).filter(([key, value]) =>  filter_fun(value['tags'], filter_tags))
@@ -7683,8 +7718,9 @@ async function get_socket_data(targets, filter_end_time, filter_tags, filter_aut
       }
     });
 
+    const final_tag_record_files = tag_record_files.map(e => parseInt(e))
     selected_cold_storage_request_stat_files = selected_cold_storage_request_stat_files.filter(function (time) {
-      return (tag_record_files.includes(parseInt(time)) || parseInt(time) < 1764262930000)
+      return (final_tag_record_files.includes(parseInt(time)) || parseInt(time) < 1764262930000)
     })
   }
 
@@ -10242,6 +10278,46 @@ async function load_contract_obligation_general_info(contract_e5_id, deadline_da
 
   const obligation_data = await get_accounts_obligation_history_data(previous_year_in_seconds, this_year_in_seconds, [], [contract_e5_id], registered_accounts)
 
+  const certificate_obligation_data = await get_socket_data(['certificate_assessment'],
+  1771762377000, [contract_e5_id], [], [], [], '', '', '', '', 1024*153, Date.now())
+
+  const certificate_assessments = {}
+  const process_certificate_obligation_data = (message, object_hash) => {
+    if(hash_message_for_id(message) != object_hash) return;
+    const ipfs_data = JSON.parse(message.data)
+    if(ipfs_data['contract_obj'] == contract_e5_id){
+      if(certificate_assessments[ipfs_data['balance_query_id']] == null){
+        certificate_assessments[ipfs_data['balance_query_id']] = {}
+      }
+      if(certificate_assessments[ipfs_data['balance_query_id']][ipfs_data['balance_query_depth']] == null){
+        certificate_assessments[ipfs_data['balance_query_id']][ipfs_data['balance_query_depth']] = ipfs_data
+      }else{
+        if(certificate_assessments[ipfs_data['balance_query_id']][ipfs_data['balance_query_depth']]['time'] < ipfs_data['time']){
+          certificate_assessments[ipfs_data['balance_query_id']][ipfs_data['balance_query_depth']] = ipfs_data
+        }
+      }
+    }
+  }
+
+  if(certificate_obligation_data != null){
+    const entries = Object.keys(certificate_obligation_data)
+    for(var j=0; j<entries.length; j++){
+      const time_entry = entries[j]
+      const target_entries = Object.keys(certificate_obligation_data[time_entry])
+      for(var k=0; k<target_entries.length; k++){
+        const target_entry = target_entries[k]
+        const object_hashes = Object.keys(certificate_obligation_data[time_entry][target_entry])
+        for(var i=0; i<object_hashes.length; i++){
+          const object_hash = object_hashes[i]
+          const object_data = certificate_obligation_data[time_entry][target_entry][object_hash]
+          if(object_data['type'] == 'certificate_assessment'){
+            process_certificate_obligation_data(object_data, object_hash)
+          }
+        }
+      }
+    }
+  }
+
   const update_object = {}
   const process_user_obligation_data = (data) => {
     Object.keys(data).forEach(time => {
@@ -10279,6 +10355,142 @@ async function load_contract_obligation_general_info(contract_e5_id, deadline_da
     });
   }
   process_user_obligation_data(obligation_data)
+
+
+  const process_user_certificate_obligation_data = async () => {
+    const logged_assessments = []
+    const exchanges = []
+    const exchange_types = {}
+    Object.keys(certificate_assessments).forEach(certificate_object_id => {
+      Object.keys(certificate_assessments[certificate_object_id]).forEach(depth => {
+        const assessment = certificate_assessments[certificate_object_id][depth]
+        logged_assessments.push(assessment)
+        exchanges.push(assessment['balance_query_id'])
+        exchange_types[assessment['balance_query_id']] = assessment['type']
+      });
+    });
+
+    const all_certificate_transfer_events = await filter_events(e5, 'H52', 'e1'/* Transfer */, {p1/* exchange */: process_array_for_indexer_query(exchanges)}, {});
+
+    const all_certificate_update_balance_events = await filter_events(e5, 'H52', 'e2'/* UpdatedBalance */, {p1/* exchange */: process_array_for_indexer_query(exchanges)}, {});
+
+    const all_certificate_action_events = []
+    all_certificate_update_balance_events.forEach(event_item => {
+      const exchange = event_item.returnValues.p1
+      const sender = 0;
+      const receiver = event_item.returnValues.p2/* receiver */
+      const type = 'mint'
+      const time = parseInt(event_item.returnValues.p4/* timestamp */)
+      const depth = event_item.returnValues.p6/* depth */
+      let amount = event_item.returnValues.p3/* new_balance */
+      if(exchange_types[exchange] == 'certificate'){
+        amount = bigInt('100e16')
+      }
+      
+      if(time < this_year_in_seconds){
+        all_certificate_action_events.push({
+          exchange, sender, receiver, type, time, depth, amount
+        })
+      }
+    });
+    all_certificate_transfer_events.forEach(event_item => {
+      const exchange = event_item.returnValues.p1
+      const sender = event_item.returnValues.p2/* sender */
+      const receiver = event_item.returnValues.p3/* receiver */
+      const type = 'transfer'
+      const time = parseInt(event_item.returnValues.p5/* timestamp */)
+      const depth = event_item.returnValues.p7/* depth */
+      let amount = event_item.returnValues.p4/* amount */
+      if(exchange_types[exchange] == 'certificate'){
+        amount = bigInt('100e16')
+      }
+      
+      if(time < this_year_in_seconds){
+        all_certificate_action_events.push({
+          exchange, sender, receiver, type, time, depth, amount
+        })
+      }
+    });
+
+    const sorted_certificate_transfer_events = sortByAttributeDescending(all_certificate_action_events, 'time');
+    const balance_ledger = {} //balance_ledger[event_obj.receiver][event_obj.exchange][event_obj.depth]
+    sorted_certificate_transfer_events.forEach(event_obj => {
+      //initialize a receiver if none exists
+      if(balance_ledger[event_obj.receiver] == null){
+        balance_ledger[event_obj.receiver] = {}
+      }
+      //inititalize an exchange entry if none exists
+      if(balance_ledger[event_obj.receiver][event_obj.exchange] == null){
+        balance_ledger[event_obj.receiver][event_obj.exchange] = {}
+      }
+
+      if(balance_ledger[event_obj.receiver][event_obj.exchange][event_obj.depth] == null){
+        balance_ledger[event_obj.receiver][event_obj.exchange][event_obj.depth] = bigInt(0)
+      }
+      if(event_obj.type == 'mint'){
+        //if mint(which should be the first event for each exchange), credit the amount for the receiver
+        balance_ledger[event_obj.receiver][event_obj.exchange][event_obj.depth] = bigInt(balance_ledger[event_obj.receiver][event_obj.exchange][event_obj.depth]).plus(event_obj.amount)
+      }else{
+        //if transfer, change the balances for the sender and receiver.
+        balance_ledger[event_obj.sender][event_obj.exchange][event_obj.depth] = bigInt(balance_ledger[event_obj.sender][event_obj.exchange][event_obj.depth]).minus(event_obj.amount)
+
+        if(bigInt(balance_ledger[event_obj.sender][event_obj.exchange][event_obj.depth]).isZero()){
+          delete balance_ledger[event_obj.sender][event_obj.exchange][event_obj.depth]
+        }
+
+        if(Object.keys(balance_ledger[event_obj.sender][event_obj.exchange]).length == 0){
+          delete balance_ledger[event_obj.sender][event_obj.exchange]
+        }
+
+        if(Object.keys(balance_ledger[event_obj.sender]).length == 0){
+          delete balance_ledger[event_obj.sender]
+        }
+
+        balance_ledger[event_obj.receiver][event_obj.exchange][event_obj.depth] = bigInt(balance_ledger[event_obj.receiver][event_obj.exchange][event_obj.depth]).minus(event_obj.amount)
+      }
+    });
+
+    const balance_ledger_for_contract_subscribers = {}
+    Object.keys(balance_ledger).forEach(receiver => {
+      const e5_account = receiver+e5
+      if(registered_accounts.includes(e5_account)){
+        balance_ledger_for_contract_subscribers[receiver] = balance_ledger[receiver]
+      }
+    });
+
+    Object.keys(balance_ledger_for_contract_subscribers).forEach(account_id => {
+      Object.keys(balance_ledger_for_contract_subscribers[account_id]).forEach(balance_query_id => {
+        Object.keys(Object.keys(balance_ledger_for_contract_subscribers[account_id][balance_query_id])).forEach(balance_query_depth => {
+          const transfers = certificate_assessments[balance_query_id]?.[balance_query_depth]?.['price_data']
+          const proportions = certificate_assessments[balance_query_id]?.[balance_query_depth]?.['promises']
+          const ownership_stake = balance_ledger_for_contract_subscribers[account_id][balance_query_id][balance_query_depth]
+          if(transfers != null){
+            const fulfiler = account_id+e5;
+            if(update_object[fulfiler] != null){
+              update_object[fulfiler] = {}
+            }
+            transfers.forEach(transfer => {
+              const exchange = transfer['id']
+              const amount = transfer['amount']
+              if(update_object[fulfiler][exchange] == null){
+                  update_object[fulfiler][exchange] = bigInt(0)
+              }
+              let obligation_amount = bigInt(0)
+              proportions.forEach(proportion => {
+                  const obligation = bigInt(amount).multiply(proportion).divide('100e16')
+                  obligation_amount = bigInt(obligation_amount).plus(obligation).multiply(ownership_stake).divide('100e16')
+              });
+              update_object[fulfiler][exchange] = bigInt(update_object[fulfiler][exchange]).plus(obligation_amount)
+            });
+          }
+        });
+      });
+    });
+
+  }
+  await process_user_certificate_obligation_data()
+
+
 
   const get_default_depth = (number) => {
     var number_as_string = number.toString().toLocaleString('fullwide', {useGrouping:false})
@@ -10394,15 +10606,17 @@ function hash_message_for_id(message){
   return hash_my_data(message_string)
 }
 
-async function confirm_signature(signature, data, address){
+async function confirm_signature(signature, signature_data, address){
   const web3 = data['E25']['url'] != null ? new Web3(data['E25']['web3'][data['E25']['url']]): new Web3(data['E25']['web3']);
   try{
-    var original_address = await web3.eth.accounts.recover(data.toString(), signature)
+    var original_address = await web3.eth.accounts.recover(signature_data.toString(), signature)
     if(original_address.toString() != address.toString()){
+      log_error({stack:`message signature is invalid, signer address: ${original_address}, required address: ${address}`})
       return false
     }
     return true
   }catch(e){
+    log_error(e)
     console.log(e)
     return false
   }
@@ -10410,10 +10624,11 @@ async function confirm_signature(signature, data, address){
 
 function is_message_time_valid(message){
   if(message.time == null || isNaN(message.time)) return false;
-  if(message.time > (Date.now()/1000) - (60 * 10) && message.time < Date.now()){
+  if(message.time > (Date.now()/1000) - (60 * 10) && message.time < Date.now()/1000){
     return true
   }
-  else return false;
+  log_error({stack:'message time is invalid, '+message.time > (Date.now()/1000) - (60 * 10)+' '+message.time < Date.now()/1000})
+  return false;
 }
 
 
@@ -12679,6 +12894,17 @@ app.post(`/${endpoint_info['contract_obligation_info']}/:privacy_signature`, asy
   }
 });//ok-----
 
+/* endpoint for loading roots and basic server info */
+app.get(`/${endpoint_info['root_data']}/:privacy_signature`, async (req, res) => {
+  const { privacy_signature } = req.params
+  if(!await is_privacy_signature_valid(privacy_signature)){
+    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true }))
+  }
+  else{
+    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true, directory: endpoint_info }))
+  }
+});//ok-----
+
 
 
 
@@ -12748,17 +12974,6 @@ app.get('/', (req, res) => {
   if (!current.dir) return res.status(503).send('Site not loaded yet');
   res.setHeader('Cache-Control', 'no-store');
   res.sendFile(path.join(current.dir, 'index.html'));
-});
-
-/* endpoint for loading roots and basic server info */
-app.get('/:privacy_signature', async (req, res) => {
-  const { privacy_signature } = req.params
-  if(!await is_privacy_signature_valid(privacy_signature)){
-    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true }))
-  }
-  else{
-    res.send(JSON.stringify({ message: 'Node online', b: sync_block_number, success:true, directory: endpoint_info }))
-  }
 });
 
 
