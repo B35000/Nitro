@@ -7337,7 +7337,7 @@ function logg(message){
 }
 
 async function handle_user_send_message({ to, message, forward_id, target, object_hash, secondary_target, forward_origin }) {
-  logg('incoming message from '+forward_origin)
+  // logg('incoming message from '+forward_origin)
   if(does_forward_id_exist(forward_id) || get_object_size_in_kbs(message) > 24 || 
   !is_message_valid_if_pre_purchase(message) || 
   !does_forward_origin_exist(forward_origin) || !is_message_time_valid(message)){
@@ -13091,6 +13091,7 @@ server_io.on('connection', socket => {
     }
     const is_signature_valid = await is_message_app_signature_valid(message)
     if(!is_signature_valid || !is_message_time_valid(message)) return;
+    if(message.author_address != socket.userId) return;
 
     socket.emit('send_message', { from: socket.userId, message, target, object_hash });
     const user_target = connected_users.get(to);
@@ -13162,6 +13163,7 @@ server_io.on('connection', socket => {
 
     const is_signature_valid = await is_message_app_signature_valid(message)
     if(!is_signature_valid || !is_message_time_valid(message)) return;
+    if(message.author_address != socket.userId) return;
 
     socket.to(roomId).emit("chatroom_message", {userId: socket.userId, message, roomId, target, object_hash});
     record_socket_data_for_target(target, message, object_hash);
@@ -13251,6 +13253,7 @@ server_io.on('connection', socket => {
 
     const is_signature_valid = await is_message_app_signature_valid(message)
     if(!is_signature_valid || !is_message_time_valid(message)) return;
+    if(message.author_address != socket.userId) return;
 
     socket.to(roomId).emit("room_message", {userId: socket.userId, message, roomId, target});
     record_socket_data_for_target(target, message, object_hash);
