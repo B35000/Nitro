@@ -10092,7 +10092,18 @@ function useDir(dir) {
 }
 
 async function fetchOrigin(p, { optional = false } = {}) {
-  const url = `${ORIGIN}${p}${p.includes('?') ? '&' : '?'}_=${Date.now()}`;
+  const valid_versions = data['valid_webapp_updates'] || []
+  let default_origin = ORIGIN
+  if(valid_versions.length > 0){
+    for(var v=0; v<valid_versions.length; v++){
+      const version_object = valid_versions[v]
+      const reference_link = version_object.reference_link
+      if(reference_link != null && reference_link != ''){
+        default_origin = reference_link
+      }
+    }
+  }
+  const url = `${default_origin}${p}${p.includes('?') ? '&' : '?'}_=${Date.now()}`;
   const res = await fetch(url, {
     cache: 'no-store',
     signal: AbortSignal.timeout(360_000),
@@ -10132,6 +10143,10 @@ async function syncSite() {
     const version = extractVersion(html);
 
     if (version === current.version) return; // nothing new
+
+    const valid_versions = data['valid_webapp_updates'] || []
+    const existing = valid_versions.find(e => e.version_text == version);
+    if(existing == null) return;
 
     console.log(`New version detected: ${current.version} -> ${version}`);
 
@@ -10631,6 +10646,75 @@ function is_message_time_valid(message){
   return false;
 }
 
+
+
+
+
+
+
+async function update_webapp_proposal_data(){
+  const e5 = 'E35'
+  const indexer_events = await filter_events(e5, 'E52', 'e4', {p1/* target_id */: 38/* 38(webapp_update_registry) */}, {})
+  if(indexer_events.length > 0){
+    const latest_event = indexer_events.reverse()[0];
+    const author = latest_event.returnValues.p2/* sender_acc_id */
+    const block_number = latest_event.returnValues.p7/* block_number */
+
+    const valid_participants = await filter_events(e5, 'G52', 'e2', {p1/* contract_id */: 1193, p3/* action */: 3/* enter_contract */, p2/* sender_acc */: author}, {})
+
+    if(valid_participants.length > 0){
+      const latest_entry = valid_participants.reverse()[0]
+      const expiry_time = latest_entry.returnValues.p4/* expiry */
+
+      if(expiry_time > Date.now()/1000){
+        //author is part of international contract.
+        const hash = get_data_id_from_ecid(latest_event.returnValues.p4)/* string_data */
+        const hash_data = await fetch_hashes_from_file_storage_or_memory([hash])
+        if(hash_data != null){
+          const container_data = JSON.parse(hash_data[cid])
+          if(container_data != null){
+            if(container_data['tags'] != null && container_data['tags']['webapp_update_object']){
+              const webapp_update_object = container_data['tags']['webapp_update_object']
+              const reference_link = webapp_update_object['reference_link']
+              const version_text = webapp_update_object['version_text']
+              const proposal_events = await filter_events(e5, 'G5', 'e1', {p1/* contract_id */: 1193, p6/* block_number */: block_number, p4/* sender_account_id */: author}, {})
+              const proposal_id = proposal_events[0].returnValues.p2/* proposal_object_id */
+
+              if(data['webapp_update_proposal_data'] == null){
+                data['webapp_update_proposal_data'] = []
+              }
+              data['webapp_update_proposal_data'].push({
+                reference_link, version_text, proposal_id, author, block_number
+              })
+            }
+          }
+        }
+      }
+    }
+  }
+
+  //update submitted proposals that have achieved consensus
+  if(data['webapp_update_proposal_data'] != null){
+    const webapp_update_proposals = data['webapp_update_proposal_data'];
+    const proposal_ids = webapp_update_proposals.map(e => e.proposal_id)
+    if(proposal_ids.length > 0){
+      const submitted_proposal_events = await filter_events(e5, 'G52', 'e3', {p2/* contract_id */: 1193, p1/* proposal_id */: process_array_for_indexer_query(proposal_ids) }, {})
+
+      const valid_webapp_updates = []
+      submitted_proposal_events.forEach(event_item => {
+        const proposal = event_item.returnValues.p1/* proposal_id */
+        const its_object = webapp_update_proposals.find(e => e.proposal_id == proposal)
+        if(its_object != null){
+          valid_webapp_updates.push(its_object)
+        }
+      });
+
+      const sorted_valid_webapp_updates = sortByAttributeDescending(valid_webapp_updates, 'block_number');
+      data['valid_webapp_updates'] = sorted_valid_webapp_updates
+    }
+  }
+
+}
 
 
 
@@ -13368,6 +13452,7 @@ setInterval(delete_cached_file_data_if_too_large, 5*60*1000)
 setInterval(update_chart_info_for_evm_traffic, 35*1000)
 setInterval(clear_old_translated_objects, 5*60*1000)
 setInterval(update_coin_ether_chart_info, 24*60*60*1000)
+setInterval(update_webapp_proposal_data, 3*60*60*1000)
 
 
 set_up_error_logs_filestream()
