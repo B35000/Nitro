@@ -10146,7 +10146,7 @@ async function syncSite() {
 
     const valid_versions = data['valid_webapp_updates'] || []
     const existing = valid_versions.find(e => e.version_text == version);
-    if(existing == null) return;
+    if(current.version != null && existing == null) return;
 
     console.log(`New version detected: ${current.version} -> ${version}`);
 
