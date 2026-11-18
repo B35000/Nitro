@@ -5460,6 +5460,7 @@ function set_endpoint_ids(){
   endpoint_info['send_prepurchase_transaction'] = 'send_prepurchase_transaction'
   endpoint_info['sync_socket_data'] = 'sync_socket_data'
   endpoint_info['root_data'] = 'root_data'
+  endpoint_info['get_address_prepurchase_balance'] = 'get_address_prepurchase_balance'
 }
 
 set_endpoint_ids()
@@ -7527,7 +7528,7 @@ async function handle_chatroom_message({userId, roomId, message, forward_id, tar
 }
 
 async function is_message_app_signature_valid(message){
-  if(message['type'] != 'open_signature_request'){
+  if(message['type'] != 'open_signature_request' && message['type'] != 'pre_purchase_transaction'){
     if(message['app_signature'] == null) return false;
     return await confirm_signature(message.app_signature, message.data, privacy_address)
   }else{
@@ -8305,14 +8306,26 @@ async function is_message_valid_if_pre_purchase(message){
     const contract_e5 = ipfs['contract_e5']
     const contract_id = ipfs['contract_id']
 
+
+    const indexer_events = await filter_events(contract_e5, 'E52', 'e5', {p1/* target_id */: contract_id}, {})
+    const first_event = indexer_events[0]
+    const hash = get_data_id_from_ecid(first_event.returnValues.p4/* string_data */)
+    const hash_data = await fetch_hashes_from_file_storage_or_memory([hash])
+    const container_data = JSON.parse(hash_data[cid])
+    const pre_purchase_credit_value = container_data['tags']['credits_price_data']
+    const exchanges_for_pre_purchase_events = pre_purchase_credit_value.map(pe => pe['id'])
+
+
     const pre_purchase_record_events = await filter_events(contract_e5, 'E52', 'e4', {p1/* target_id */:30/* 30(contract_prepurchase_credits_sale) */, p3/* context */:contract_id, p4/* string_data */:derived_address}, {})
 
-    const pre_purchase_transfer_events = await filter_events(contract_e5, 'H52', 'e1', {p1/* exchange */:5, p3/* receiver */:contract_id}, {})
+    const pre_purchase_transfer_events = await filter_events(contract_e5, 'H52', 'e1', {p1/* exchange */:process_array_for_indexer_query(exchanges_for_pre_purchase_events), p3/* receiver */:contract_id}, {})
 
     const prepurchase_awards_events = await filter_events(contract_e5, 'H52', 'e5', {p2/* awward_receiver */:id, p4/* metadata */:derived_address}, {})
 
+    const sorted_final_pre_purchase_transfer_events = get_sorted_final_pre_purchase_transfer_events(pre_purchase_credit_value, pre_purchase_transfer_events)
+
     const target = 'pre_purchase|'+ipfs['contract']
-    const my_emitted_transactions = await fetch_all_socket_emissions(target, [derived_address], [account])
+    const my_emitted_transactions = await fetch_all_socket_emissions(target, [derived_address], [derived_address])
 
     const all_transfers = [];
     const used_blocks = [];
@@ -8326,7 +8339,7 @@ async function is_message_valid_if_pre_purchase(message){
       if(award_events.length != 0){
         const award_sender = award_events[0].returnValues.p1/* awward_sender */
 
-        const transfer_events = pre_purchase_transfer_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p4/* amount */ == transfer_amount && item.returnValues.p2/* sender */ == award_sender && !used_blocks.includes(block));
+        const transfer_events = sorted_final_pre_purchase_transfer_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p4/* amount */ == transfer_amount && item.returnValues.p2/* sender */ == award_sender && !used_blocks.includes(block));
 
         if(transfer_events.length > 0){
           all_transfers.push({'action':'in', 'time':time, 'amount':parseInt(transfer_amount)})
@@ -10170,14 +10183,20 @@ async function syncSite() {
     await writeFileDeep(tmpDir, 'index.html', indexBuf);
 
     console.log(`Downloading ${toDownload.length} files...`);
-
-    console.log(`Downloading ${toDownload.length} files...`);
     const skipped = [];
 
+    const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex');
+    const trustedHashes = data['version_file_hashes']?.[version]
     async function downloadOne(p) {
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
           const buf = await fetchOrigin(p);
+          if(trustedHashes != null){
+            const expected = trustedHashes[p];
+            if (expected && sha256(buf) !== expected) {
+              throw new Error(`Hash mismatch for ${p}`);  // aborts sync, keeps old version
+            }
+          }
           await writeFileDeep(tmpDir, p, buf);
           return;
         } catch (err) {
@@ -10198,6 +10217,7 @@ async function syncSite() {
     }
 
     if (skipped.length) console.warn(`Skipped ${skipped.length} missing file(s):`, skipped);
+    if(skipped.length > 0) return;
 
     // atomic-ish swap: only now does the new build go live
     await fs_promises.rm(finalDir, { recursive: true, force: true });
@@ -10233,6 +10253,31 @@ async function boot() {
 
   await syncSite();
   setInterval(syncSite, POLL_MS);
+}
+
+async function track_version_hashes(){
+  try{
+    const indexBuf = await fetchOrigin('/index.html');
+    const html = indexBuf.toString('utf8');
+    const version = extractVersion(html);
+    if(data['version_file_hashes']?.[version] != null) return;
+
+    const full = await fetchOrigin('/file-manifest.json', { optional: true });
+    if (full) {
+      const hashes = JSON.parse(full.toString('utf8')).hashes;
+      if(hashes != null){
+        if(data['version_file_hashes'] == null){
+          data['version_file_hashes'] = {}
+        }
+        if(data['version_file_hashes'][version] == null){
+          data['version_file_hashes'][version] = hashes
+        }
+      }
+    }
+  }
+  catch(e){
+    logg(e)
+  }
 }
 
 
@@ -10671,6 +10716,7 @@ async function update_webapp_proposal_data(){
         const hash = get_data_id_from_ecid(latest_event.returnValues.p4)/* string_data */
         const hash_data = await fetch_hashes_from_file_storage_or_memory([hash])
         if(hash_data != null){
+          const cid = hash
           const container_data = JSON.parse(hash_data[cid])
           if(container_data != null){
             if(container_data['tags'] != null && container_data['tags']['webapp_update_object']){
@@ -10683,9 +10729,12 @@ async function update_webapp_proposal_data(){
               if(data['webapp_update_proposal_data'] == null){
                 data['webapp_update_proposal_data'] = []
               }
-              data['webapp_update_proposal_data'].push({
-                reference_link, version_text, proposal_id, author, block_number
-              })
+              const existing_item = data['webapp_update_proposal_data'].find(e => e.proposal_id == proposal_id)
+              if(existing_item == null){
+                data['webapp_update_proposal_data'].push({
+                  reference_link, version_text, proposal_id, author, block_number
+                });
+              }
             }
           }
         }
@@ -10714,6 +10763,114 @@ async function update_webapp_proposal_data(){
     }
   }
 
+}
+
+async function fetch_prepurchase_balance(contract_id, contract_e5, sender_address){
+  try{
+    const indexer_events = await filter_events(contract_e5, 'E52', 'e5', {p1/* target_id */: contract_id}, {})
+    const first_event = indexer_events[0]
+    const hash = get_data_id_from_ecid(first_event.returnValues.p4/* string_data */)
+    const hash_data = await fetch_hashes_from_file_storage_or_memory([hash])
+    const container_data = JSON.parse(hash_data[cid])
+    const pre_purchase_credit_value = container_data['tags']['credits_price_data']
+    const exchanges_for_pre_purchase_events = pre_purchase_credit_value.map(pe => pe['id'])
+
+
+    const pre_purchase_record_events = await filter_events(contract_e5, 'E52', 'e4', {p1/* target_id */:30/* 30(contract_prepurchase_credits_sale) */, p3/* context */:contract_id, p4/* string_data */:sender_address}, {})
+
+    const pre_purchase_transfer_events = await filter_events(contract_e5, 'H52', 'e1', {p1/* exchange */:process_array_for_indexer_query(exchanges_for_pre_purchase_events), p3/* receiver */:contract_id}, {})
+
+    const prepurchase_awards_events = await filter_events(contract_e5, 'H52', 'e5', {p2/* awward_receiver */:id, p4/* metadata */:sender_address}, {})
+
+    const target = 'pre_purchase|'+contract_id
+    const my_emitted_transactions = await fetch_all_socket_emissions(target, [sender_address], [sender_address])
+
+    const sorted_final_pre_purchase_transfer_events = get_sorted_final_pre_purchase_transfer_events(pre_purchase_credit_value, pre_purchase_transfer_events)
+
+    const all_transfers = [];
+    const used_blocks = [];
+    pre_purchase_record_events.forEach(event_item => {
+      const block = event_item.returnValues.p7/* block_number */
+      const time = event_item.returnValues.p6/* timestamp */
+      const transfer_amount = event_item.returnValues.p5/* int_data */
+      
+      const award_events = prepurchase_awards_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p3/* awward_context */ == transfer_amount && item.returnValues.p4/* metadata */ == my_address);
+
+      if(award_events.length != 0){
+        const award_sender = award_events[0].returnValues.p1/* awward_sender */
+
+        const transfer_events = sorted_final_pre_purchase_transfer_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p4/* amount */ == transfer_amount && item.returnValues.p2/* sender */ == award_sender && !used_blocks.includes(block));
+
+        if(transfer_events.length > 0){
+          all_transfers.push({'action':'in', 'time':time, 'amount':parseInt(transfer_amount)})
+          used_blocks.push(block)
+        }
+      }
+    });
+
+    my_emitted_transactions.forEach(message => {
+      all_transfers.push({'action':'out', 'time':message['time'], 'amount':parseInt(message['amount'])})
+    });
+
+    const sorted_transactions = sortByAttributeDescending(all_transfers, 'time').reverse()
+
+    var balance = 0;
+    sorted_transactions.forEach(tx => {
+      if(tx['action'] == 'in'){
+        balance += tx['amount']
+      }else{
+        balance -= tx['amount']
+      }
+    });
+
+    return { balance, logs: my_emitted_transactions};
+  }
+  catch(e){
+    return { balance:0, logs: my_emitted_transactions }
+  }
+}
+
+function get_sorted_final_pre_purchase_transfer_events(pre_purchase_credit_value, pre_purchase_transfer_events){
+  const transfer_purchase_object = {}
+  const price_object = {}
+  pre_purchase_credit_value.forEach(price_item => {
+    price_object[price_item['id']] = price_item['amount']
+  });
+  pre_purchase_transfer_events.forEach(event_item => {
+    const exchange = event_item.returnValues.p1/* exchange */
+    const block_number = parseInt(event_item.returnValues.p6/* block_number */)
+    const amount = event_item.returnValues.p4/* amount */
+    const sender = event_item.returnValues.p2/* sender */
+    if(transfer_purchase_object[block_number] == null){
+      transfer_purchase_object[block_number] = {}
+    }
+    transfer_purchase_object[block_number][exchange] = {
+      amount, sender
+    }
+  });
+
+  const final_pre_purchase_transfer_events = []
+  Object.keys(transfer_purchase_object).forEach(block_number => {
+    let credits = -1
+    let sender = null
+    Object.keys(transfer_purchase_object[block_number]).forEach(exchange => {
+      const purchase_amount = transfer_purchase_object[block_number][exchange].amount;
+      const fee_for_that_exchange = price_object[exchange.toString()];
+      const credits_count = bigInt(purchase_amount).divide(fee_for_that_exchange)
+      if(credits == -1 || bigInt(credits).greater(credits_count)){
+        credits = credits_count
+        sender = transfer_purchase_object[block_number][exchange].sender;
+      }
+    });
+    if(credits != -1 && sender != null){
+      final_pre_purchase_transfer_events.push({
+        block: block_number,
+        returnValues: { p6/* block_number */: block_number, p4/* amount */: credits, p2/* sender */: sender}
+      })
+    }
+  });
+  
+  return sortByAttributeDescending(final_pre_purchase_transfer_events, 'block').reverse()
 }
 
 
@@ -10929,6 +11086,8 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     // 'e25_selected_rpc':data['E25']['url'],
     'vapid_public_key':VAPID_PUBLIC_KEY_RESOURCE,
     'mesh_network_size':Object.keys(node_connection_map).length,
+    'webapp_update_proposal_data':data['webapp_update_proposal_data'],
+    'valid_webapp_updates':data['valid_webapp_updates'],
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -12989,6 +13148,40 @@ app.get(`/${endpoint_info['root_data']}/:privacy_signature`, async (req, res) =>
   }
 });//ok-----
 
+/* endpoint for fetching the pre-purchase transactions for a given address */
+app.get(`/${endpoint_info['get_address_prepurchase_balance']}`, async (req, res) => {
+  const { contract_id, contract_e5, sender_address } = req.params
+  const isEthereumAddress = (input) => /^0x[a-fA-F0-9]{40}$/.test(input);
+  const rate_limit_results = ip_limits(req.ip)
+  if(rate_limit_results.success == false){
+    return res.status(429).json({ message: rate_limit_results.message});
+  }
+  else if(
+    !data['e'].includes(contract_e5) || 
+    isNaN(contract_id) ||  
+    sender_address == null || 
+    sender_address == '' ||
+    contract_id.toString().includes('.') ||
+    !isEthereumAddress(sender_address)
+  ){
+    res.status(404).send(JSON.stringify({ message: 'Invalid body arguments', success:false }));
+    return;
+  }
+  try{
+    const { balance, logs } = await fetch_prepurchase_balance(contract_id, contract_e5, sender_address)
+    const json_object = { message: 'Query successful', balance: balance, logs: logs,
+    success:true }
+
+    record_request('/get_address_prepurchase_balance')
+    res.json(json_object);
+  }
+  catch(e){
+    logg(e)
+    res.status(500).send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+  }
+
+});
+
 
 
 
@@ -13094,6 +13287,7 @@ const when_server_started = () => {
     load_events_for_all_e5s()
     start_background_socket_sync()
     boot();
+    update_webapp_proposal_data()
     data['key'] = key
   }, (10 * 1000));
 }
@@ -13453,6 +13647,7 @@ setInterval(update_chart_info_for_evm_traffic, 35*1000)
 setInterval(clear_old_translated_objects, 5*60*1000)
 setInterval(update_coin_ether_chart_info, 24*60*60*1000)
 setInterval(update_webapp_proposal_data, 3*60*60*1000)
+setInterval(track_version_hashes, 5*60*1000)
 
 
 set_up_error_logs_filestream()
