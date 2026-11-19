@@ -5574,20 +5574,27 @@ function get_contract_abi_and_address_from_id(contract_id, e5){
 }
 
 async function calculate_price_info_for_specified_tokens(token_ids, filter_start, filter_end){
-  const return_data = {}
+  const return_data = { invalid:[], missing:[] }
   for(var i=0; i<token_ids.length; i++){
     const focused_token_id = token_ids[i]
     if(!focused_token_id.includes(':') || countChar(focused_token_id, ':') > 1){
+      return_data.invalid.push(focused_token_id)
       continue;
     }
     const token_e5 = focused_token_id.split(':')[0].toUpperCase()
     const token_id = focused_token_id.split(':')[1]
 
-    if(!data['e'].includes(token_e5) || isNaN(token_id) || parseInt(token_id) < 1000 || object_types[token_e5][token_id] != 31/* 31(exchange_object) */){
+    if(!data['e'].includes(token_e5) || isNaN(token_id) || parseInt(token_id) < 1000 || object_types[token_e5][parseInt(token_id)] != 31/* 31(exchange_object) */){
+      return_data.missing.push(focused_token_id)
       continue;
     }
 
-    const all_exchange_ratio_data = await filter_events(token_e5, 'H5', 'e1', { p1/* target_id */: token_id}, null)
+    const all_exchange_ratio_data = await filter_events(token_e5, 'H5', 'e1', { p1/* target_id */: token_id}, {})
+
+    if(all_exchange_ratio_data.length < 2){
+      return_data.missing.push(focused_token_id)
+      continue;
+    }
 
     const targeted_exchange_ratio_data = all_exchange_ratio_data.filter(function (event) {
       return (event.returnValues.p9/* timestamp */ >= filter_start && event.returnValues.p9/* timestamp */ <= filter_end)
@@ -5608,7 +5615,7 @@ async function calculate_price_info_for_specified_tokens(token_ids, filter_start
       const total_minted_as_auth = await get_total_minted_as_auth(token_id, token_e5, filter_end)
       const final_supply = bigInt(initial_supply).plus(total_minted_as_auth)
 
-      return_data[focused_token_id] = { 'price_change_history':price_data, 'total_supply': final_supply }
+      return_data[focused_token_id] = { 'price_change_history':price_data, 'total_supply': final_supply, 'token_type': token_type }
     }
     else if(token_type == 5 && targeted_exchange_ratio_data.length > 0){
       const latest_exchange_ratio_event = targeted_exchange_ratio_data[targeted_exchange_ratio_data.length -1]
@@ -5617,7 +5624,7 @@ async function calculate_price_info_for_specified_tokens(token_ids, filter_start
       const output_reserve_ratio = latest_exchange_ratio_event.returnValues.p6/* exchange_ratio_y */
       const final_supply = calculate_price(input_amount, input_reserve_ratio, output_reserve_ratio, token_type);
 
-      return_data[focused_token_id] = { 'price_change_history':price_data, 'total_supply': final_supply }
+      return_data[focused_token_id] = { 'price_change_history':price_data, 'total_supply': final_supply, 'token_type': token_type }
     }
   }
 
@@ -12406,7 +12413,7 @@ app.post(`/${endpoint_info['update_certificates']}/:privacy_signature`, async (r
     res.send(JSON.stringify({ message: 'Something went wrong', error: e.toString(), success:false }));
     return;
   }
-});
+});//LEGACY
 
 /* endpoint for updating and restarting the node */
 app.post(`/${endpoint_info['update_nodes']}/:privacy_signature`, async (req, res) => {
@@ -12563,9 +12570,7 @@ app.post(`/${endpoint_info['run_contract_call']}/:privacy_signature`, async (req
 
 /* endpoint for obtaining the price info for specified tokens */
 app.get(`/${endpoint_info['token_price']}`, async (req, res) => {
-  const token_ids = req.query.token_ids;
-  const from = req.query.from;
-  const to = req.query.to;
+  const { token_ids, from, to } = JSON.parse(req.query.arg_string)
 
   /*
     example:
@@ -12573,13 +12578,12 @@ app.get(`/${endpoint_info['token_price']}`, async (req, res) => {
     
     //invalid values wont be processed
   */
-
   const rate_limit_results = ip_limits(req.ip)
   if(rate_limit_results.success == false){
     return res.status(429).json({ message: rate_limit_results.message});
   }
   try{
-    if(token_ids == null || Array.isArray(token_ids) || isNaN(from) || isNaN(to)){
+    if(token_ids == null || !Array.isArray(token_ids) || isNaN(from) || isNaN(to)){
       res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
       return;
     }
@@ -12596,7 +12600,7 @@ app.get(`/${endpoint_info['token_price']}`, async (req, res) => {
     res.send(JSON.stringify({ message: 'Invalid arg string', success:false }));
   }
 
-});
+});//ok----
 
 /* endpoint for pre-fetching app launch data */
 app.post(`/${endpoint_info['pre_launch_fetch']}/:privacy_signature`, async (req, res) => {
