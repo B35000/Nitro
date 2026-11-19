@@ -8311,7 +8311,7 @@ async function is_message_valid_if_pre_purchase(message){
     const first_event = indexer_events[0]
     const hash = get_data_id_from_ecid(first_event.returnValues.p4/* string_data */)
     const hash_data = await fetch_hashes_from_file_storage_or_memory([hash])
-    const container_data = JSON.parse(hash_data[cid])
+    const container_data = JSON.parse(hash_data[hash])
     const pre_purchase_credit_value = container_data['tags']['credits_price_data']
     const exchanges_for_pre_purchase_events = pre_purchase_credit_value.map(pe => pe['id'])
 
@@ -8320,7 +8320,7 @@ async function is_message_valid_if_pre_purchase(message){
 
     const pre_purchase_transfer_events = await filter_events(contract_e5, 'H52', 'e1', {p1/* exchange */:process_array_for_indexer_query(exchanges_for_pre_purchase_events), p3/* receiver */:contract_id}, {})
 
-    const prepurchase_awards_events = await filter_events(contract_e5, 'H52', 'e5', {p2/* awward_receiver */:id, p4/* metadata */:derived_address}, {})
+    const prepurchase_awards_events = await filter_events(contract_e5, 'H52', 'e5', {p2/* awward_receiver */:contract_id, p4/* metadata */:derived_address}, {})
 
     const sorted_final_pre_purchase_transfer_events = get_sorted_final_pre_purchase_transfer_events(pre_purchase_credit_value, pre_purchase_transfer_events)
 
@@ -8334,7 +8334,7 @@ async function is_message_valid_if_pre_purchase(message){
       const time = event_item.returnValues.p6/* timestamp */
       const transfer_amount = event_item.returnValues.p5/* int_data */
       
-      const award_events = prepurchase_awards_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p3/* awward_context */ == transfer_amount && item.returnValues.p4/* metadata */ == my_address);
+      const award_events = prepurchase_awards_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p3/* awward_context */ == transfer_amount && item.returnValues.p4/* metadata */ == derived_address);
 
       if(award_events.length != 0){
         const award_sender = award_events[0].returnValues.p1/* awward_sender */
@@ -10771,7 +10771,7 @@ async function fetch_prepurchase_balance(contract_id, contract_e5, sender_addres
     const first_event = indexer_events[0]
     const hash = get_data_id_from_ecid(first_event.returnValues.p4/* string_data */)
     const hash_data = await fetch_hashes_from_file_storage_or_memory([hash])
-    const container_data = JSON.parse(hash_data[cid])
+    const container_data = JSON.parse(hash_data[hash])
     const pre_purchase_credit_value = container_data['tags']['credits_price_data']
     const exchanges_for_pre_purchase_events = pre_purchase_credit_value.map(pe => pe['id'])
 
@@ -10780,7 +10780,7 @@ async function fetch_prepurchase_balance(contract_id, contract_e5, sender_addres
 
     const pre_purchase_transfer_events = await filter_events(contract_e5, 'H52', 'e1', {p1/* exchange */:process_array_for_indexer_query(exchanges_for_pre_purchase_events), p3/* receiver */:contract_id}, {})
 
-    const prepurchase_awards_events = await filter_events(contract_e5, 'H52', 'e5', {p2/* awward_receiver */:id, p4/* metadata */:sender_address}, {})
+    const prepurchase_awards_events = await filter_events(contract_e5, 'H52', 'e5', {p2/* awward_receiver */:contract_id, p4/* metadata */:sender_address}, {})
 
     const target = 'pre_purchase|'+contract_id
     const my_emitted_transactions = await fetch_all_socket_emissions(target, [sender_address], [sender_address])
@@ -10794,7 +10794,7 @@ async function fetch_prepurchase_balance(contract_id, contract_e5, sender_addres
       const time = event_item.returnValues.p6/* timestamp */
       const transfer_amount = event_item.returnValues.p5/* int_data */
       
-      const award_events = prepurchase_awards_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p3/* awward_context */ == transfer_amount && item.returnValues.p4/* metadata */ == my_address);
+      const award_events = prepurchase_awards_events.filter(item => item.returnValues.p6/* block_number */ == block && item.returnValues.p3/* awward_context */ == transfer_amount && item.returnValues.p4/* metadata */ == sender_address);
 
       if(award_events.length != 0){
         const award_sender = award_events[0].returnValues.p1/* awward_sender */
@@ -10823,10 +10823,10 @@ async function fetch_prepurchase_balance(contract_id, contract_e5, sender_addres
       }
     });
 
-    return { balance, logs: my_emitted_transactions};
+    return { balance, logs: my_emitted_transactions, error:'', stack:''};
   }
   catch(e){
-    return { balance:0, logs: my_emitted_transactions }
+    return { balance:0, logs: [], error: e.toString(), stack: e.stack }
   }
 }
 
@@ -11086,8 +11086,8 @@ app.get(`/${endpoint_info['marco']}`, async (req, res) => {
     // 'e25_selected_rpc':data['E25']['url'],
     'vapid_public_key':VAPID_PUBLIC_KEY_RESOURCE,
     'mesh_network_size':Object.keys(node_connection_map).length,
-    'webapp_update_proposal_data':data['webapp_update_proposal_data'],
-    'valid_webapp_updates':data['valid_webapp_updates'],
+    //'webapp_update_proposal_data':data['webapp_update_proposal_data'],
+    //'valid_webapp_updates':data['valid_webapp_updates'],
     success:true
   }
   var string_obj = JSON.stringify(obj, (_, v) => typeof v === 'bigint' ? v.toString() : v)
@@ -12999,7 +12999,7 @@ app.post(`/${endpoint_info['save_subscription']}/:privacy_signature`, async (req
     log_error(e)
     res.send(JSON.stringify({ message: 'Invalid arg string' , success:false}));
   }
-});
+});//ok-----
 
 /* endpoint for manually restoring indexer to specific block height and resynching */
 app.post(`/${endpoint_info['resync']}/:privacy_signature`, async (req, res) => {
@@ -13150,7 +13150,7 @@ app.get(`/${endpoint_info['root_data']}/:privacy_signature`, async (req, res) =>
 
 /* endpoint for fetching the pre-purchase transactions for a given address */
 app.get(`/${endpoint_info['get_address_prepurchase_balance']}`, async (req, res) => {
-  const { contract_id, contract_e5, sender_address } = req.params
+  const { contract_id, contract_e5, address } = req.query
   const isEthereumAddress = (input) => /^0x[a-fA-F0-9]{40}$/.test(input);
   const rate_limit_results = ip_limits(req.ip)
   if(rate_limit_results.success == false){
@@ -13159,17 +13159,17 @@ app.get(`/${endpoint_info['get_address_prepurchase_balance']}`, async (req, res)
   else if(
     !data['e'].includes(contract_e5) || 
     isNaN(contract_id) ||  
-    sender_address == null || 
-    sender_address == '' ||
+    address == null || 
+    address == '' ||
     contract_id.toString().includes('.') ||
-    !isEthereumAddress(sender_address)
+    !isEthereumAddress(address)
   ){
-    res.status(404).send(JSON.stringify({ message: 'Invalid body arguments', success:false }));
+    res.send(JSON.stringify({ message: 'Invalid body arguments', success:false }));
     return;
   }
   try{
-    const { balance, logs } = await fetch_prepurchase_balance(contract_id, contract_e5, sender_address)
-    const json_object = { message: 'Query successful', balance: balance, logs: logs,
+    const { balance, logs, error, stack } = await fetch_prepurchase_balance(contract_id, contract_e5, address)
+    const json_object = { message: 'Query successful', balance: balance, logs: logs, error, stack,
     success:true }
 
     record_request('/get_address_prepurchase_balance')
@@ -13177,10 +13177,10 @@ app.get(`/${endpoint_info['get_address_prepurchase_balance']}`, async (req, res)
   }
   catch(e){
     logg(e)
-    res.status(500).send(JSON.stringify({ message: 'Invalid arg string', success:false }));
+    res.send(JSON.stringify({ message: 'something went wrong', error: e.toString(), stack: e.stack, success:false }));
   }
 
-});
+});//ok-----
 
 
 
