@@ -8324,8 +8324,8 @@ async function is_message_valid_if_pre_purchase(message){
 
     const sorted_final_pre_purchase_transfer_events = get_sorted_final_pre_purchase_transfer_events(pre_purchase_credit_value, pre_purchase_transfer_events)
 
-    const target = 'pre_purchase|'+ipfs['contract']
-    const my_emitted_transactions = await fetch_all_socket_emissions(target, [derived_address], [derived_address])
+    const target = 'pre_purchase|'+contract_id+contract_e5
+    const my_emitted_transactions = await fetch_all_socket_emissions(target, [derived_address], [])
 
     const all_transfers = [];
     const used_blocks = [];
@@ -8348,8 +8348,9 @@ async function is_message_valid_if_pre_purchase(message){
       }
     });
 
-    my_emitted_transactions.forEach(message => {
-      all_transfers.push({'action':'out', 'time':message['time'], 'amount':parseInt(message['amount'])})
+    my_emitted_transactions.forEach(emission => {
+      const amount = JSON.parse(emission.data)['amount']
+      all_transfers.push({'action':'out', 'time':emission['time'], 'amount':parseInt(amount)})
     });
 
     const sorted_transactions = sortByAttributeDescending(all_transfers, 'time').reverse()
@@ -10782,8 +10783,8 @@ async function fetch_prepurchase_balance(contract_id, contract_e5, sender_addres
 
     const prepurchase_awards_events = await filter_events(contract_e5, 'H52', 'e5', {p2/* awward_receiver */:contract_id, p4/* metadata */:sender_address}, {})
 
-    const target = 'pre_purchase|'+contract_id
-    const my_emitted_transactions = await fetch_all_socket_emissions(target, [sender_address], [sender_address])
+    const target = 'pre_purchase|'+contract_id+contract_e5
+    const my_emitted_transactions = await fetch_all_socket_emissions(target, [sender_address], [])
 
     const sorted_final_pre_purchase_transfer_events = get_sorted_final_pre_purchase_transfer_events(pre_purchase_credit_value, pre_purchase_transfer_events)
 
@@ -10809,7 +10810,8 @@ async function fetch_prepurchase_balance(contract_id, contract_e5, sender_addres
     });
 
     my_emitted_transactions.forEach(message => {
-      all_transfers.push({'action':'out', 'time':message['time'], 'amount':parseInt(message['amount'])})
+      const amount = JSON.parse(message.data)['amount']
+      all_transfers.push({'action':'out', 'time':message['time'], 'amount':parseInt(amount)})
     });
 
     const sorted_transactions = sortByAttributeDescending(all_transfers, 'time').reverse()
